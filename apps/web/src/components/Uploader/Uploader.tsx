@@ -1,10 +1,13 @@
 import { useState } from "react";
 import {
   API_BASE,
+  getAnalysisStatus,
   getStemStatus,
+  startAnalysis,
   startSplit,
   uploadSongs,
   type SongDTO,
+  type TrackAnalysisDTO,
 } from "../../lib/api";
 import styles from "./Uploader.module.css";
 
@@ -84,11 +87,47 @@ export function Uploader() {
 }
 
 type StemStatus = "idle" | "splitting" | "done" | "error";
+type AnalysisStatus = "idle" | "analyzing" | "done" | "error";
 
 function SongCard({ song }: { song: SongDTO }) {
   const [stemStatus, setStemStatus] = useState<StemStatus>("idle");
   const [stems, setStems] = useState<Record<string, string>>({});
   const [stemError, setStemError] = useState("");
+  const [anStatus, setAnStatus] = useState<AnalysisStatus>("idle");
+  const [analysis, setAnalysis] = useState<TrackAnalysisDTO | null>(null);
+  const [anError, setAnError] = useState("");
+
+  async function handleAnalyze() {
+    setAnStatus("analyzing");
+    setAnError("");
+    try {
+      const started = await startAnalysis(song.id);
+      if (started.status === "ready") {
+        setAnalysis(started);
+        setAnStatus("done");
+        return;
+      }
+      // Poll until the cloud analysis finishes (cap ~5 minutes).
+      for (let i = 0; i < 100; i++) {
+        const s = await getAnalysisStatus(song.id);
+        if (s.status === "ready") {
+          setAnalysis(s);
+          setAnStatus("done");
+          return;
+        }
+        if (s.status === "error") {
+          throw new Error("The analysis failed. Please try again.");
+        }
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+      throw new Error("The analysis is taking too long. Please try again.");
+    } catch (e) {
+      setAnError(
+        e instanceof Error ? e.message : "Couldn't analyze this song.",
+      );
+      setAnStatus("error");
+    }
+  }
 
   async function handleSplit() {
     setStemStatus("splitting");
@@ -134,11 +173,30 @@ function SongCard({ song }: { song: SongDTO }) {
         className={styles.audio}
       />
 
-      {stemStatus === "idle" && (
-        <button className={styles.splitBtn} onClick={handleSplit}>
-          🎛️ Split into parts
-        </button>
+      <div className={styles.actions}>
+        {stemStatus === "idle" && (
+          <button className={styles.splitBtn} onClick={handleSplit}>
+            Split into parts
+          </button>
+        )}
+        {anStatus === "idle" && (
+          <button className={styles.splitBtn} onClick={handleAnalyze}>
+            Analyze track
+          </button>
+        )}
+      </div>
+
+      {anStatus === "analyzing" && (
+        <p className={styles.splitting}>
+          Reading the track — beat, key, structure… (~1–2 min)
+        </p>
       )}
+      {anStatus === "error" && (
+        <p role="alert" className={styles.error}>
+          {anError}
+        </p>
+      )}
+      {anStatus === "done" && analysis && <Insights analysis={analysis} />}
       {stemStatus === "splitting" && (
         <p className={styles.splitting}>
           Splitting into vocals, drums, bass &amp; other… (~30–60s)
@@ -165,6 +223,70 @@ function SongCard({ song }: { song: SongDTO }) {
         </div>
       )}
     </figure>
+  );
+}
+
+const SECTION_COLORS: Record<string, string> = {
+  intro: "#4a5066",
+  verse: "#5a67d8",
+  chorus: "#7c5cff",
+  bridge: "#00d3a7",
+  inst: "#3d4a5c",
+  solo: "#c084fc",
+  break: "#2c3242",
+  outro: "#4a5066",
+  start: "#2c3242",
+  end: "#2c3242",
+};
+
+function Insights({ analysis }: { analysis: TrackAnalysisDTO }) {
+  const sections = analysis.sections ?? [];
+  const total = sections.length ? sections[sections.length - 1].end : 0;
+
+  return (
+    <div className={styles.insights} data-testid="insights">
+      <div className={styles.chips}>
+        {analysis.bpm ? (
+          <span className={styles.chip}>{Math.round(analysis.bpm)} BPM</span>
+        ) : null}
+        {analysis.key ? (
+          <span
+            className={styles.chipAccent}
+            title={`${analysis.key.tonic} ${analysis.key.mode} — confidence ${Math.round(
+              analysis.key.confidence * 100,
+            )}%`}
+          >
+            Key {analysis.key.camelot}
+          </span>
+        ) : null}
+      </div>
+      {total > 0 && (
+        <div
+          className={styles.timeline}
+          role="img"
+          aria-label="Song structure timeline"
+        >
+          {sections.map((s, i) => {
+            const width = ((s.end - s.start) / total) * 100;
+            return (
+              <div
+                key={i}
+                className={styles.segment}
+                title={`${s.label} · ${Math.round(s.start)}s–${Math.round(s.end)}s`}
+                style={{
+                  width: `${width}%`,
+                  background: SECTION_COLORS[s.label] ?? "#3d4a5c",
+                }}
+              >
+                {width > 9 ? (
+                  <span className={styles.segLabel}>{s.label}</span>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 

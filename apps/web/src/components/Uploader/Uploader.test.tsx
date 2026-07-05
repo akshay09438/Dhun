@@ -156,4 +156,72 @@ describe("Uploader", () => {
       expect(screen.getAllByTestId("stem-player")).toHaveLength(4),
     );
   });
+
+  it("analyzes a song and shows BPM, key, and the section timeline", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (String(url).endsWith("/songs")) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              songs: [
+                {
+                  id: "a",
+                  original_name: "beat.wav",
+                  url: "/songs/a/audio",
+                  status: "ready",
+                },
+                {
+                  id: "b",
+                  original_name: "voc.wav",
+                  url: "/songs/b/audio",
+                  status: "ready",
+                },
+              ],
+            }),
+          });
+        }
+        if (String(url).includes("/analysis")) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              song_id: "a",
+              status: "ready",
+              bpm: 124,
+              key: {
+                camelot: "8A",
+                tonic: "A",
+                mode: "minor",
+                confidence: 0.8,
+              },
+              sections: [
+                { start: 0, end: 30, label: "intro" },
+                { start: 30, end: 90, label: "chorus" },
+              ],
+            }),
+          });
+        }
+        return Promise.resolve({
+          ok: false,
+          json: async () => ({ detail: "?" }),
+        });
+      }),
+    );
+
+    render(<Uploader />);
+    pickBothSongs();
+    fireEvent.click(screen.getByRole("button", { name: /process/i }));
+
+    const analyzeButtons = await screen.findAllByRole("button", {
+      name: /analyze track/i,
+    });
+    fireEvent.click(analyzeButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText(/124 BPM/i)).toBeTruthy();
+      expect(screen.getByText(/Key 8A/i)).toBeTruthy();
+      expect(screen.getAllByTestId("insights")).toHaveLength(1);
+    });
+  });
 });

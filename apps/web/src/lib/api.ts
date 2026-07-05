@@ -50,3 +50,41 @@ export async function getStemStatus(songId: string): Promise<StemSetDTO> {
   }
   return res.json();
 }
+
+export type SectionDTO = { start: number; end: number; label: string };
+
+export type TrackAnalysisDTO = {
+  song_id: string;
+  status: string; // "processing" | "ready" | "error" | "idle"
+  bpm: number | null;
+  key: {
+    camelot: string;
+    tonic: string;
+    mode: string;
+    confidence: number;
+  } | null;
+  sections: SectionDTO[];
+};
+
+/** Start analyzing a song (beat, key, structure). Returns immediately. */
+export async function startAnalysis(songId: string): Promise<TrackAnalysisDTO> {
+  const res = await fetch(`${API_BASE}/songs/${songId}/analysis`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const msg = await res.json().catch(() => ({ detail: "Analysis failed." }));
+    throw new Error(msg.detail ?? "Analysis failed.");
+  }
+  return res.json();
+}
+
+/** Check how the analysis is going: processing / ready (with data) / error. */
+export async function getAnalysisStatus(
+  songId: string,
+): Promise<TrackAnalysisDTO> {
+  const res = await fetch(`${API_BASE}/songs/${songId}/analysis`);
+  if (!res.ok) {
+    throw new Error("Could not check the analysis status.");
+  }
+  return res.json();
+}
