@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "appName": "Prompt-DJ",
+  "summary": "An AI that mixes music like a DJ from plain-language prompts. Upload two songs; get a DJ-style mix of Song 1's beat + Song 2's vocals; steer it live with words. \"Claude Code for DJing.\"",
+  "protectedBranch": "main",
+  "dangerousGlobs": [
+    "**/.env",
+    "**/.env.*",
+    "**/*secret*",
+    "services/api/**/config.py",
+    "services/api/**/settings.py",
+    "services/api/routes/songs.py",
+    "services/api/**/storage.py",
+    "workers/**/storage*.py",
+    "workers/render.py",
+    "services/api/planner/validate.py",
+    ".github/workflows/**",
+    "**/conftest.py",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "vitest.config.*",
+    "pytest.ini"
+  ],
+  "buyNotBuilt": {
+    "stem separation (isolating vocals/drums/bass)": "AudioShake or Music.ai API (quality-critical; keep best-in-class)",
+    "arrangement & live-command planning (the LLM brain)": "Anthropic Claude API (structured MixPlan / LiveOp output)",
+    "heavy GPU compute (only if self-hosting stems / MIR later)": "Modal or Replicate",
+    "object storage (once past local disk)": "Cloudflare R2 / S3"
+  },
+  "format": {
+    "command": "npm run format"
+  },
+  "test": {
+    "test": "npm test",
+    "typecheck": "npm run typecheck",
+    "mode": "on-change"
+  },
+  "orientation": {
+    "profile": "CLAUDE.md",
+    "handoff": "docs/zuko-handoff.md",
+    "functionalSpec": "docs/functional-spec.md",
+    "technicalSpec": "docs/technical-spec.md",
+    "implementationPlan": "docs/implementation-plan.md",
+    "uiDesign": "",
+    "docs": [
+      "docs/reference/PRD.md",
+      "docs/reference/DJ-Judgment-Handbook.md",
+      "docs/reference/Explainer.md"
+    ]
+  },
+  "escalation": {
+    "channel": "#zuko-escalations",
+    "mention": "",
+    "webhookEnv": "ZUKO_SLACK_WEBHOOK"
+  },
+  "uiUx": {
+    "enabled": true,
+    "skill": "anthropic-skills:ui-ux-pro-max"
+  },
+  "product": {
+    "audience": "Casual music fans and creators who cannot DJ but want to make good-sounding mashups to share or enjoy. First target: people making short mashup clips for TikTok/Reels/fun.",
+    "jobs": [
+      "Make a great-sounding mashup of two songs (Song 1 beat + Song 2 vocals) with zero DJ or production skill, just by describing it.",
+      "Reshape the playing mix with plain words ('take the bass out', 'drop everything but the beat') that land on the next beat like a real DJ.",
+      "Get a different take instantly ('regenerate') and export a shareable clip."
+    ],
+    "success": "The user describes a mix and gets one they would actually play or post — they keep or share it rather than discarding it. Validation bar: ~50 real casual creators clearly feel 'I made a real mix by just describing it.'",
+    "keyFlows": [
+      "Upload two songs (Song 1 = beat, Song 2 = vocals) + optional prompt → studying screen (analyze + split stems) → mix screen.",
+      "Mix screen: play, see where the vocal enters / beat drops, type live commands (land on next beat), regenerate for a new take.",
+      "Export the full mix or a short 15–30s clip."
+    ],
+    "nonGoals": [
+      "Third songs / multi-track continuous sets (V1 is strictly two songs).",
+      "Generating or synthesizing new music (we mix existing songs; that is Suno's job).",
+      "Streaming-catalog / 'search any song' sourcing — uploads only in V1; search is the V2 north star.",
+      "Live BPM / tempo change while playing (energy moves only in V1; live tempo is a V2 stretch goal).",
+      "Lyric editing, autotune, style transfer, stem export/redistribution.",
+      "Live club / controller / MIDI hardware, mobile app, and real accounts / billing (stub only)."
+    ],
+    "scale": "Validation scale: ~50 to a few hundred users. Start simple (SQLite + local storage + in-process jobs); the audio toolchain stays best-in-class regardless. Unbounded-growth data: uploaded songs, cached per-song analyses + stems, and generated mixes. Architected so DB/queue/storage can be upgraded (Postgres/Redis/R2) without touching the audio engine. maturityTier = prelaunch."
+  },
+  "riskModel": {
+    "maturityTier": "prelaunch",
+    "surfaces": {}
+  }
+}
