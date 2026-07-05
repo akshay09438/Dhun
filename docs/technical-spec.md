@@ -64,6 +64,19 @@ Secrets/keys · the upload handler (untrusted input) · storage deletes (irrever
 - `apps/web`: "Analyze track" per song → BPM chip, Camelot key chip (confidence on hover), proportional section-timeline bar.
 - Verified live: Father Ocean → 122 BPM (correct), 925 beats / 232 bars / 29 phrases, full section map, 11 vocal regions.
 
+## As-built (M3 — the basic mix)
+
+The first mix implements the one principle literally: **the brain plans a `MixPlan`, the engine executes it; the LLM never touches audio.** Four small, independently-tested units:
+
+- **The fence** (`app/planner/fence.py`, deterministic): reads both songs' `TrackAnalysis` and returns the legal, safe options — phrase-aligned high-energy drop points (with a runway check), a safe tempo stretch (`best_stretch` folds half/double-time and holds ±8%), a capped vocal slice snapped to a downbeat, and Camelot key-fit (informational). Falls back down the ladder (phrase→downbeat→beat) when data is shaky, and declines a pair in plain language when tempos are too far apart or there's no beat. Pure arithmetic — no AI, no audio.
+- **The AI driver** (`app/planner/plan.py`): Claude (`claude-sonnet-5`) picks the drop + a one-bar beat-breath among the fence's options; on any failure (no `ANTHROPIC_API_KEY`, network, bad output, out-of-range index) it falls back to the deterministic "best drop" pick, so a mix never blocks on the AI. Raises `MixDeclined` (with a reason) when the pair is unmixable.
+- **The referee** (`app/planner/validate.py`, dangerous surface): `validate_plan` (R3 vocal on a downbeat, B3 safe stretch, non-empty slice) and `validate_render` (R6 no clip ≥0.999, and **not silent or near-silent** — at least 2% of samples above an audible floor, so a mostly-silent render with a stray blip is caught, not just exact-zero). R1 single-vocal / R2 single-bassline are guaranteed **by construction** — the bed is only S1's drums+bass+other and the only vocal added is S2's single slice. `assert_*` raise `ValidationError`.
+- **The engine** (`workers/render.py`, dangerous surface): FFmpeg + numpy only, decoupled (takes plain file paths, no app/db coupling — imported by the API via a `sys.path` bootstrap). Sums S1 drums+bass+other into the bed; slices S2's vocal then `atempo`-stretches it to S1's tempo (pitch preserved); fades both edges (~8 ms) to kill clicks; optional one-bar beat-breath silences the bed before entry; peak-normalizes to −1 dBFS with a 0.999 brickwall so the master never clips. Renders 44.1 kHz stereo WAV. Guards: decoded audio is capped at 12 min so a tiny-but-hours-long low-bitrate file can't balloon memory (the upload cap is on bytes, not duration); non-positive tempo is rejected and a negative anchor is clamped.
+
+Route (`app/routes/mix.py`, async — mirrors stems/analysis): `POST /mix {song1_id, song2_id, prompt?}` starts a background job and returns `202` (or the cached result); `GET /mix/{mix_id}` polls; `GET /mix/{mix_id}/audio` serves the WAV. `mix_id` = SHA-256 of `(song1, song2, prompt)` → identical requests are free; preconditions (both uploaded + analyzed + split) are reported in plain language (409). Models: `MixPlan` (the recipe) and `Mix` (the job/result). Web: a `MixMaker` card (`apps/web/src/components/Mix/`) → poll → play + download + DJ-language note.
+
+**Time-stretch:** FFmpeg `atempo` (pitch-preserved, LGPL-core, already installed) — the as-built realization of the spec's SoundTouch choice, kept small (±8%). GPL `librubberband` exists in the dev FFmpeg but the pipeline does not depend on it.
+
 ## Known follow-ups
 
 - CI `verify` job is Node-only today; add a Python (pytest) job when a GitHub remote is set up. Also point the coverage job at `apps/web/coverage/` (or emit to repo-root `coverage/`).

@@ -88,3 +88,50 @@ export async function getAnalysisStatus(
   }
   return res.json();
 }
+
+export type MixPlanDTO = {
+  master_bpm: number;
+  vocal_stretch: number;
+  anchor: number;
+  beat_breath: boolean;
+  notes: string;
+  source: string; // "ai" | "rules"
+};
+
+export type MixDTO = {
+  mix_id: string;
+  status: string; // "processing" | "ready" | "error" | "idle"
+  url: string | null;
+  plan: MixPlanDTO | null;
+  message: string | null;
+};
+
+/** Start making a mix of Song 1's beat + Song 2's vocal. Returns immediately. */
+export async function startMix(
+  song1Id: string,
+  song2Id: string,
+  prompt = "",
+): Promise<MixDTO> {
+  const res = await fetch(`${API_BASE}/mix`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ song1_id: song1Id, song2_id: song2Id, prompt }),
+  });
+  if (!res.ok) {
+    // 409 carries a plain-language reason (e.g. "Song 1 hasn't been analyzed yet.")
+    const msg = await res
+      .json()
+      .catch(() => ({ detail: "Couldn't start the mix." }));
+    throw new Error(msg.detail ?? "Couldn't start the mix.");
+  }
+  return res.json();
+}
+
+/** Check how the mix is going: processing / ready (with plan + url) / error. */
+export async function getMixStatus(mixId: string): Promise<MixDTO> {
+  const res = await fetch(`${API_BASE}/mix/${mixId}`);
+  if (!res.ok) {
+    throw new Error("Could not check the mix status.");
+  }
+  return res.json();
+}

@@ -2,9 +2,9 @@
 
 _What the app does, for the user, screen by screen. Approved during discovery on 2026-07-05. This is a living document — kept true to the code. The "how it's built" lives in [technical-spec.md](technical-spec.md); progress lives in [implementation-plan.md](implementation-plan.md)._
 
-## What the app does TODAY (as of 2026-07-05, M1–M2 built)
+## What the app does TODAY (as of 2026-07-06, M1–M3 built)
 
-Upload two songs → each is cleaned to a standard format/volume and playable back. Per song, two on-demand actions: **"Split into parts"** (hear the vocals / drums / bass / other separately — cloud AI, ~30–120s first time, instant after) and **"Analyze track"** (see BPM, the Camelot key, and a colored section-structure timeline — the DJ's read of the song). **No mixing yet** — that's M3, next. The sections below describe the full V1 target.
+Upload two songs → each is cleaned to a standard format/volume and playable back. Per song, two on-demand actions: **"Split into parts"** (hear the vocals / drums / bass / other separately — cloud AI, ~30–120s first time, instant after) and **"Analyze track"** (see BPM, the Camelot key, and a colored section-structure timeline — the DJ's read of the song). Once both songs are split and analyzed, **"Make my mix"** produces the first real mix — Song 1's instrumental with Song 2's vocal tempo-locked and dropped in on the strongest section, on the beat and click-free — then plays it and lets you download the WAV. (M3 places the vocal **once**; the full weaving arrangement, live commands, and regenerate come in M4/M5. Today you still press Split and Analyze on each song before mixing; the one-click "studying" screen is queued next.) The sections below describe the full V1 target.
 
 ## The core value, in one sentence
 

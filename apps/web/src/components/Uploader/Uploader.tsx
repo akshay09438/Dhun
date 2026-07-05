@@ -9,6 +9,7 @@ import {
   type SongDTO,
   type TrackAnalysisDTO,
 } from "../../lib/api";
+import { MixMaker } from "../Mix/Mix";
 import styles from "./Uploader.module.css";
 
 type Status = "idle" | "processing" | "done" | "error";
@@ -80,6 +81,7 @@ export function Uploader() {
           {songs.map((s) => (
             <SongCard key={s.id} song={s} />
           ))}
+          {songs.length === 2 && <MixMaker song1={songs[0]} song2={songs[1]} />}
         </section>
       )}
     </main>
