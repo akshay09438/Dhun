@@ -24,16 +24,29 @@ export async function uploadSongs(
   return res.json();
 }
 
-export type StemSetDTO = { song_id: string; stems: Record<string, string> };
+export type StemSetDTO = {
+  song_id: string;
+  status: string; // "processing" | "ready" | "error" | "idle"
+  stems: Record<string, string>;
+};
 
-/** Split a stored song into vocals/drums/bass/other (runs in the cloud). */
-export async function splitStems(songId: string): Promise<StemSetDTO> {
+/** Start splitting a song in the cloud. Returns immediately (status "processing"). */
+export async function startSplit(songId: string): Promise<StemSetDTO> {
   const res = await fetch(`${API_BASE}/songs/${songId}/stems`, {
     method: "POST",
   });
   if (!res.ok) {
     const msg = await res.json().catch(() => ({ detail: "Splitting failed." }));
     throw new Error(msg.detail ?? "Splitting failed.");
+  }
+  return res.json();
+}
+
+/** Check how the split is going: processing / ready (with URLs) / error. */
+export async function getStemStatus(songId: string): Promise<StemSetDTO> {
+  const res = await fetch(`${API_BASE}/songs/${songId}/stems`);
+  if (!res.ok) {
+    throw new Error("Could not check the split status.");
   }
   return res.json();
 }

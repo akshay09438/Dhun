@@ -86,7 +86,7 @@ describe("Uploader", () => {
   it("splits a song into its parts on demand", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockImplementation((url: string) => {
+      vi.fn().mockImplementation((url: string, opts?: { method?: string }) => {
         if (String(url).endsWith("/songs")) {
           return Promise.resolve({
             ok: true,
@@ -108,11 +108,25 @@ describe("Uploader", () => {
             }),
           });
         }
+        if (
+          String(url).includes("/stems") &&
+          (opts?.method ?? "GET") === "POST"
+        ) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              song_id: "a",
+              status: "processing",
+              stems: {},
+            }),
+          });
+        }
         if (String(url).includes("/stems")) {
           return Promise.resolve({
             ok: true,
             json: async () => ({
               song_id: "a",
+              status: "ready",
               stems: {
                 vocals: "/songs/a/stems/vocals",
                 drums: "/songs/a/stems/drums",

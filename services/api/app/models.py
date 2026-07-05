@@ -11,10 +11,13 @@ class Song(BaseModel):
 
 
 class StemSet(BaseModel):
-    """The separated parts of one song, each a playable URL.
+    """The separated parts of one song, plus the split job's status.
 
-    stems maps a part name (vocals/drums/bass/other) to the URL that serves it.
+    status is one of: "processing" (split running), "ready" (done, stems
+    populated), "error" (split failed). stems maps a part name
+    (vocals/drums/bass/other) to the URL that serves it.
     """
 
     song_id: str
-    stems: dict[str, str]
+    status: str
+    stems: dict[str, str] = {}

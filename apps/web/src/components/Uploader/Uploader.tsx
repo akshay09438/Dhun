@@ -1,5 +1,11 @@
 import { useState } from "react";
-import { API_BASE, splitStems, uploadSongs, type SongDTO } from "../../lib/api";
+import {
+  API_BASE,
+  getStemStatus,
+  startSplit,
+  uploadSongs,
+  type SongDTO,
+} from "../../lib/api";
 import styles from "./Uploader.module.css";
 
 type Status = "idle" | "processing" | "done" | "error";
@@ -88,9 +94,26 @@ function SongCard({ song }: { song: SongDTO }) {
     setStemStatus("splitting");
     setStemError("");
     try {
-      const res = await splitStems(song.id);
-      setStems(res.stems);
-      setStemStatus("done");
+      const started = await startSplit(song.id);
+      if (started.status === "ready") {
+        setStems(started.stems);
+        setStemStatus("done");
+        return;
+      }
+      // Poll until the cloud split finishes (cap ~4 minutes).
+      for (let i = 0; i < 80; i++) {
+        const s = await getStemStatus(song.id);
+        if (s.status === "ready") {
+          setStems(s.stems);
+          setStemStatus("done");
+          return;
+        }
+        if (s.status === "error") {
+          throw new Error("The split failed. Please try again.");
+        }
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+      throw new Error("The split is taking too long. Please try again.");
     } catch (e) {
       setStemError(
         e instanceof Error ? e.message : "Couldn't split this song.",

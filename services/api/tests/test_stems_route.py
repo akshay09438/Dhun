@@ -1,5 +1,6 @@
 import dataclasses
 import subprocess
+import time
 
 from fastapi.testclient import TestClient
 
@@ -17,6 +18,8 @@ def _use_tmp(monkeypatch, tmp_path):
                         dataclasses.replace(storage.settings, data_dir=tmp_path))
     monkeypatch.setattr(stems_mod, "settings",
                         dataclasses.replace(stems_mod.settings, data_dir=tmp_path))
+    # a fresh, empty job registry per test
+    monkeypatch.setattr(stems_route, "_jobs", {})
 
 
 def _make_song(tmp_path) -> str:
@@ -30,11 +33,29 @@ def _make_song(tmp_path) -> str:
     return sid
 
 
-def test_make_stems_ok(tmp_path, monkeypatch):
+def _write_all_stems(song_id):
+    for s in STEMS:
+        stem_path(song_id, s).write_bytes(b"stemdata")
+
+
+def _poll(sid, want, tries=100):
+    body = {}
+    for _ in range(tries):
+        body = client.get(f"/songs/{sid}/stems").json()
+        if body["status"] == want:
+            return body
+        time.sleep(0.05)
+    return body
+
+
+def test_split_is_async_returns_processing_then_ready(tmp_path, monkeypatch):
+    """POST must NOT block for the whole (slow) split — it returns 'processing'
+    immediately, and the stems appear via polling once the job finishes."""
     _use_tmp(monkeypatch, tmp_path)
     sid = _make_song(tmp_path)
 
     def fake_sep(song_id, wav):
+        time.sleep(0.2)  # simulate a slow cloud split
         out = {}
         for s in STEMS:
             p = stem_path(song_id, s)
@@ -45,23 +66,42 @@ def test_make_stems_ok(tmp_path, monkeypatch):
     monkeypatch.setattr(stems_route, "separate_stems", fake_sep)
 
     r = client.post(f"/songs/{sid}/stems")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["song_id"] == sid
-    assert set(body["stems"]) == set(STEMS)
+    assert r.status_code == 202
+    assert r.json()["status"] == "processing"       # returned immediately, not blocked
 
-    audio = client.get(body["stems"]["vocals"])
+    ready = _poll(sid, "ready")
+    assert ready["status"] == "ready"
+    assert set(ready["stems"]) == set(STEMS)
+
+    audio = client.get(ready["stems"]["vocals"])
     assert audio.status_code == 200
     assert audio.content == b"stemdata"
 
 
-def test_make_stems_unknown_song(tmp_path, monkeypatch):
+def test_split_cache_hit_is_ready_immediately(tmp_path, monkeypatch):
+    _use_tmp(monkeypatch, tmp_path)
+    sid = _make_song(tmp_path)
+    _write_all_stems(sid)
+
+    def boom(*a, **k):
+        raise AssertionError("must not split again on a cache hit")
+
+    monkeypatch.setattr(stems_route, "separate_stems", boom)
+
+    r = client.post(f"/songs/{sid}/stems")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ready"
+    assert set(body["stems"]) == set(STEMS)
+
+
+def test_split_unknown_song(tmp_path, monkeypatch):
     _use_tmp(monkeypatch, tmp_path)
     r = client.post("/songs/" + "a" * 64 + "/stems")
     assert r.status_code == 404
 
 
-def test_make_stems_separation_error(tmp_path, monkeypatch):
+def test_split_error_surfaces_as_status(tmp_path, monkeypatch):
     _use_tmp(monkeypatch, tmp_path)
     sid = _make_song(tmp_path)
 
@@ -69,8 +109,11 @@ def test_make_stems_separation_error(tmp_path, monkeypatch):
         raise SeparationError("no credit")
 
     monkeypatch.setattr(stems_route, "separate_stems", boom)
+
     r = client.post(f"/songs/{sid}/stems")
-    assert r.status_code == 502
+    assert r.status_code == 202
+    body = _poll(sid, "error")
+    assert body["status"] == "error"
 
 
 def test_get_stem_validates_inputs(tmp_path, monkeypatch):
