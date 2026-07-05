@@ -47,7 +47,8 @@ _S1_STEMS = ("drums", "bass", "other")
 
 # Bump when the fence rules, the render engine, or the planner prompt change, so a
 # cached mix from an older engine is never silently served after we improve it.
-ENGINE_VERSION = "m3.1"
+# m3.2: beat_breath forced off (the ~2s dead-air gap before the vocal).
+ENGINE_VERSION = "m3.2"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.

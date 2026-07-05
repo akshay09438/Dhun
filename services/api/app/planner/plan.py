@@ -103,10 +103,14 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         raise MixDeclined(opts["reason"])
 
     choice = _ai_choose(opts, prompt)
-    if choice is None:  # deterministic fallback — the obvious best drop, no breath
+    if choice is None:  # deterministic fallback — the obvious best drop
         return _plan_from(mix_id, a1, a2, opts, opts["drops"][0], False, "",
                           source="rules", confidence=0.6)
 
-    idx, beat_breath, why = choice
-    return _plan_from(mix_id, a1, a2, opts, opts["drops"][idx], beat_breath, why,
+    # M3 keeps Song 1's beat playing continuously under the vocal. The AI may still
+    # pick the drop, but we force beat_breath off: a full-bar beat drop rendered as
+    # dead air (~2s of silence before the vocal), which sounds like the song paused.
+    # A real DJ breath (tension, not silence) is an M4 move once the engine supports it.
+    idx, _breath, why = choice
+    return _plan_from(mix_id, a1, a2, opts, opts["drops"][idx], False, why,
                       source="ai", confidence=0.75)

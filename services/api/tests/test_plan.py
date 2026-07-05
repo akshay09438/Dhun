@@ -22,17 +22,18 @@ def test_fallback_plan_without_api_key(monkeypatch):
     assert 0.92 <= mix.vocal_stretch <= 1.08
 
 
-def test_ai_choice_is_used_when_available(monkeypatch):
+def test_ai_choice_is_used_but_breath_forced_off(monkeypatch):
     a1 = make_analysis(bpm=120.0)
     a2 = make_analysis(bpm=118.0, vocal_regions=[(16.0, 40.0)])
-    # pretend the AI picked the second drop with a beat breath
+    # the AI picks the second drop and asks for a beat breath...
     monkeypatch.setattr(planner, "_ai_choose", lambda opts, prompt: (1, True, "big re-entry"))
 
     mix = planner.build_mix_plan("m" * 64, a1, a2, prompt="make it punchy")
 
     assert mix.source == "ai"
-    assert mix.beat_breath is True
     assert mix.notes == "big re-entry"
+    # ...but M3 keeps the beat continuous (no dead-air gap), so the breath is off
+    assert mix.beat_breath is False
 
 
 def test_ai_choice_out_of_range_falls_back(monkeypatch):
