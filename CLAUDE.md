@@ -100,9 +100,9 @@ prompt-dj/
 These are the "stop and ask" surfaces — the files where a mistake causes real harm, so Zuko pauses and confirms before touching them:
 
 - **Secret keys** (`**/.env*`, config/settings holding the Claude, stems-API, or storage keys) — a leak is a real cost and security problem.
-- **The upload handler** (`services/api/routes/songs.py`) — it accepts files from strangers on the internet; sloppy handling here is the classic security hole.
+- **The upload handler** (`services/api/app/routes/songs.py`) — it accepts files from strangers on the internet; sloppy handling here is the classic security hole.
 - **Anything that deletes user audio or finished mixes** (`**/storage.py`) — irreversible; people lose their work.
-- **The render pipeline and the quality validator** (`workers/render.py`, `services/api/planner/validate.py`) — the validator enforces one-vocal / one-bassline / no-clipping; if it breaks, the app quietly ships bad-sounding mixes, which for this product is the worst outcome.
+- **The render pipeline and the quality validator** (`workers/render.py`, `services/api/app/planner/validate.py`) — the validator enforces one-vocal / one-bassline / no-clipping; if it breaks, the app quietly ships bad-sounding mixes, which for this product is the worst outcome.
 - **CI and the test harness** (`.github/workflows/**`, `**/conftest.py`, test files) — the safety net itself.
 
 _No real login and no payments exist in V1 (accounts/billing are a stub), so those usual danger zones do not apply yet — add them the moment they do._
@@ -122,11 +122,11 @@ The machine-readable form below is the single source of truth the hooks and the 
     "**/*secret*",
     "services/api/**/config.py",
     "services/api/**/settings.py",
-    "services/api/routes/songs.py",
+    "services/api/**/routes/songs.py",
     "services/api/**/storage.py",
     "workers/**/storage*.py",
     "workers/render.py",
-    "services/api/planner/validate.py",
+    "services/api/**/planner/validate.py",
     ".github/workflows/**",
     "**/conftest.py",
     "**/*.test.ts",
