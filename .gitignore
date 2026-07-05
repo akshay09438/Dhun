@@ -30,5 +30,9 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Zuko backups
+# Zuko backups + transient state
 *.pre-zuko.bak
+.zuko/approvals.json
+
+# Local editor/tooling settings (keep launch.json shared)
+.claude/settings.local.json
