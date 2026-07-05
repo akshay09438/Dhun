@@ -137,3 +137,46 @@
 .audio {
   width: 100%;
 }
+
+.splitBtn {
+  margin-top: 12px;
+  padding: 8px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.splitBtn:hover {
+  border-color: var(--accent);
+}
+
+.splitting {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.stems {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stemName {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: capitalize;
+  color: var(--accent-2);
+}

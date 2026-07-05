@@ -23,3 +23,17 @@ export async function uploadSongs(
   }
   return res.json();
 }
+
+export type StemSetDTO = { song_id: string; stems: Record<string, string> };
+
+/** Split a stored song into vocals/drums/bass/other (runs in the cloud). */
+export async function splitStems(songId: string): Promise<StemSetDTO> {
+  const res = await fetch(`${API_BASE}/songs/${songId}/stems`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const msg = await res.json().catch(() => ({ detail: "Splitting failed." }));
+    throw new Error(msg.detail ?? "Splitting failed.");
+  }
+  return res.json();
+}

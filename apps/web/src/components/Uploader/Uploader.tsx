@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { API_BASE, uploadSongs, type SongDTO } from "../../lib/api";
+import { API_BASE, splitStems, uploadSongs, type SongDTO } from "../../lib/api";
 import styles from "./Uploader.module.css";
 
 type Status = "idle" | "processing" | "done" | "error";
@@ -69,21 +69,79 @@ export function Uploader() {
       {status === "done" && (
         <section className={styles.results}>
           {songs.map((s) => (
-            <figure key={s.id} className={styles.player}>
-              <figcaption className={styles.playerLabel}>
-                {s.original_name}
-              </figcaption>
-              <audio
-                data-testid="player"
-                controls
-                src={`${API_BASE}${s.url}`}
-                className={styles.audio}
-              />
-            </figure>
+            <SongCard key={s.id} song={s} />
           ))}
         </section>
       )}
     </main>
+  );
+}
+
+type StemStatus = "idle" | "splitting" | "done" | "error";
+
+function SongCard({ song }: { song: SongDTO }) {
+  const [stemStatus, setStemStatus] = useState<StemStatus>("idle");
+  const [stems, setStems] = useState<Record<string, string>>({});
+  const [stemError, setStemError] = useState("");
+
+  async function handleSplit() {
+    setStemStatus("splitting");
+    setStemError("");
+    try {
+      const res = await splitStems(song.id);
+      setStems(res.stems);
+      setStemStatus("done");
+    } catch (e) {
+      setStemError(
+        e instanceof Error ? e.message : "Couldn't split this song.",
+      );
+      setStemStatus("error");
+    }
+  }
+
+  return (
+    <figure className={styles.player}>
+      <figcaption className={styles.playerLabel}>
+        {song.original_name}
+      </figcaption>
+      <audio
+        data-testid="player"
+        controls
+        src={`${API_BASE}${song.url}`}
+        className={styles.audio}
+      />
+
+      {stemStatus === "idle" && (
+        <button className={styles.splitBtn} onClick={handleSplit}>
+          🎛️ Split into parts
+        </button>
+      )}
+      {stemStatus === "splitting" && (
+        <p className={styles.splitting}>
+          Splitting into vocals, drums, bass &amp; other… (~30–60s)
+        </p>
+      )}
+      {stemStatus === "error" && (
+        <p role="alert" className={styles.error}>
+          {stemError}
+        </p>
+      )}
+      {stemStatus === "done" && (
+        <div className={styles.stems}>
+          {Object.entries(stems).map(([name, url]) => (
+            <div key={name} className={styles.stem}>
+              <span className={styles.stemName}>{name}</span>
+              <audio
+                data-testid="stem-player"
+                controls
+                src={`${API_BASE}${url}`}
+                className={styles.audio}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </figure>
   );
 }
 

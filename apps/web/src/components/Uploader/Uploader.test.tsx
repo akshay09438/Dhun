@@ -82,4 +82,64 @@ describe("Uploader", () => {
       expect(screen.getByRole("alert").textContent).toMatch(/not audio/i),
     );
   });
+
+  it("splits a song into its parts on demand", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (String(url).endsWith("/songs")) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              songs: [
+                {
+                  id: "a",
+                  original_name: "beat.wav",
+                  url: "/songs/a/audio",
+                  status: "ready",
+                },
+                {
+                  id: "b",
+                  original_name: "voc.wav",
+                  url: "/songs/b/audio",
+                  status: "ready",
+                },
+              ],
+            }),
+          });
+        }
+        if (String(url).includes("/stems")) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              song_id: "a",
+              stems: {
+                vocals: "/songs/a/stems/vocals",
+                drums: "/songs/a/stems/drums",
+                bass: "/songs/a/stems/bass",
+                other: "/songs/a/stems/other",
+              },
+            }),
+          });
+        }
+        return Promise.resolve({
+          ok: false,
+          json: async () => ({ detail: "?" }),
+        });
+      }),
+    );
+
+    render(<Uploader />);
+    pickBothSongs();
+    fireEvent.click(screen.getByRole("button", { name: /process/i }));
+
+    const splitButtons = await screen.findAllByRole("button", {
+      name: /split into parts/i,
+    });
+    fireEvent.click(splitButtons[0]);
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("stem-player")).toHaveLength(4),
+    );
+  });
 });
