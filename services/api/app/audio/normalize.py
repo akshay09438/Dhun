@@ -18,8 +18,19 @@ class AudioError(Exception):
     """Raised when a file cannot be decoded or normalized as audio."""
 
 
+# Generous ceiling: a normal song's two-pass normalize finishes in seconds.
+# The timeout only exists to kill a pathological/malicious file that would
+# otherwise hang a worker forever (a denial-of-service with no attacker skill).
+_FFMPEG_TIMEOUT_SEC = 120
+
+
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        return subprocess.run(
+            cmd, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT_SEC
+        )
+    except subprocess.TimeoutExpired:
+        raise AudioError("audio processing timed out")
 
 
 def _measure_peak_db(src: Path) -> float:
