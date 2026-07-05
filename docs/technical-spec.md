@@ -52,7 +52,7 @@ Secrets/keys · the upload handler (untrusted input) · storage deletes (irrever
 ## As-built (M2a — stem splitting)
 
 - **Runs in the cloud, not locally.** PyTorch/Demucs can't run on the founder's Windows-ARM machine (proven), so separation calls **Replicate** (`ryan5453/demucs`, htdemucs) over HTTP. The `replicate` client is pure-Python and runs fine locally.
-- `services/api/app/audio/stems.py`: `separate_stems(song_id, wav)` → 4 stems, **cached by content id** (no repeat API cost). `app/routes/stems.py`: `POST /songs/{id}/stems` (split), `GET /songs/{id}/stems/{stem}` (serve, id+stem validated). `StemSet` model. 7 tests (mocked Replicate).
+- `services/api/app/audio/stems.py`: `separate_stems(song_id, wav)` → 4 stems, **cached by content id** (no repeat API cost). `app/routes/stems.py` is **asynchronous** (a ~2min cloud job can't be held on one request — long songs timed out): `POST /songs/{id}/stems` starts a background thread and returns `202 processing`; `GET /songs/{id}/stems` reports status (processing/ready/error); `GET /songs/{id}/stems/{stem}` serves a part (id+stem validated). In-memory `_jobs` registry (single-worker validation; persisted table when hosted). `StemSet` = {song_id, status, stems}. 8 tests (mocked Replicate).
 - `apps/web`: each song card gets a "Split into parts" button → 4 stem players. +1 test. 6 web tests total.
 - **Keys:** `REPLICATE_API_TOKEN` (+ `ANTHROPIC_API_KEY` for M3) in a gitignored root `.env`, loaded at startup via `python-dotenv` in `main.py`.
 - **Cost:** ~2–6¢ per song, cached; validated live end-to-end.
