@@ -14,6 +14,7 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from app.config import settings  # noqa: E402
+from app.routes.analysis import router as analysis_router  # noqa: E402
 from app.routes.songs import router as songs_router  # noqa: E402
 from app.routes.stems import router as stems_router  # noqa: E402
 
@@ -34,3 +35,4 @@ def health():
 
 app.include_router(songs_router)
 app.include_router(stems_router)
+app.include_router(analysis_router)
