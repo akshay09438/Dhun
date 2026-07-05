@@ -57,6 +57,13 @@ Secrets/keys · the upload handler (untrusted input) · storage deletes (irrever
 - **Keys:** `REPLICATE_API_TOKEN` (+ `ANTHROPIC_API_KEY` for M3) in a gitignored root `.env`, loaded at startup via `python-dotenv` in `main.py`.
 - **Cost:** ~2–6¢ per song, cached; validated live end-to-end.
 
+## As-built (M2b — analysis)
+
+- **Hybrid cloud + local math.** Rhythm/structure from Replicate `sakemin/all-in-one-music-structure-analyzer` (allin1): BPM, beats, downbeats, sections. Local pure-numpy (`app/audio/analysis.py`): key (FFT chromagram + Krumhansl–Kessler profiles → Camelot, confidence = winner margin), energy curve (RMS/bar), vocal regions (RMS of the split vocal stem/bar), phrase starts (every 8th downbeat), bpm confidence (beat-interval regularity). librosa/madmom/essentia cannot install on this ARM machine (numba/llvmlite lack wheels) — hence pure numpy.
+- `app/routes/analysis.py`: async start-then-poll like stems; result cached as `{id}.analysis.json`. `TrackAnalysis` model carries per-field confidence (sections pinned at 0.6 — the known weak link the planner must distrust).
+- `apps/web`: "Analyze track" per song → BPM chip, Camelot key chip (confidence on hover), proportional section-timeline bar.
+- Verified live: Father Ocean → 122 BPM (correct), 925 beats / 232 bars / 29 phrases, full section map, 11 vocal regions.
+
 ## Known follow-ups
 
 - CI `verify` job is Node-only today; add a Python (pytest) job when a GitHub remote is set up. Also point the coverage job at `apps/web/coverage/` (or emit to repo-root `coverage/`).
