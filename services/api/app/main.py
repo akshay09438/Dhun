@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path
 
-from app.config import settings
-from app.routes.songs import router as songs_router
+from dotenv import load_dotenv
+
+# Load API keys (Replicate, Anthropic) from the gitignored project-root .env
+# before anything reads them. Safe no-op if the file is absent.
+load_dotenv(Path(__file__).resolve().parents[3] / ".env")
+
+from fastapi import FastAPI  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+
+from app.config import settings  # noqa: E402
+from app.routes.songs import router as songs_router  # noqa: E402
+from app.routes.stems import router as stems_router  # noqa: E402
 
 app = FastAPI(title="Prompt-DJ API")
 
@@ -24,3 +33,4 @@ def health():
 
 
 app.include_router(songs_router)
+app.include_router(stems_router)
