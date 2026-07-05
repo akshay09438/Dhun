@@ -49,6 +49,14 @@ Secrets/keys · the upload handler (untrusted input) · storage deletes (irrever
 - `apps/web/`: React+Vite+TS upload screen (`components/Uploader`), `lib/api.ts` client. 5 vitest tests.
 - Time-stretch not yet wired (arrives with mixing in M3); SoundTouch chosen for then.
 
+## As-built (M2a — stem splitting)
+
+- **Runs in the cloud, not locally.** PyTorch/Demucs can't run on the founder's Windows-ARM machine (proven), so separation calls **Replicate** (`ryan5453/demucs`, htdemucs) over HTTP. The `replicate` client is pure-Python and runs fine locally.
+- `services/api/app/audio/stems.py`: `separate_stems(song_id, wav)` → 4 stems, **cached by content id** (no repeat API cost). `app/routes/stems.py`: `POST /songs/{id}/stems` (split), `GET /songs/{id}/stems/{stem}` (serve, id+stem validated). `StemSet` model. 7 tests (mocked Replicate).
+- `apps/web`: each song card gets a "Split into parts" button → 4 stem players. +1 test. 6 web tests total.
+- **Keys:** `REPLICATE_API_TOKEN` (+ `ANTHROPIC_API_KEY` for M3) in a gitignored root `.env`, loaded at startup via `python-dotenv` in `main.py`.
+- **Cost:** ~2–6¢ per song, cached; validated live end-to-end.
+
 ## Known follow-ups
 
 - CI `verify` job is Node-only today; add a Python (pytest) job when a GitHub remote is set up. Also point the coverage job at `apps/web/coverage/` (or emit to repo-root `coverage/`).
