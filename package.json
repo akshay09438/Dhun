@@ -1,0 +1,13 @@
+{
+  "name": "prompt-dj",
+  "private": true,
+  "workspaces": ["apps/web"],
+  "scripts": {
+    "dev": "npm -w apps/web run dev",
+    "typecheck": "npm -w apps/web run typecheck",
+    "lint": "npm -w apps/web run lint",
+    "test": "npm -w apps/web run test",
+    "coverage": "npm -w apps/web run coverage",
+    "format": "npm -w apps/web run format"
+  }
+}
