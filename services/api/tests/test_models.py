@@ -1,0 +1,30 @@
+"""Tests for the arrangement data models — additive changes that must not break
+M3-era single-placement plans cached on disk.
+"""
+
+from app.models import MixPlan, Placement
+
+
+def test_placement_and_arrangement_roundtrip():
+    plan = MixPlan(
+        mix_id="m" * 64, song1_id="a" * 64, song2_id="b" * 64,
+        master_bpm=120.0, vocal_stretch=1.0, vocal_src=(16.0, 40.0), anchor=16.0,
+        take=2,
+        placements=[
+            Placement(anchor=16.0, vocal_src=(16.0, 32.0)),
+            Placement(anchor=64.0, vocal_src=(40.0, 56.0), beat_breath=True),
+        ],
+    )
+    reloaded = MixPlan.model_validate_json(plan.model_dump_json())
+    assert reloaded.placements[1].beat_breath is True
+    assert reloaded.take == 2
+
+
+def test_old_single_placement_json_still_parses():
+    # an M3-era plan with no placements/take must still load (additive change)
+    m3 = (
+        '{"mix_id":"m","song1_id":"a","song2_id":"b","master_bpm":120.0,'
+        '"vocal_stretch":1.0,"vocal_src":[16.0,40.0],"anchor":16.0}'
+    )
+    plan = MixPlan.model_validate_json(m3)
+    assert plan.placements == [] and plan.take == 1

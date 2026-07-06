@@ -62,14 +62,23 @@ class StemSet(BaseModel):
     stems: dict[str, str] = {}
 
 
+class Placement(BaseModel):
+    """One vocal moment in an arrangement: where it enters and which slice sings."""
+
+    anchor: float  # secs into Song 1, on a downbeat
+    vocal_src: tuple[float, float]  # [start, end] secs of Song 2's vocal
+    beat_breath: bool = False  # one-bar tension dip in the bed right before this entry
+
+
 class MixPlan(BaseModel):
     """The recipe for one mix — what the brain decided, for the engine to run.
 
     The brain (rules + Claude) writes this structured plan; the deterministic
     render engine executes it. The LLM never touches audio samples — it only
     picks among options the rules already declared legal (technical-spec's one
-    architectural principle). M3 is a single vocal placement; M4 grows this into
-    a full arrangement.
+    architectural principle). M3 was a single vocal placement; M4 grows this into
+    a full arrangement via `placements` (the scalar anchor/vocal_src stay as the
+    single-placement fallback, so M3-era cached plans still parse).
     """
 
     mix_id: str
@@ -80,6 +89,8 @@ class MixPlan(BaseModel):
     vocal_src: tuple[float, float]  # [start, end] secs of Song 2's vocal to use
     anchor: float  # secs into Song 1 where the vocal enters (a phrase-start downbeat)
     beat_breath: bool = False  # drop Song 1's beat for one bar just before the vocal
+    placements: list[Placement] = []  # the full arrangement; [] => single-placement (M3)
+    take: int = 1  # which regenerate iteration produced this (1-based)
     notes: str = ""  # DJ-language explanation of the move
     confidence: float = 0.0
     source: str = "rules"  # "ai" | "rules" — which brain picked it (honesty/debug)
