@@ -211,6 +211,27 @@ export async function makeMix(
   throw new Error("The mix is taking too long. Please try again.");
 }
 
+/** An AI-generated playful name for a mix, from the two song filenames.
+ *  Cached server-side; falls back to a simple "A × B" if the AI is unavailable. */
+export async function getMixName(
+  song1Name: string,
+  song2Name: string,
+  prompt = "",
+): Promise<string> {
+  const res = await fetch(`${API_BASE}/mix/name`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      song1_name: song1Name,
+      song2_name: song2Name,
+      prompt,
+    }),
+  });
+  if (!res.ok) throw new Error("Couldn't name the mix.");
+  const data = await res.json();
+  return data.name ?? "";
+}
+
 export type LiveOpDTO = {
   op: "mute" | "unmute" | "decline" | "fade" | "beat_up";
   target: string | null;

@@ -30,6 +30,7 @@ from app.audio.stems import stem_path
 from app.config import settings
 from app.models import Mix, MixPlan, TrackAnalysis
 from app.planner import validate
+from app.planner import name as name_planner
 from app.planner.plan import MixDeclined, build_mix_plan
 from app.storage import path_for
 
@@ -66,6 +67,12 @@ class MixRequest(BaseModel):
     song2_id: str  # the vocal source
     prompt: str = ""
     take: int = 1  # regenerate iteration — a new take is a distinct arrangement + cache slot
+
+
+class MixNameRequest(BaseModel):
+    song1_name: str = ""  # Song 1's upload filename (the beat)
+    song2_name: str = ""  # Song 2's upload filename (the vocals)
+    prompt: str = ""
 
 
 def mix_id_for(song1_id: str, song2_id: str, prompt: str, take: int = 1) -> str:
@@ -136,6 +143,23 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int) 
         log.exception("mix render failed for %s", mix_id)  # ...but do log it, so a systematic bug isn't invisible
         _mix_wav(mix_id).unlink(missing_ok=True)
         _jobs[mix_id] = ("error", "Couldn't build this mix. Try another pair or regenerate.")
+
+
+@router.post("/mix/name")
+def name_mix(req: MixNameRequest) -> dict:
+    """Coin a short playful name for a mix from the two song filenames (AI, cached)."""
+    key = hashlib.sha256(
+        f"{req.song1_name}|{req.song2_name}|{req.prompt}".encode()
+    ).hexdigest()
+    cache = settings.data_dir / f"{key}.mixname.txt"
+    if cache.exists():
+        return {"name": cache.read_text(encoding="utf-8")}
+    name = name_planner.mix_name(req.song1_name, req.song2_name, req.prompt)
+    try:
+        cache.write_text(name, encoding="utf-8")
+    except OSError:
+        pass  # a cache-write failure must not fail the request
+    return {"name": name}
 
 
 @router.post("/mix")

@@ -1,0 +1,262 @@
+.mixTitle {
+  margin-bottom: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feed {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  overflow: auto;
+  margin-bottom: 14px;
+  flex: 1;
+  min-height: 0;
+}
+.feedHint {
+  font-size: 12px;
+  color: var(--w40);
+  font-style: italic;
+}
+.userLine,
+.sysLine {
+  border-left: 2px solid var(--b22);
+  padding-left: 10px;
+  font-size: 12.5px;
+  color: var(--w55);
+}
+.sysLine {
+  border-left-color: var(--violet);
+  color: var(--text);
+}
+
+.ctlLabel {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--w45);
+  text-transform: uppercase;
+  margin: 2px 0 8px;
+}
+.parts {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.part,
+.partOff {
+  padding: 5px 13px;
+  font-size: 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: var(--sys);
+}
+.part {
+  border: 1px solid var(--violet);
+  color: var(--text);
+  background: rgba(143, 0, 255, 0.16);
+}
+.partOff {
+  border: 1px solid var(--b22);
+  color: var(--w40);
+  background: transparent;
+  text-decoration: line-through;
+}
+.moves {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.chip,
+.chipHot {
+  padding: 5px 13px;
+  font-size: 12px;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--sys);
+}
+.chip {
+  border: 1px solid var(--b28);
+  color: var(--w75);
+}
+.chipHot {
+  border: 1px solid var(--violet);
+  color: var(--text);
+}
+.cmdbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--b28);
+  border-radius: 999px;
+  padding: 5px 6px 5px 14px;
+  margin-top: auto;
+}
+.cmdbar input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font-size: 12.5px;
+  outline: none;
+  font-family: var(--sys);
+}
+.cmdbar input::placeholder {
+  color: var(--w40);
+}
+.send {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--violet);
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 13px;
+}
+
+/* stage */
+.live {
+  position: absolute;
+  top: 32px;
+  right: 40px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--violet);
+}
+.liveDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--violet);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .live[data-live="true"] .liveDot {
+    animation: blink 1.4s ease-in-out infinite;
+  }
+}
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+.stageTitle {
+  font-family: var(--serif);
+  font-size: 26px;
+  margin: 0;
+  max-width: 640px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stageSub {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--w45);
+  margin-top: 6px;
+  text-transform: uppercase;
+}
+.lanes {
+  margin: auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.lane {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.laneLbl {
+  width: 36px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--w45);
+}
+.lanebars {
+  flex: 1;
+  height: 56px;
+  background: var(--panel);
+  border-radius: 8px;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 8px;
+  overflow: hidden;
+}
+.lanebars span {
+  flex: 1;
+  background: var(--violet);
+  border-radius: 2px;
+  min-height: 4%;
+}
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: auto;
+}
+.playbtn {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: var(--violet);
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 14px;
+  flex: 0 0 auto;
+}
+.playbtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.scrub {
+  flex: 1;
+  height: 3px;
+  background: var(--track);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.scrub i {
+  display: block;
+  height: 100%;
+  background: var(--violet);
+}
+.time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--w55);
+  font-variant-numeric: tabular-nums;
+}
+.regen,
+.exportlink {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--violet);
+  cursor: pointer;
+  text-transform: uppercase;
+  background: transparent;
+  border: 0;
+}
+.regen:disabled {
+  color: var(--w40);
+  cursor: default;
+}

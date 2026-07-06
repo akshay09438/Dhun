@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach, test } from "vitest";
 import { uploadSongs, postLiveCommand, getLiveContext } from "./api";
 import { fetchVocalBus, getSuggestions } from "./api";
-import { splitSong, analyzeSong, makeMix } from "./api";
+import { splitSong, analyzeSong, makeMix, getMixName } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -200,6 +200,18 @@ test("makeMix surfaces the backend's plain-language error", async () => {
   await expect(
     makeMix("a".repeat(64), "b".repeat(64), "", 1, { pollMs: 0, maxTries: 5 }),
   ).rejects.toThrow(/couldn't be mixed/i);
+});
+
+test("getMixName returns the AI-coined name", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ name: "Tere Ocean" }),
+    }),
+  );
+  const name = await getMixName("father ocean.mp3", "tere bina.wav", "");
+  expect(name).toBe("Tere Ocean");
 });
 
 test("getSuggestions returns the sections array", async () => {

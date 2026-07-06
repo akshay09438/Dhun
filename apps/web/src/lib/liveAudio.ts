@@ -76,6 +76,13 @@ export class LivePlayer {
     return Math.max(0, this.ctx.currentTime - this.startCtxTime);
   }
 
+  /** Length of the mix (the longest loaded bus), for the transport readout. */
+  duration(): number {
+    let d = 0;
+    for (const b of this.buffers.values()) d = Math.max(d, b.duration);
+    return d;
+  }
+
   /** Schedule a mute/unmute/fade on the next bar, ramped over 1 bar (or FADE_BARS for a
    *  fade), for every named bus. */
   schedule(op: LiveOpDTO, ctx: LiveContextDTO): void {

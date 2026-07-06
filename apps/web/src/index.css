@@ -1,20 +1,31 @@
+/* Prompt-DJ — Electric Violet design system.
+   Two hues only: grey structure + one violet accent (active/live/actionable).
+   Instrument Serif for human statements, Space Mono for labels, system for body. */
 :root {
-  --bg: #0f1016;
-  --surface: #1a1c26;
-  --surface-2: #22252f;
-  --border: #2e323f;
-  --text: #eef0f6;
-  --muted: #9aa0b4;
-  --accent: #7c5cff;
-  --accent-2: #00d3a7;
+  --page: #1c1c1f;
+  --frame: #2b2b30;
+  --panel: #34343a;
+  --track: #3a3a40;
+  --violet: #8f00ff;
+
+  --text: #ffffff;
+  --w75: rgba(255, 255, 255, 0.75);
+  --w55: rgba(255, 255, 255, 0.55);
+  --w45: rgba(255, 255, 255, 0.45);
+  --w40: rgba(255, 255, 255, 0.4);
+  --w35: rgba(255, 255, 255, 0.35);
+  --b28: rgba(255, 255, 255, 0.28);
+  --b22: rgba(255, 255, 255, 0.22);
+  --b14: rgba(255, 255, 255, 0.14);
+  --b12: rgba(255, 255, 255, 0.12);
+  --b10: rgba(255, 255, 255, 0.1);
   --danger: #ff6b6b;
-  --radius: 14px;
-  font-family:
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    Roboto,
-    sans-serif;
+
+  --serif: "Instrument Serif", Georgia, "Times New Roman", serif;
+  --mono: "Space Mono", "Courier New", monospace;
+  --sys: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  font-family: var(--sys);
 }
 
 * {
@@ -23,11 +34,165 @@
 
 body {
   margin: 0;
-  background: radial-gradient(
-    1200px 600px at 50% -10%,
-    #1b1d2b 0%,
-    var(--bg) 60%
-  );
+  background: var(--page);
   color: var(--text);
   min-height: 100vh;
+  overflow: hidden;
+}
+
+/* ---- shared app shell (1280x800 frame, scaled to fit, centered) ---- */
+.pageWrap {
+  position: fixed;
+  inset: 0;
+  background: var(--page);
+  overflow: hidden;
+}
+.scaler {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1280px;
+  height: 800px;
+  transform: translate(-50%, -50%) scale(var(--s, 1));
+  transform-origin: center center;
+}
+.frame {
+  width: 1280px;
+  height: 800px;
+  background: var(--frame);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---- top bar ---- */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 28px;
+  border-bottom: 1px solid var(--b10);
+  flex: 0 0 auto;
+}
+.wordmark {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.15em;
+}
+.wordmark .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--violet);
+}
+.steps-nav {
+  display: flex;
+  gap: 2px;
+  background: var(--panel);
+  border: 1px solid var(--b12);
+  border-radius: 999px;
+  padding: 3px;
+}
+.steps-nav span {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--w45);
+  border-radius: 999px;
+  padding: 6px 16px;
+}
+.steps-nav span.active {
+  background: var(--violet);
+  color: var(--text);
+}
+
+/* ---- console / stage split ---- */
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.console {
+  flex: 0 0 360px;
+  width: 360px;
+  padding: 26px 24px;
+  border-right: 1px solid var(--b10);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.stage {
+  flex: 1;
+  padding: 32px 40px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+
+/* ---- shared type + controls ---- */
+.kicker {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--w45);
+  text-transform: uppercase;
+  margin: 0 0 8px;
+}
+.title {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 30px;
+  line-height: 1.05;
+  margin: 0 0 22px;
+  text-wrap: balance;
+}
+.btnPrimary {
+  width: 100%;
+  padding: 13px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--violet);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    transform 0.05s,
+    opacity 0.15s;
+}
+.btnPrimary:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+.btnPrimary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.btnSecondary {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--b28);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--w75);
+  font-weight: 600;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.btnSecondary:hover {
+  border-color: var(--violet);
+}
+.errorText {
+  color: var(--danger);
+  font-size: 13px;
+  text-align: center;
+}
+:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
 }
