@@ -19,7 +19,9 @@ def test_fallback_arrangement_without_api_key(monkeypatch):
     assert mix.source == "rules"
     assert mix.placements  # the arrangement drives the plan now
     assert mix.anchor == mix.placements[0].anchor  # scalar mirrors first (M3 back-compat)
-    assert 0.92 <= mix.vocal_stretch <= 1.08
+    from app.planner import fence
+
+    assert fence.SAFE_STRETCH_LO <= mix.vocal_stretch <= fence.SAFE_STRETCH_HI
 
 
 def test_arrangement_has_multiple_nonoverlapping_placements(monkeypatch):

@@ -12,11 +12,14 @@ from __future__ import annotations
 
 from app.models import TrackAnalysis
 
-# Small stretches sound clean; big ones warble. Keep Song 2's vocal within ±8% of
-# Song 1's tempo (atempo is transparent in this band). Outside it, we decline the
-# pair rather than ship a warbly voice (Handbook B3).
-SAFE_STRETCH_LO = 0.92
-SAFE_STRETCH_HI = 1.08
+# Small stretches sound clean; big ones warble. Song 2's vocal is kept within this band
+# of Song 1's tempo (atempo stays acceptable here); outside it we decline rather than ship
+# a warbly voice (Handbook B3; also enforced per-bar by validate R7). Widened from ±8% to
+# ±11% (2026-07-07) so the curated catalog's key-perfect but slightly-off-tempo vocals fit
+# (Der Lagi Lekin 111 BPM ≈ +9.9%, Tujhe Bhula Diya 133 ≈ −8.3% against Father Ocean's 122).
+# Trade-off: a bit more audible stretch on wide pairs — acceptable at validation scale.
+SAFE_STRETCH_LO = 0.89
+SAFE_STRETCH_HI = 1.11
 
 # Cap the vocal slice so one long region can't dominate the whole mix — M3 is a
 # single placement; a section-length drop stays punchy.
