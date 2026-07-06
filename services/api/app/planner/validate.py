@@ -23,7 +23,7 @@ import numpy as np
 import soundfile as sf
 
 from app.models import MixPlan, TrackAnalysis
-from app.planner.fence import SAFE_STRETCH_HI, SAFE_STRETCH_LO
+from app.planner.fence import SAFE_STRETCH_HI, SAFE_STRETCH_LO, placement_end
 
 # A sample magnitude at or above this counts as clipping (square-wave distortion).
 CLIP_CEILING = 0.999
@@ -72,8 +72,9 @@ def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[s
         if p.vocal_src[1] <= p.vocal_src[0]:
             violations.append("a vocal slice is empty")
     for a, b in zip(ordered, ordered[1:]):  # R1: one vocal at a time — no overlap
-        a_end = a.anchor + (a.vocal_src[1] - a.vocal_src[0]) * plan.vocal_stretch
-        if b.anchor < a_end - 1e-6:
+        # Uses the shared rendered-length math (source / stretch), so the referee and the
+        # driver measure a vocal's real end identically and can never drift apart.
+        if b.anchor < placement_end(a.anchor, a.vocal_src, plan.vocal_stretch) - 1e-6:
             violations.append("two vocal placements overlap (R1)")
     return violations
 

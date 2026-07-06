@@ -79,9 +79,17 @@ def _default_arrangement(opts: dict, take: int) -> list[Placement]:
     for i, anc in enumerate(chosen):
         s0, s1 = slices[i % len(slices)]
         gap = (chosen[i + 1] - anc) if i + 1 < len(chosen) else _MAX_PLACEMENTS * 60.0
-        fit = (gap - _ENTRY_MARGIN) / stretch  # source-time length that fits before the next entry
-        end = s0 + max(fence.MIN_VOCAL_SECS, min(s1 - s0, fit))
-        placements.append(Placement(anchor=anc, vocal_src=(s0, round(end, 3)), beat_breath=i > 0))
+        # A vocal of SOURCE length d renders to d / stretch output-seconds; we want that
+        # to fit the output gap, so the max source length is (gap - margin) * stretch.
+        fit = max(0.0, (gap - _ENTRY_MARGIN) * stretch)
+        length = min(s1 - s0, fit)
+        if length < fence.MIN_VOCAL_SECS:
+            continue  # not enough clean room before the next entry — skip this spot
+        placements.append(Placement(anchor=anc, vocal_src=(s0, round(s0 + length, 3)), beat_breath=i > 0))
+    if not placements:  # nothing fit — one safe placement at the best anchor
+        s0, s1 = slices[0]
+        end = s0 + min(s1 - s0, fence.MAX_VOCAL_SECS)
+        placements = [Placement(anchor=anchors[0], vocal_src=(s0, round(end, 3)))]
     return placements
 
 
@@ -114,7 +122,9 @@ def _ai_arrange(opts: dict, prompt: str, take: int) -> list[Placement] | None:
         for p in data["placements"][:_MAX_PLACEMENTS]:
             anc = min(legal, key=lambda x: abs(x - float(p["anchor"])))  # snap to a legal anchor
             sl = p["vocal_slice"]
-            out.append(Placement(anchor=anc, vocal_src=(float(sl[0]), float(sl[1])),
+            s0 = float(sl[0])
+            s1 = min(float(sl[1]), s0 + fence.MAX_VOCAL_SECS)  # never longer than the fence allows
+            out.append(Placement(anchor=anc, vocal_src=(s0, s1),
                                  beat_breath=bool(p.get("beat_breath", False))))
         return out or None
     except Exception:
@@ -129,9 +139,7 @@ def _dedupe_nonoverlapping(placements: list[Placement], stretch: float) -> list[
         if not kept:
             kept.append(p)
             continue
-        prev = kept[-1]
-        prev_end = prev.anchor + (prev.vocal_src[1] - prev.vocal_src[0]) * stretch
-        if p.anchor >= prev_end:
+        if p.anchor >= fence.placement_end(kept[-1].anchor, kept[-1].vocal_src, stretch):
             kept.append(p)
     return kept
 

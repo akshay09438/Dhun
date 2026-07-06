@@ -69,6 +69,17 @@ def test_validate_accepts_clean_arrangement():
     assert validate.validate_plan(make_arrangement_plan(p), a1, a2) == []
 
 
+def test_validate_flags_overlap_only_visible_at_sub_unity_stretch():
+    # At stretch 0.93 the 20s vocal from 16.0 really ends at 16 + 20/0.93 ~= 37.5, so a
+    # placement at 36.0 overlaps it. The OLD (inverted) math computed 16 + 20*0.93 = 34.6
+    # and MISSED it; the fixed referee, using the shared rendered-length math, catches it.
+    a1, a2 = make_analysis(), make_analysis()  # downbeats every 2s
+    p = [Placement(anchor=16.0, vocal_src=(0.0, 20.0)),
+         Placement(anchor=36.0, vocal_src=(0.0, 8.0))]
+    v = validate.validate_plan(make_arrangement_plan(p, stretch=0.93), a1, a2)
+    assert any("R1" in m or "overlap" in m.lower() for m in v)
+
+
 def test_validate_render_clean(tmp_path):
     wav = tmp_path / "ok.wav"
     sf.write(wav, (0.5 * np.sin(np.linspace(0, 100, 44100))).astype("float32"), 44100)

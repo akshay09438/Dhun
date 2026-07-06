@@ -192,3 +192,21 @@ def arrangement_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
         "anchors_ranked": candidate_drops(a1, need),  # best energy first, with runway
         "vocal_slices": slices,
     }
+
+
+def rendered_vocal_secs(vocal_src: tuple[float, float], stretch: float) -> float:
+    """How long a vocal slice actually plays after FFmpeg `atempo=stretch`.
+
+    atempo changes tempo by `stretch`, so the OUTPUT duration is source_duration /
+    stretch — NOT * stretch. The two only agree at stretch == 1.0; for stretch < 1
+    (Song 2 faster than Song 1, so we slow it) the vocal plays *longer*. The single
+    source of truth for a placed vocal's real length — the driver and the referee
+    both call this so they can never drift onto different math (which shipped
+    overlapping vocals in an earlier cut of M4).
+    """
+    return (vocal_src[1] - vocal_src[0]) / stretch if stretch > 0 else 0.0
+
+
+def placement_end(anchor: float, vocal_src: tuple[float, float], stretch: float) -> float:
+    """The real time (secs into the mix) a placed vocal finishes playing."""
+    return anchor + rendered_vocal_secs(vocal_src, stretch)

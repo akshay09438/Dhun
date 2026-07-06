@@ -5,7 +5,7 @@ _ai_arrange — never a real API call.
 
 import pytest
 
-from app.planner import plan as planner
+from app.planner import fence, plan as planner
 from tests.test_fence import make_analysis
 
 
@@ -36,9 +36,24 @@ def test_arrangement_has_multiple_nonoverlapping_placements(monkeypatch):
 
     assert len(plan.placements) >= 2
     ordered = sorted(plan.placements, key=lambda p: p.anchor)
-    for a, b in zip(ordered, ordered[1:]):  # no two vocals overlap in time
-        a_len = (a.vocal_src[1] - a.vocal_src[0]) * plan.vocal_stretch
-        assert a.anchor + a_len <= b.anchor + 1e-6
+    for a, b in zip(ordered, ordered[1:]):  # no two vocals overlap (REAL rendered length)
+        assert fence.placement_end(a.anchor, a.vocal_src, plan.vocal_stretch) <= b.anchor + 1e-6
+
+
+def test_no_overlap_when_vocal_is_faster_than_beat(monkeypatch):
+    # Song 2 faster than Song 1 -> stretch < 1 -> the vocal plays LONGER. The earlier
+    # bug used the inverted math and placed the next entry too soon (two voices at once).
+    # This asserts spacing with the REAL rendered length; it fails against that bug.
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=100.0, n_bars=32)
+    a2 = make_analysis(bpm=108.0, vocal_regions=[(0.0, 20.0), (24.0, 44.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    assert plan.vocal_stretch < 1.0  # the harmful direction
+    ordered = sorted(plan.placements, key=lambda p: p.anchor)
+    for a, b in zip(ordered, ordered[1:]):
+        assert fence.placement_end(a.anchor, a.vocal_src, plan.vocal_stretch) <= b.anchor + 1e-6
 
 
 def test_regenerate_yields_a_different_arrangement(monkeypatch):
