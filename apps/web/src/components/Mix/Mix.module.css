@@ -189,3 +189,38 @@
 .regenerate:hover {
   transform: translateY(-1px);
 }
+
+.s1VocalBlock {
+  position: absolute;
+  top: 0;
+  height: 22px;
+  min-width: 6px;
+  border-radius: 6px;
+  background: var(--accent-2);
+  opacity: 0.85;
+}
+
+.legend {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.swatchS2,
+.swatchS1 {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  vertical-align: -1px;
+  margin-right: 4px;
+}
+
+.swatchS2 {
+  background: linear-gradient(90deg, var(--accent), #6a4bff);
+}
+
+.swatchS1 {
+  background: var(--accent-2);
+  margin-left: 14px;
+}

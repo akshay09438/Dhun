@@ -93,6 +93,7 @@ export type PlacementDTO = {
   anchor: number;
   vocal_src: [number, number];
   beat_breath: boolean;
+  fx: string | null; // e.g. "sweep_in"
 };
 
 export type MixPlanDTO = {
@@ -101,6 +102,7 @@ export type MixPlanDTO = {
   anchor: number;
   beat_breath: boolean;
   placements: PlacementDTO[];
+  s1_vocal_regions: [number, number][]; // spans where Song 1's own vocal answers
   take: number;
   notes: string;
   source: string; // "ai" | "rules"

@@ -39,10 +39,12 @@ function readyPlan(take = 1) {
       beat_breath: false,
       take,
       placements: [
-        { anchor: 16, vocal_src: [0, 12], beat_breath: false },
-        { anchor: 64, vocal_src: [0, 12], beat_breath: true },
+        { anchor: 16, vocal_src: [0, 12], beat_breath: false, fx: null },
+        { anchor: 64, vocal_src: [0, 12], beat_breath: true, fx: "sweep_in" },
       ],
-      notes: "Vocal weaves in at 0:16, 1:04, tempo-locked to Song 1.",
+      s1_vocal_regions: [[30, 42]], // Song 1's own vocal answers in the gap
+      notes:
+        "Vocal weaves in at 0:16, 1:04. Song 1's own vocal answers in a gap.",
       source: "rules",
     },
     message: null,
@@ -75,6 +77,7 @@ describe("MixMaker", () => {
 
     await waitFor(() => {
       expect(screen.getAllByTestId("vocal-block")).toHaveLength(2); // the weave is shown
+      expect(screen.getByTestId("s1-vocal-block")).toBeTruthy(); // Song 1's vocal answers
       expect(screen.getByText(/take 1/i)).toBeTruthy();
       expect(
         screen.getByRole("button", { name: /give me another take/i }),

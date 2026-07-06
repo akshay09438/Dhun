@@ -128,18 +128,26 @@ export function MixMaker({ song1, song2 }: { song1: SongDTO; song2: SongDTO }) {
   );
 }
 
-/** The two-lane arrangement view: the beat runs throughout; the vocal comes in and out. */
+/** The two-lane arrangement view: the beat runs throughout; Song 2's vocal weaves in
+ *  and out, and (Slice B) Song 1's own vocal answers in the gaps, in a distinct colour. */
 function Arrangement({ mix }: { mix: MixDTO }) {
-  const placements = mix.plan?.placements ?? [];
-  const stretch = mix.plan?.vocal_stretch ?? 1;
+  const plan = mix.plan;
+  const placements = plan?.placements ?? [];
+  const stretch = plan?.vocal_stretch ?? 1;
   if (placements.length === 0) return null;
 
-  const blocks = placements.map((p) => {
-    const start = p.anchor;
-    const end = p.anchor + (p.vocal_src[1] - p.vocal_src[0]) * stretch;
-    return { start, end, breath: p.beat_breath };
-  });
-  const total = Math.max(...blocks.map((b) => b.end), 1);
+  const s2 = placements.map((p) => ({
+    start: p.anchor,
+    end: p.anchor + (p.vocal_src[1] - p.vocal_src[0]) / stretch, // real rendered length
+    breath: p.beat_breath,
+    fx: p.fx,
+  }));
+  const s1 = (plan?.s1_vocal_regions ?? []).map(([start, end]) => ({
+    start,
+    end,
+  }));
+  const total = Math.max(...s2.map((b) => b.end), ...s1.map((b) => b.end), 1);
+  const pct = (x: number) => `${(x / total) * 100}%`;
 
   return (
     <div
@@ -154,26 +162,38 @@ function Arrangement({ mix }: { mix: MixDTO }) {
       <div className={styles.lane}>
         <span className={styles.laneLabel}>vocal</span>
         <div className={styles.vocalTrack}>
-          {blocks.map((b, i) => (
+          {s1.map((b, i) => (
             <div
-              key={i}
+              key={`s1-${i}`}
+              data-testid="s1-vocal-block"
+              className={styles.s1VocalBlock}
+              title="Song 1's own vocal answers here (contrast)"
+              style={{ left: pct(b.start), width: pct(b.end - b.start) }}
+            />
+          ))}
+          {s2.map((b, i) => (
+            <div
+              key={`s2-${i}`}
               data-testid="vocal-block"
               className={styles.vocalBlock}
               title={
-                b.breath
-                  ? "vocal in (with a beat-breath before it)"
-                  : "vocal in"
+                b.fx
+                  ? "vocal in (filter sweep builds into it)"
+                  : b.breath
+                    ? "vocal in (beat-breath before it)"
+                    : "vocal in"
               }
-              style={{
-                left: `${(b.start / total) * 100}%`,
-                width: `${((b.end - b.start) / total) * 100}%`,
-              }}
+              style={{ left: pct(b.start), width: pct(b.end - b.start) }}
             >
-              {b.breath ? "⤳" : ""}
+              {b.fx ? "∿" : b.breath ? "⤳" : ""}
             </div>
           ))}
         </div>
       </div>
+      <p className={styles.legend}>
+        <span className={styles.swatchS2} /> Song 2 vocal
+        <span className={styles.swatchS1} /> Song 1 vocal
+      </p>
     </div>
   );
 }
