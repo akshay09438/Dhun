@@ -16,8 +16,9 @@ from pydantic import BaseModel
 from app.audio.analysis import analysis_path
 from app.audio.stems import stem_path
 from app.config import settings
-from app.models import LiveOp, MixPlan
+from app.models import LiveOp, MixPlan, TrackAnalysis
 from app.planner.live import parse_command
+from app.planner.suggest import suggest_moves
 
 # workers/ lives at the repo root; put it on the path so we can import the vocal-bus renderer.
 _REPO = __import__("pathlib").Path(__file__).resolve().parents[4]
@@ -106,3 +107,28 @@ def live_vocal_bus(mix_id: str):
         _vocal_jobs[mix_id] = ("processing", None)
         threading.Thread(target=_run_vocal_bus, args=(mix_id,), daemon=True).start()
     return Response(status_code=202)  # browser polls until 200
+
+
+def _suggestions_path(mix_id: str):
+    return settings.data_dir / f"{mix_id}.suggestions.json"
+
+
+@router.get("/live/suggestions/{mix_id}")
+def live_suggestions(mix_id: str):
+    """Per-section suggestion chips for a finished mix. One AI call (cached), fallback-safe."""
+    if not _HEX_ID.fullmatch(mix_id):
+        raise HTTPException(404, "Not found.")
+    cache = _suggestions_path(mix_id)
+    if cache.exists():
+        return {"sections": json.loads(cache.read_text())}
+    plan_file = _mixplan_path(mix_id)
+    if not plan_file.exists():
+        raise HTTPException(409, "Make the mix first so I can suggest moves.")
+    plan = MixPlan(**json.loads(plan_file.read_text()))
+    a1p = analysis_path(plan.song1_id)
+    if not a1p.exists():
+        raise HTTPException(409, "Song 1 hasn't been analyzed yet.")
+    a1 = TrackAnalysis(status="ready", **json.loads(a1p.read_text()))
+    data = [s.model_dump() for s in suggest_moves(a1)]
+    cache.write_text(json.dumps(data))
+    return {"sections": data}

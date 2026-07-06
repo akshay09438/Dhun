@@ -80,3 +80,41 @@ def test_vocal_bus_serves_the_wav_when_present(monkeypatch, tmp_path):
     r = client.get(f"/live/vocal-bus/{HEX}")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("audio/")
+
+
+from app.models import MixPlan
+from app.planner import suggest as suggest_mod
+
+
+def _seed_plan_and_sections(tmp_path, monkeypatch):
+    monkeypatch.setattr(suggest_mod, "_ai_suggest", lambda *a, **k: None)  # force fallback, no AI
+    plan = MixPlan(mix_id=HEX, song1_id=HEX, song2_id=HEX, master_bpm=120.0,
+                   vocal_stretch=1.0, vocal_src=(0.0, 2.0), anchor=1.0)
+    (tmp_path / f"{HEX}.mixplan.json").write_text(plan.model_dump_json())
+    analysis_path(HEX).write_text(json.dumps(
+        {"song_id": HEX, "bpm": 120.0, "downbeats": [], "beats": [], "phrase_starts": [],
+         "sections": [{"start": 0.0, "end": 30.0, "label": "intro"},
+                      {"start": 30.0, "end": 60.0, "label": "chorus"}],
+         "energy_curve": [], "vocal_regions": []}))
+
+
+def test_suggestions_bad_id_is_404():
+    assert client.get("/live/suggestions/nothex").status_code == 404
+
+
+def test_suggestions_without_a_plan_is_409(monkeypatch, tmp_path):
+    _use_live_tmp(monkeypatch, tmp_path)
+    assert client.get(f"/live/suggestions/{HEX}").status_code == 409
+
+
+def test_suggestions_returns_sections_with_vocabulary_chips(monkeypatch, tmp_path):
+    _use_live_tmp(monkeypatch, tmp_path)
+    _seed_plan_and_sections(tmp_path, monkeypatch)
+    r = client.get(f"/live/suggestions/{HEX}")
+    assert r.status_code == 200
+    secs = r.json()["sections"]
+    assert [s["label"] for s in secs] == ["intro", "chorus"]
+    known = {"Bring the vocal in", "Take the vocal out", "Take the bass out",
+             "Drop to just the beat", "Bring it all back", "Fade it out"}
+    for s in secs:
+        assert s["chips"] and all(c["text"] in known for c in s["chips"])
