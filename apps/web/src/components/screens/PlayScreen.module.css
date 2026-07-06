@@ -229,15 +229,40 @@
 }
 .scrub {
   flex: 1;
+  position: relative;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: none;
+}
+.scrubTrack {
+  flex: 1;
   height: 3px;
   background: var(--track);
   border-radius: 999px;
   overflow: hidden;
 }
-.scrub i {
+.scrubTrack i {
   display: block;
   height: 100%;
   background: var(--violet);
+}
+.knob {
+  position: absolute;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  background: var(--violet);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.scrub:hover .knob,
+.scrub:focus-visible .knob {
+  opacity: 1;
 }
 .time {
   font-family: var(--mono);

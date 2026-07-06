@@ -99,7 +99,9 @@ export default function PlayScreen({
   const [sections, setSections] = useState<SectionSuggestionsDTO[]>([]);
   const [chips, setChips] = useState<Chip[]>([]);
   const [elapsed, setElapsed] = useState(0);
+  const [dragging, setDragging] = useState(false);
   const feedRef = useRef<HTMLDivElement>(null);
+  const scrubRef = useRef<HTMLDivElement>(null);
 
   const { beat, vox, total } = useMemo(() => laneBars(mix), [mix]);
 
@@ -150,6 +152,29 @@ export default function PlayScreen({
   }, [feed]);
 
   const duration = playerRef.current?.duration() || total;
+
+  function seekToClientX(clientX: number) {
+    const el = scrubRef.current;
+    if (!el || !duration) return;
+    const rect = el.getBoundingClientRect();
+    const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const t = frac * duration;
+    playerRef.current?.seek(t);
+    setElapsed(t);
+  }
+
+  // While dragging the scrub, follow the pointer anywhere on the page until release.
+  useEffect(() => {
+    if (!dragging) return;
+    const move = (e: PointerEvent) => seekToClientX(e.clientX);
+    const up = () => setDragging(false);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+  }, [dragging, duration]);
 
   function say(text: string, kind: FeedLine["kind"]) {
     setFeed((f) => [...f, { text, kind }]);
@@ -336,10 +361,41 @@ export default function PlayScreen({
           >
             {playing ? "❚❚" : "▶"}
           </button>
-          <div className={styles.scrub}>
-            <i
+          <div
+            className={styles.scrub}
+            ref={scrubRef}
+            role="slider"
+            aria-label="Seek through the mix"
+            aria-valuemin={0}
+            aria-valuemax={Math.round(duration)}
+            aria-valuenow={Math.round(elapsed)}
+            tabIndex={0}
+            onPointerDown={(e) => {
+              setDragging(true);
+              seekToClientX(e.clientX);
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+              e.preventDefault();
+              const t = Math.max(
+                0,
+                Math.min(duration, elapsed + (e.key === "ArrowRight" ? 5 : -5)),
+              );
+              playerRef.current?.seek(t);
+              setElapsed(t);
+            }}
+          >
+            <div className={styles.scrubTrack}>
+              <i
+                style={{
+                  width: `${duration ? Math.min(100, (elapsed / duration) * 100) : 0}%`,
+                }}
+              />
+            </div>
+            <span
+              className={styles.knob}
               style={{
-                width: `${duration ? Math.min(100, (elapsed / duration) * 100) : 0}%`,
+                left: `${duration ? Math.min(100, (elapsed / duration) * 100) : 0}%`,
               }}
             />
           </div>

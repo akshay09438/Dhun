@@ -76,13 +76,36 @@ def test_vocal_bus_without_a_plan_is_409(monkeypatch, tmp_path):
 
 def test_vocal_bus_serves_the_wav_when_present(monkeypatch, tmp_path):
     _use_live_tmp(monkeypatch, tmp_path)
-    (tmp_path / f"{HEX}.livevocal.wav").write_bytes(b"RIFF....WAVEfake")  # pre-seeded "ready"
+    (tmp_path / f"{HEX}.livearr.wav").write_bytes(b"RIFF....WAVEfake")  # pre-seeded "ready"
     r = client.get(f"/live/vocal-bus/{HEX}")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("audio/")
 
 
 from app.models import MixPlan
+
+
+def test_live_vocal_render_uses_the_arranged_bus(monkeypatch, tmp_path):
+    """The live Vocals must be the ARRANGED, beat-locked bus (render_vocal_bus) — the same
+    vocal as the Download — NOT the old continuous full-vocal that drifted/wandered."""
+    _use_live_tmp(monkeypatch, tmp_path)
+    plan = MixPlan(
+        mix_id=HEX, song1_id=HEX, song2_id=HEX, master_bpm=120.0, vocal_stretch=1.0,
+        vocal_src=(0.0, 2.0), anchor=2.0,
+        placements=[], s1_vocal_regions=[], take=1, notes="", source="rules",
+    )
+    (tmp_path / f"{HEX}.mixplan.json").write_text(plan.model_dump_json())
+
+    seen = {}
+
+    def fake_bus(plan_arg, song1_stems, song2_vocal, out):
+        seen["called"] = True
+        out.write_bytes(b"RIFFfake")
+
+    monkeypatch.setattr(live_route, "render_vocal_bus", fake_bus)
+    live_route._run_vocal_bus(HEX)
+    assert seen.get("called") is True
+    assert (tmp_path / f"{HEX}.livearr.wav").exists()
 from app.planner import suggest as suggest_mod
 
 

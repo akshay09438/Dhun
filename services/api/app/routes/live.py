@@ -24,7 +24,7 @@ from app.planner.suggest import suggest_moves
 _REPO = __import__("pathlib").Path(__file__).resolve().parents[4]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
-from workers.live_stems import render_full_vocal  # noqa: E402
+from workers.live_stems import render_vocal_bus  # noqa: E402
 
 router = APIRouter()
 _HEX_ID = re.compile(r"[0-9a-f]{64}")
@@ -66,9 +66,10 @@ def live_context(song1_id: str) -> LiveContext:
 
 
 def _vocal_bus_path(mix_id: str):
-    # ".livevocal" (not the old ".vocalbus"): the live Vocals part is now Song 2's CONTINUOUS
-    # vocal (bring-in-anytime), not the sparse arranged bus — the new name invalidates old caches.
-    return settings.data_dir / f"{mix_id}.livevocal.wav"
+    # ".livearr": the live Vocals part is the ARRANGED, per-bar beat-locked vocal — the SAME
+    # vocal as the Download (via render_vocal_bus), so the Play screen matches the finished mix.
+    # (Superseded the ".livevocal" continuous bus, which drifted/wandered; the new name drops it.)
+    return settings.data_dir / f"{mix_id}.livearr.wav"
 
 
 def _mixplan_path(mix_id: str):
@@ -76,10 +77,12 @@ def _mixplan_path(mix_id: str):
 
 
 def _run_vocal_bus(mix_id: str) -> None:
-    """Background worker: render Song 2's continuous vocal (tempo-matched) as the live bus."""
+    """Background worker: render the arrangement's vocal layer (Song 2 placed + beat-locked +
+    Song 1 contrast) as the live bus — the same vocal as the Download, so Play matches the mix."""
     try:
         plan = MixPlan(**json.loads(_mixplan_path(mix_id).read_text()))
-        render_full_vocal(stem_path(plan.song2_id, "vocals"), plan.vocal_stretch, _vocal_bus_path(mix_id))
+        song1_stems = {"vocals": stem_path(plan.song1_id, "vocals")}  # for the contrast answer
+        render_vocal_bus(plan, song1_stems, stem_path(plan.song2_id, "vocals"), _vocal_bus_path(mix_id))
         _vocal_jobs.pop(mix_id, None)  # readiness now inferred from the stored file
     except Exception:  # noqa: BLE001 — never leak a trace; log so a systematic bug isn't invisible
         log.exception("live-vocal render failed for %s", mix_id)

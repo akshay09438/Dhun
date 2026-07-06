@@ -22,8 +22,29 @@ export class LivePlayer {
   private buffers = new Map<BusName, AudioBuffer>();
   private gains = new Map<BusName, GainNode>();
   private sources = new Map<BusName, AudioBufferSourceNode>();
-  private startCtxTime = 0; // ctx.currentTime when playback (song time 0) began
+  private startCtxTime = 0; // ctx.currentTime that maps to song position 0
+  private offset = 0; // song position to (re)start from — updated by pause() and seek()
   private playing = false;
+
+  /** (Re)start every bus playing from song position `from`, anchored at ctx time `at`. */
+  private startSources(at: number, from: number): void {
+    for (const src of this.sources.values()) {
+      try {
+        src.stop();
+      } catch {
+        /* already stopped */
+      }
+    }
+    this.sources.clear();
+    this.startCtxTime = at - from;
+    for (const [bus, buf] of this.buffers) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(this.gains.get(bus)!);
+      src.start(at, Math.min(from, buf.duration));
+      this.sources.set(bus, src);
+    }
+  }
 
   private addBus(bus: BusName, buf: AudioBuffer): void {
     this.buffers.set(bus, buf);
@@ -54,26 +75,35 @@ export class LivePlayer {
 
   play(): void {
     if (this.playing) return;
-    this.startCtxTime = this.ctx.currentTime + 0.1; // small lead so all sources start together
-    for (const [bus, buf] of this.buffers) {
-      const src = this.ctx.createBufferSource();
-      src.buffer = buf;
-      src.connect(this.gains.get(bus)!);
-      src.start(this.startCtxTime);
-      this.sources.set(bus, src);
-    }
+    this.startSources(this.ctx.currentTime + 0.1, this.offset); // resume from where we paused
     this.ctx.resume();
     this.playing = true;
   }
 
   pause(): void {
-    for (const src of this.sources.values()) src.stop();
+    this.offset = this.songTime(); // freeze the position so play() resumes here
+    for (const src of this.sources.values()) {
+      try {
+        src.stop();
+      } catch {
+        /* already stopped */
+      }
+    }
     this.sources.clear();
     this.playing = false;
   }
 
+  /** Jump to `t` seconds — click/drag the transport. Keeps playing if it was playing. */
+  seek(t: number): void {
+    const target = Math.max(0, Math.min(t, this.duration()));
+    this.offset = target;
+    if (this.playing) this.startSources(this.ctx.currentTime + 0.02, target);
+  }
+
   songTime(): number {
-    return Math.max(0, this.ctx.currentTime - this.startCtxTime);
+    return this.playing
+      ? Math.max(0, this.ctx.currentTime - this.startCtxTime)
+      : this.offset;
   }
 
   /** Length of the mix (the longest loaded bus), for the transport readout. */
