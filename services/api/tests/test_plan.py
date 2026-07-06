@@ -84,6 +84,30 @@ def test_ai_arrangement_is_used_when_available(monkeypatch):
     assert len(mix.placements) == 2 and mix.placements[1].beat_breath is True
 
 
+def test_contrast_and_sweep_on_a_confident_pair(monkeypatch):
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(60.0, 90.0)])  # S1 sings in a gap
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 20.0), (30.0, 50.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    assert plan.s1_vocal_regions  # Song 1's own vocal answers in a gap
+    assert sum(1 for p in plan.placements if p.fx == "sweep_in") == 1  # one subtle sweep
+
+
+def test_shaky_song_plays_safe(monkeypatch):
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(60.0, 90.0)])
+    a1.bpm_confidence = 0.3  # loose grid — don't risk the fancy moves
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 20.0), (30.0, 50.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    assert len(plan.placements) <= 2
+    assert plan.s1_vocal_regions == []
+    assert all(p.fx is None and p.beat_breath is False for p in plan.placements)
+
+
 def test_declines_when_unmixable():
     a1 = make_analysis(bpm=120.0)
     a2 = make_analysis(bpm=150.0, vocal_regions=[(16.0, 40.0)])

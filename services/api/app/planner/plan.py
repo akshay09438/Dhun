@@ -47,11 +47,38 @@ def _describe(anchor: float) -> str:
     return f"Song 2's vocal enters on the drop at {m}:{s:02d}, tempo-locked to Song 1."
 
 
-def _describe_arrangement(placements: list[Placement]) -> str:
-    if len(placements) == 1:
+def _describe_arrangement(placements: list[Placement], s1_regions: list | None = None) -> str:
+    if len(placements) == 1 and not s1_regions:
         return _describe(placements[0].anchor)
     spots = ", ".join(f"{int(p.anchor) // 60}:{int(p.anchor) % 60:02d}" for p in placements)
-    return f"Vocal weaves in at {spots}, tempo-locked to Song 1 with the beat running throughout."
+    note = f"Vocal weaves in at {spots}, tempo-locked to Song 1 with the beat running throughout."
+    if s1_regions:
+        note += " Song 1's own vocal answers in a gap for contrast."
+    if any(p.fx for p in placements):
+        note += " A filter sweep builds into a big entry."
+    return note
+
+
+def _confident(a1: TrackAnalysis) -> bool:
+    """Is Song 1's grid trustworthy enough to risk the fancy moves? (Handbook Part 9.)"""
+    return a1.bpm_confidence is None or a1.bpm_confidence >= 0.5
+
+
+def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement],
+                      stretch: float) -> tuple[list[Placement], list[tuple[float, float]]]:
+    """Slice B: on a confident Song 1, answer with Song 1's own vocal in one gap and put a
+    single filter-sweep into the final (big) entry. On a shaky Song 1, play safe — no
+    flourishes and at most two placements — rather than bet fancy moves on bad data."""
+    if not _confident(a1):
+        safe = placements[:2]
+        for p in safe:
+            p.beat_breath = False
+            p.fx = None
+        return safe, []
+    s1_regions = fence.contrast_windows(a1, placements, stretch)[:1]
+    if len(placements) >= 2:  # one filter sweep, into the final (biggest) entry
+        placements[-1].fx = "sweep_in"
+    return placements, s1_regions
 
 
 def _extract_json(text: str) -> dict:
@@ -156,11 +183,13 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     if not placements:
         placements = _default_arrangement(opts, take)
     placements = _dedupe_nonoverlapping(placements, opts["vocal_stretch"])
+    placements, s1_regions = _apply_flourishes(a1, placements, opts["vocal_stretch"])
     first = placements[0]
     return MixPlan(
         mix_id=mix_id, song1_id=a1.song_id, song2_id=a2.song_id,
         master_bpm=opts["master_bpm"], vocal_stretch=opts["vocal_stretch"],
         vocal_src=first.vocal_src, anchor=first.anchor,  # scalar mirrors first (M3 back-compat)
-        placements=placements, take=take, notes=_describe_arrangement(placements),
+        placements=placements, s1_vocal_regions=s1_regions, take=take,
+        notes=_describe_arrangement(placements, s1_regions),
         confidence=0.75 if source == "ai" else 0.6, source=source,
     )
