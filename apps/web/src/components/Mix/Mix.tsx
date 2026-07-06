@@ -1,11 +1,5 @@
 import { useState } from "react";
-import {
-  API_BASE,
-  getMixStatus,
-  startMix,
-  type MixDTO,
-  type SongDTO,
-} from "../../lib/api";
+import { API_BASE, makeMix, type MixDTO, type SongDTO } from "../../lib/api";
 import styles from "./Mix.module.css";
 
 type MixState = "idle" | "mixing" | "done" | "error";
@@ -14,18 +8,23 @@ type MixState = "idle" | "mixing" | "done" | "error";
  * The heart of M4: turn the two ready songs into a full DJ arrangement — Song 1's
  * beat running throughout with Song 2's vocal weaving in and out — then show the
  * arrangement, let the user regenerate a different take, and download it.
+ *
+ * `initialMix` lets the one-click studying flow hand in an already-rendered mix so
+ * this shows the result straight away; Regenerate still makes fresh takes.
  */
 export function MixMaker({
   song1,
   song2,
   onMixReady,
+  initialMix,
 }: {
   song1: SongDTO;
   song2: SongDTO;
   onMixReady?: (mixId: string) => void;
+  initialMix?: MixDTO;
 }) {
-  const [state, setState] = useState<MixState>("idle");
-  const [mix, setMix] = useState<MixDTO | null>(null);
+  const [state, setState] = useState<MixState>(initialMix ? "done" : "idle");
+  const [mix, setMix] = useState<MixDTO | null>(initialMix ?? null);
   const [error, setError] = useState("");
 
   async function handleMix(take = 1) {
@@ -33,30 +32,10 @@ export function MixMaker({
     setError("");
     setMix(null);
     try {
-      const started = await startMix(song1.id, song2.id, "", take);
-      if (started.status === "ready") {
-        setMix(started);
-        setState("done");
-        onMixReady?.(started.mix_id);
-        return;
-      }
-      // Poll until the mix is rendered (cap ~4 minutes).
-      for (let i = 0; i < 80; i++) {
-        const s = await getMixStatus(started.mix_id);
-        if (s.status === "ready") {
-          setMix(s);
-          setState("done");
-          onMixReady?.(s.mix_id);
-          return;
-        }
-        if (s.status === "error") {
-          throw new Error(
-            s.message ?? "This pair couldn't be mixed. Try another.",
-          );
-        }
-        await new Promise((r) => setTimeout(r, 3000));
-      }
-      throw new Error("The mix is taking too long. Please try again.");
+      const s = await makeMix(song1.id, song2.id, "", take);
+      setMix(s);
+      setState("done");
+      onMixReady?.(s.mix_id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't make the mix.");
       setState("error");

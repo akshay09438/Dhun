@@ -120,130 +120,92 @@
   gap: 16px;
 }
 
-.player {
-  margin: 0;
-  padding: 16px;
+.studying {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  align-items: center;
+  padding: 40px 24px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
 
-.playerLabel {
-  font-size: 14px;
-  color: var(--muted);
-  margin-bottom: 10px;
-}
-
-.audio {
-  width: 100%;
-}
-
-.actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.splitBtn {
-  margin-top: 12px;
-  padding: 8px 18px;
-  font-size: 14px;
+.studyingTitle {
+  margin: 0;
+  font-size: 20px;
   font-weight: 600;
-  color: var(--text);
+}
+
+.steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 340px;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 15px;
+  color: var(--muted);
+  transition: color 0.2s;
+}
+
+.stepIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  border-radius: 999px;
+  font-size: 13px;
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 999px;
-  cursor: pointer;
-  transition: border-color 0.15s;
 }
 
-.splitBtn:hover {
+.stepActive {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.stepActive .stepIcon {
   border-color: var(--accent);
+  color: var(--accent-2);
+  animation: spin 1.4s linear infinite;
+}
+
+.stepDone {
+  color: var(--text);
+}
+
+.stepDone .stepIcon {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stepActive .stepIcon {
+    animation: none;
+  }
 }
 
 .splitting {
-  margin: 12px 0 0;
+  margin: 0;
   font-size: 13px;
   color: var(--muted);
-}
-
-.stems {
-  margin-top: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.stem {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.stemName {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: capitalize;
-  color: var(--accent-2);
-}
-
-.insights {
-  margin-top: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.chips {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.chip,
-.chipAccent {
-  padding: 4px 12px;
-  font-size: 13px;
-  font-weight: 600;
-  border-radius: 999px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  color: var(--text);
-}
-
-.chipAccent {
-  border-color: var(--accent);
-  color: var(--accent-2);
-}
-
-.timeline {
-  display: flex;
-  width: 100%;
-  height: 22px;
-  border-radius: 6px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-}
-
-.segment {
-  height: 100%;
-  min-width: 2px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: opacity 0.2s;
-}
-
-.segment:hover {
-  opacity: 0.8;
-}
-
-.segLabel {
-  font-size: 10px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.85);
-  text-transform: capitalize;
-  overflow: hidden;
-  white-space: nowrap;
-  padding: 0 4px;
+  text-align: center;
 }

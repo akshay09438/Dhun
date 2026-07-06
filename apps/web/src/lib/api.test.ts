@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach, test } from "vitest";
 import { uploadSongs, postLiveCommand, getLiveContext } from "./api";
 import { fetchVocalBus, getSuggestions } from "./api";
+import { splitSong, analyzeSong, makeMix } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -102,6 +103,104 @@ test("fetchVocalBus polls past 202 and returns the audio bytes", async () => {
     g.fetch = real;
   }
 }, 10000);
+
+test("splitSong polls past 'processing' until the parts are ready", async () => {
+  let gets = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation((_url: string, opts?: { method?: string }) => {
+      if ((opts?.method ?? "GET") === "POST")
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ song_id: "a", status: "processing", stems: {} }),
+        });
+      gets++;
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          song_id: "a",
+          status: gets >= 2 ? "ready" : "processing",
+          stems: gets >= 2 ? { vocals: "/v" } : {},
+        }),
+      });
+    }),
+  );
+  const out = await splitSong("a".repeat(64), { pollMs: 0, maxTries: 5 });
+  expect(out.status).toBe("ready");
+});
+
+test("analyzeSong returns immediately when the POST is already ready", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        song_id: "a",
+        status: "ready",
+        bpm: 120,
+        key: null,
+        sections: [],
+      }),
+    }),
+  );
+  const out = await analyzeSong("a".repeat(64), { pollMs: 0, maxTries: 5 });
+  expect(out.status).toBe("ready");
+});
+
+test("makeMix polls past 'processing' and returns the ready mix", async () => {
+  let gets = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation((url: string, opts?: { method?: string }) => {
+      if (String(url).endsWith("/mix") && opts?.method === "POST")
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ mix_id: "m", status: "processing", url: null }),
+        });
+      gets++;
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          mix_id: "m",
+          status: gets >= 2 ? "ready" : "processing",
+          url: gets >= 2 ? "/mix/m/audio" : null,
+          plan: null,
+          message: null,
+        }),
+      });
+    }),
+  );
+  const out = await makeMix("a".repeat(64), "b".repeat(64), "", 1, {
+    pollMs: 0,
+    maxTries: 5,
+  });
+  expect(out.status).toBe("ready");
+  expect(out.url).toBe("/mix/m/audio");
+});
+
+test("makeMix surfaces the backend's plain-language error", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation((url: string, opts?: { method?: string }) => {
+      if (String(url).endsWith("/mix") && opts?.method === "POST")
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ mix_id: "m", status: "processing" }),
+        });
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          mix_id: "m",
+          status: "error",
+          message: "This pair couldn't be mixed. Try another.",
+        }),
+      });
+    }),
+  );
+  await expect(
+    makeMix("a".repeat(64), "b".repeat(64), "", 1, { pollMs: 0, maxTries: 5 }),
+  ).rejects.toThrow(/couldn't be mixed/i);
+});
 
 test("getSuggestions returns the sections array", async () => {
   const g = globalThis as unknown as { fetch: typeof fetch };

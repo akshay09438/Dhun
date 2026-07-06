@@ -125,6 +125,24 @@ describe("MixMaker", () => {
     });
   });
 
+  it("shows an initialMix straight away without re-requesting one", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MixMaker
+        song1={song1}
+        song2={song2}
+        initialMix={readyPlan(1) as never}
+      />,
+    );
+
+    // Result is visible immediately (no "Make my mix" click, no network call).
+    expect(screen.getByTestId("mix-player")).toBeTruthy();
+    expect(screen.getByText(/take 1/i)).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("surfaces a plain-language reason when the pair can't be mixed yet", async () => {
     vi.stubGlobal(
       "fetch",

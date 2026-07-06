@@ -23,49 +23,173 @@ function pickBothSongs() {
   });
 }
 
-describe("Uploader", () => {
-  it("disables Process until both songs are chosen", () => {
+const READY_MIX = {
+  mix_id: "m",
+  status: "ready",
+  url: "/mix/m/audio",
+  plan: {
+    master_bpm: 120,
+    vocal_stretch: 1.0,
+    anchor: 16,
+    beat_breath: false,
+    take: 1,
+    placements: [
+      { anchor: 16, vocal_src: [0, 12], beat_breath: false, fx: null },
+    ],
+    s1_vocal_regions: [],
+    notes: "Vocal weaves in at 0:16.",
+    source: "rules",
+  },
+  message: null,
+};
+
+/** A backend where everything is instantly ready — the cached-demo-pair case. */
+function mockAllReady() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation((url: string, opts?: { method?: string }) => {
+      const u = String(url);
+      const method = opts?.method ?? "GET";
+      if (u.endsWith("/songs") && method === "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            songs: [
+              {
+                id: "a",
+                original_name: "beat.wav",
+                url: "/songs/a/audio",
+                status: "ready",
+              },
+              {
+                id: "b",
+                original_name: "voc.wav",
+                url: "/songs/b/audio",
+                status: "ready",
+              },
+            ],
+          }),
+        });
+      }
+      if (u.includes("/stems")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            song_id: "a",
+            status: "ready",
+            stems: { vocals: "/v" },
+          }),
+        });
+      }
+      if (u.includes("/analysis")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            song_id: "a",
+            status: "ready",
+            bpm: 120,
+            key: null,
+            sections: [],
+          }),
+        });
+      }
+      if (u.endsWith("/mix") && method === "POST") {
+        return Promise.resolve({ ok: true, json: async () => READY_MIX });
+      }
+      // /live/* and anything else — benign so LiveMix mounts without throwing.
+      if (u.includes("/live/context")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ bpm: 120, downbeats: [0, 2, 4] }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ sections: [] }),
+      });
+    }),
+  );
+}
+
+describe("Uploader — one-click studying flow", () => {
+  it("disables 'Make my mix' until both songs are chosen", () => {
     render(<Uploader />);
     const btn = screen.getByRole("button", {
-      name: /process/i,
+      name: /make my mix/i,
     }) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
   });
 
-  it("shows two players after a successful upload", async () => {
+  it("runs upload → split → analyze → plan hands-free and lands on the mix", async () => {
+    mockAllReady();
+    render(<Uploader />);
+    pickBothSongs();
+    fireEvent.click(screen.getByRole("button", { name: /make my mix/i }));
+
+    // The studying screen appears (no manual Split/Analyze buttons anywhere).
+    expect(
+      screen.queryByRole("button", { name: /split into parts/i }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /analyze track/i })).toBeNull();
+
+    // …then it lands on the finished mix without another click.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /give me another take/i }),
+      ).toBeTruthy(),
+    );
+    expect(screen.getByTestId("mix-player")).toBeTruthy();
+  });
+
+  it("shows a plain-language error and a Start over button if a step fails", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          songs: [
-            {
-              id: "a",
-              original_name: "beat.wav",
-              url: "/songs/a/audio",
-              status: "ready",
-            },
-            {
-              id: "b",
-              original_name: "voc.wav",
-              url: "/songs/b/audio",
-              status: "ready",
-            },
-          ],
-        }),
+      vi.fn().mockImplementation((url: string, opts?: { method?: string }) => {
+        const u = String(url);
+        const method = opts?.method ?? "GET";
+        if (u.endsWith("/songs") && method === "POST") {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              songs: [
+                {
+                  id: "a",
+                  original_name: "beat.wav",
+                  url: "/songs/a/audio",
+                  status: "ready",
+                },
+                {
+                  id: "b",
+                  original_name: "voc.wav",
+                  url: "/songs/b/audio",
+                  status: "ready",
+                },
+              ],
+            }),
+          });
+        }
+        if (u.includes("/stems")) {
+          // Split fails → the studying screen should surface it.
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ song_id: "a", status: "error", stems: {} }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: async () => ({}) });
       }),
     );
 
     render(<Uploader />);
     pickBothSongs();
-    fireEvent.click(screen.getByRole("button", { name: /process/i }));
+    fireEvent.click(screen.getByRole("button", { name: /make my mix/i }));
 
     await waitFor(() =>
-      expect(screen.getAllByTestId("player")).toHaveLength(2),
+      expect(screen.getByRole("alert").textContent).toMatch(/split failed/i),
     );
+    expect(screen.getByRole("button", { name: /start over/i })).toBeTruthy();
   });
 
-  it("shows an error message when the upload fails", async () => {
+  it("shows the server's message when the upload itself fails", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -73,155 +197,12 @@ describe("Uploader", () => {
         json: async () => ({ detail: "not audio" }),
       }),
     );
-
     render(<Uploader />);
     pickBothSongs();
-    fireEvent.click(screen.getByRole("button", { name: /process/i }));
+    fireEvent.click(screen.getByRole("button", { name: /make my mix/i }));
 
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toMatch(/not audio/i),
     );
-  });
-
-  it("splits a song into its parts on demand", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((url: string, opts?: { method?: string }) => {
-        if (String(url).endsWith("/songs")) {
-          return Promise.resolve({
-            ok: true,
-            json: async () => ({
-              songs: [
-                {
-                  id: "a",
-                  original_name: "beat.wav",
-                  url: "/songs/a/audio",
-                  status: "ready",
-                },
-                {
-                  id: "b",
-                  original_name: "voc.wav",
-                  url: "/songs/b/audio",
-                  status: "ready",
-                },
-              ],
-            }),
-          });
-        }
-        if (
-          String(url).includes("/stems") &&
-          (opts?.method ?? "GET") === "POST"
-        ) {
-          return Promise.resolve({
-            ok: true,
-            json: async () => ({
-              song_id: "a",
-              status: "processing",
-              stems: {},
-            }),
-          });
-        }
-        if (String(url).includes("/stems")) {
-          return Promise.resolve({
-            ok: true,
-            json: async () => ({
-              song_id: "a",
-              status: "ready",
-              stems: {
-                vocals: "/songs/a/stems/vocals",
-                drums: "/songs/a/stems/drums",
-                bass: "/songs/a/stems/bass",
-                other: "/songs/a/stems/other",
-              },
-            }),
-          });
-        }
-        return Promise.resolve({
-          ok: false,
-          json: async () => ({ detail: "?" }),
-        });
-      }),
-    );
-
-    render(<Uploader />);
-    pickBothSongs();
-    fireEvent.click(screen.getByRole("button", { name: /process/i }));
-
-    const splitButtons = await screen.findAllByRole("button", {
-      name: /split into parts/i,
-    });
-    fireEvent.click(splitButtons[0]);
-
-    await waitFor(() =>
-      expect(screen.getAllByTestId("stem-player")).toHaveLength(4),
-    );
-  });
-
-  it("analyzes a song and shows BPM, key, and the section timeline", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((url: string) => {
-        if (String(url).endsWith("/songs")) {
-          return Promise.resolve({
-            ok: true,
-            json: async () => ({
-              songs: [
-                {
-                  id: "a",
-                  original_name: "beat.wav",
-                  url: "/songs/a/audio",
-                  status: "ready",
-                },
-                {
-                  id: "b",
-                  original_name: "voc.wav",
-                  url: "/songs/b/audio",
-                  status: "ready",
-                },
-              ],
-            }),
-          });
-        }
-        if (String(url).includes("/analysis")) {
-          return Promise.resolve({
-            ok: true,
-            json: async () => ({
-              song_id: "a",
-              status: "ready",
-              bpm: 124,
-              key: {
-                camelot: "8A",
-                tonic: "A",
-                mode: "minor",
-                confidence: 0.8,
-              },
-              sections: [
-                { start: 0, end: 30, label: "intro" },
-                { start: 30, end: 90, label: "chorus" },
-              ],
-            }),
-          });
-        }
-        return Promise.resolve({
-          ok: false,
-          json: async () => ({ detail: "?" }),
-        });
-      }),
-    );
-
-    render(<Uploader />);
-    pickBothSongs();
-    fireEvent.click(screen.getByRole("button", { name: /process/i }));
-
-    const analyzeButtons = await screen.findAllByRole("button", {
-      name: /analyze track/i,
-    });
-    fireEvent.click(analyzeButtons[0]);
-
-    await waitFor(() => {
-      expect(screen.getByText(/124 BPM/i)).toBeTruthy();
-      expect(screen.getByText(/Key 8A/i)).toBeTruthy();
-      expect(screen.getAllByTestId("insights")).toHaveLength(1);
-    });
   });
 });

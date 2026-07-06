@@ -1,5 +1,10 @@
 export const API_BASE = "http://localhost:8000";
 
+/** How to wait on a start-then-poll job. Overridable so tests can poll fast. */
+export type PollOpts = { pollMs?: number; maxTries?: number };
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export type SongDTO = {
   id: string;
   original_name: string;
@@ -51,6 +56,23 @@ export async function getStemStatus(songId: string): Promise<StemSetDTO> {
   return res.json();
 }
 
+/** Split a song and wait until its parts are ready (start + poll). */
+export async function splitSong(
+  songId: string,
+  { pollMs = 3000, maxTries = 80 }: PollOpts = {},
+): Promise<StemSetDTO> {
+  const started = await startSplit(songId);
+  if (started.status === "ready") return started;
+  for (let i = 0; i < maxTries; i++) {
+    const s = await getStemStatus(songId);
+    if (s.status === "ready") return s;
+    if (s.status === "error")
+      throw new Error("The split failed. Please try again.");
+    await sleep(pollMs);
+  }
+  throw new Error("The split is taking too long. Please try again.");
+}
+
 export type SectionDTO = { start: number; end: number; label: string };
 
 export type TrackAnalysisDTO = {
@@ -87,6 +109,23 @@ export async function getAnalysisStatus(
     throw new Error("Could not check the analysis status.");
   }
   return res.json();
+}
+
+/** Analyze a song and wait until the beat/key/structure read is ready. */
+export async function analyzeSong(
+  songId: string,
+  { pollMs = 3000, maxTries = 100 }: PollOpts = {},
+): Promise<TrackAnalysisDTO> {
+  const started = await startAnalysis(songId);
+  if (started.status === "ready") return started;
+  for (let i = 0; i < maxTries; i++) {
+    const s = await getAnalysisStatus(songId);
+    if (s.status === "ready") return s;
+    if (s.status === "error")
+      throw new Error("The analysis failed. Please try again.");
+    await sleep(pollMs);
+  }
+  throw new Error("The analysis is taking too long. Please try again.");
 }
 
 export type PlacementDTO = {
@@ -150,6 +189,26 @@ export async function getMixStatus(mixId: string): Promise<MixDTO> {
     throw new Error("Could not check the mix status.");
   }
   return res.json();
+}
+
+/** Make a mix and wait until it's rendered (start + poll). */
+export async function makeMix(
+  song1Id: string,
+  song2Id: string,
+  prompt = "",
+  take = 1,
+  { pollMs = 3000, maxTries = 80 }: PollOpts = {},
+): Promise<MixDTO> {
+  const started = await startMix(song1Id, song2Id, prompt, take);
+  if (started.status === "ready") return started;
+  for (let i = 0; i < maxTries; i++) {
+    const s = await getMixStatus(started.mix_id);
+    if (s.status === "ready") return s;
+    if (s.status === "error")
+      throw new Error(s.message ?? "This pair couldn't be mixed. Try another.");
+    await sleep(pollMs);
+  }
+  throw new Error("The mix is taking too long. Please try again.");
 }
 
 export type LiveOpDTO = {
