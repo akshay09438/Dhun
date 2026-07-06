@@ -210,3 +210,36 @@ def rendered_vocal_secs(vocal_src: tuple[float, float], stretch: float) -> float
 def placement_end(anchor: float, vocal_src: tuple[float, float], stretch: float) -> float:
     """The real time (secs into the mix) a placed vocal finishes playing."""
     return anchor + rendered_vocal_secs(vocal_src, stretch)
+
+
+def contrast_windows(a1: TrackAnalysis, placements, stretch: float,
+                     min_secs: float = 6.0, margin: float = 1.0) -> list[tuple[float, float]]:
+    """The beat-only gaps between Song-2 placements where Song 1 *actually sings* — the
+    only spots Song 1's own vocal can answer without ever overlapping Song 2's vocal.
+
+    A gap runs from one placement's real end to the next placement's entry (plus the tail
+    after the last one); each gap is shrunk by `margin` so it never touches a Song-2 vocal,
+    then intersected with Song 1's own `vocal_regions`. Windows shorter than `min_secs` are
+    dropped. This keeps the R1 "one voice at a time" guarantee true by construction.
+    """
+    if not placements:
+        return []
+    ordered = sorted(placements, key=lambda p: p.anchor)
+    last_end = placement_end(ordered[-1].anchor, ordered[-1].vocal_src, stretch)
+    track_end = a1.beats[-1] if a1.beats else last_end + min_secs
+
+    gaps = [(placement_end(prev.anchor, prev.vocal_src, stretch), nxt.anchor)
+            for prev, nxt in zip(ordered, ordered[1:])]
+    gaps.append((last_end, track_end))
+
+    out: list[tuple[float, float]] = []
+    for gap_start, gap_end in gaps:
+        gs, ge = gap_start + margin, gap_end - margin
+        if ge - gs < min_secs:
+            continue
+        for vs, ve in a1.vocal_regions:  # where Song 1 itself sings
+            s, e = max(gs, vs), min(ge, ve)
+            if e - s >= min_secs:
+                out.append((round(s, 3), round(e, 3)))
+                break  # one contrast window per gap is plenty
+    return out

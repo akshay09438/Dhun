@@ -3,7 +3,7 @@
 Pure arithmetic over a TrackAnalysis, so no audio, no network: fast and exact.
 """
 
-from app.models import KeyInfo, Section, TrackAnalysis
+from app.models import KeyInfo, Placement, Section, TrackAnalysis
 from app.planner import fence
 
 
@@ -143,3 +143,19 @@ def test_arrangement_options_declines_far_tempo():
     a1 = make_analysis(bpm=120.0)
     a2 = make_analysis(bpm=150.0, vocal_regions=[(16.0, 40.0)])
     assert not fence.arrangement_options(a1, a2)["mixable"]
+
+
+def test_contrast_windows_finds_gap_where_s1_sings():
+    a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(50.0, 80.0)])  # S1 sings 50-80
+    placements = [Placement(anchor=16.0, vocal_src=(0.0, 12.0)),   # ends 28
+                  Placement(anchor=90.0, vocal_src=(0.0, 12.0))]   # gap 28-90
+    wins = fence.contrast_windows(a1, placements, stretch=1.0)
+    assert wins and all(s >= 28.0 and e <= 90.0 for s, e in wins)  # inside the gap
+    assert wins[0][0] >= 50.0 and wins[0][1] <= 80.0               # where S1 actually sings
+
+
+def test_contrast_windows_empty_when_s1_silent_in_gaps():
+    a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(0.0, 10.0)])  # S1 sings only early
+    placements = [Placement(anchor=16.0, vocal_src=(0.0, 12.0)),
+                  Placement(anchor=90.0, vocal_src=(0.0, 12.0))]
+    assert fence.contrast_windows(a1, placements, stretch=1.0) == []
