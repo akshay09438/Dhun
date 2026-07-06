@@ -131,3 +131,21 @@ class LiveOp(BaseModel):
     when: str = "next_bar"
     say: str = ""  # DJ-language reply shown to the user
     reason: str | None = None  # why a command was declined (out of scope)
+
+
+class LiveChip(BaseModel):
+    """One tappable live suggestion: display text + the move it applies (from the closed
+    vocabulary). op is "mute" | "unmute" | "fade"; targets are bus names."""
+
+    text: str
+    op: str
+    targets: list[str] = []
+
+
+class SectionSuggestions(BaseModel):
+    """The 1-3 suggested moves for one section of Song 1's timeline."""
+
+    start: float
+    end: float
+    label: str
+    chips: list[LiveChip] = []

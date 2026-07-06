@@ -28,6 +28,7 @@ _JUST_DRUMS = ("drop everything but the beat", "just the drums", "only the beat"
 _ALL_BACK = ("bring it all back", "bring everything back", "full mix", "all back", "reset the mix")
 # Slice-1 generic "bring it back" / undo -> restore the bass (kept for back-compat).
 _UNMUTE_GENERIC = ("bring it back", "back to normal", "undo")
+_FADE = ("fade away", "fade it out", "fade out", "fade the mix out", "fade the music out")
 
 
 def _mute(targets: list[str], say: str) -> LiveOp:
@@ -43,6 +44,9 @@ def parse_command(text: str) -> LiveOp:
     t = " ".join(text.lower().split())
     if not t:
         return LiveOp(op="decline", say="Type a command like 'take the bass out'.")
+
+    if any(p in t for p in _FADE):
+        return LiveOp(op="fade", targets=list(_ALL), say="fading the whole mix out")
 
     # Combos first (they contain words that would otherwise match single parts).
     if any(p in t for p in _ALL_BACK):

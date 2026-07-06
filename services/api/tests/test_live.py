@@ -55,3 +55,12 @@ def test_take_the_melody_out_mutes_other():
 def test_bass_command_still_sets_both_target_and_targets():
     op = parse_command("take the bass out")
     assert op.op == "mute" and op.target == "bass" and op.targets == ["bass"]
+
+
+def test_fade_away_is_a_fade_of_everything():
+    op = parse_command("fade away")
+    assert op.op == "fade" and set(op.targets) == {"drums", "bass", "other", "vocals"}
+
+
+def test_fade_it_out_synonym():
+    assert parse_command("fade it out").op == "fade"
