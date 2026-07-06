@@ -21,6 +21,7 @@ export function Uploader() {
   const [status, setStatus] = useState<Status>("idle");
   const [songs, setSongs] = useState<SongDTO[]>([]);
   const [error, setError] = useState("");
+  const [mixId, setMixId] = useState<string | undefined>(undefined);
 
   const processing = status === "processing";
   const canProcess = Boolean(file1) && Boolean(file2) && !processing;
@@ -82,9 +83,15 @@ export function Uploader() {
           {songs.map((s) => (
             <SongCard key={s.id} song={s} />
           ))}
-          {songs.length === 2 && <MixMaker song1={songs[0]} song2={songs[1]} />}
           {songs.length === 2 && (
-            <LiveMix song1Id={songs[0].id} song2Id={songs[1].id} />
+            <MixMaker song1={songs[0]} song2={songs[1]} onMixReady={setMixId} />
+          )}
+          {songs.length === 2 && (
+            <LiveMix
+              song1Id={songs[0].id}
+              song2Id={songs[1].id}
+              mixId={mixId}
+            />
           )}
         </section>
       )}

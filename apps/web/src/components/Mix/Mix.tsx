@@ -15,7 +15,15 @@ type MixState = "idle" | "mixing" | "done" | "error";
  * beat running throughout with Song 2's vocal weaving in and out — then show the
  * arrangement, let the user regenerate a different take, and download it.
  */
-export function MixMaker({ song1, song2 }: { song1: SongDTO; song2: SongDTO }) {
+export function MixMaker({
+  song1,
+  song2,
+  onMixReady,
+}: {
+  song1: SongDTO;
+  song2: SongDTO;
+  onMixReady?: (mixId: string) => void;
+}) {
   const [state, setState] = useState<MixState>("idle");
   const [mix, setMix] = useState<MixDTO | null>(null);
   const [error, setError] = useState("");
@@ -29,6 +37,7 @@ export function MixMaker({ song1, song2 }: { song1: SongDTO; song2: SongDTO }) {
       if (started.status === "ready") {
         setMix(started);
         setState("done");
+        onMixReady?.(started.mix_id);
         return;
       }
       // Poll until the mix is rendered (cap ~4 minutes).
@@ -37,6 +46,7 @@ export function MixMaker({ song1, song2 }: { song1: SongDTO; song2: SongDTO }) {
         if (s.status === "ready") {
           setMix(s);
           setState("done");
+          onMixReady?.(s.mix_id);
           return;
         }
         if (s.status === "error") {
