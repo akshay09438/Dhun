@@ -68,6 +68,7 @@ class Placement(BaseModel):
     anchor: float  # secs into Song 1, on a downbeat
     vocal_src: tuple[float, float]  # [start, end] secs of Song 2's vocal
     beat_breath: bool = False  # one-bar tension dip in the bed right before this entry
+    fx: str | None = None  # optional entry effect; Slice B supports "sweep_in" (filter sweep)
 
 
 class MixPlan(BaseModel):
@@ -90,6 +91,7 @@ class MixPlan(BaseModel):
     anchor: float  # secs into Song 1 where the vocal enters (a phrase-start downbeat)
     beat_breath: bool = False  # drop Song 1's beat for one bar just before the vocal
     placements: list[Placement] = []  # the full arrangement; [] => single-placement (M3)
+    s1_vocal_regions: list[tuple[float, float]] = []  # spans where Song 1's OWN vocal answers (contrast)
     take: int = 1  # which regenerate iteration produced this (1-based)
     notes: str = ""  # DJ-language explanation of the move
     confidence: float = 0.0

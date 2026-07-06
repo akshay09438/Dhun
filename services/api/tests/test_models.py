@@ -28,3 +28,16 @@ def test_old_single_placement_json_still_parses():
     )
     plan = MixPlan.model_validate_json(m3)
     assert plan.placements == [] and plan.take == 1
+    assert plan.s1_vocal_regions == []  # Slice B fields default empty on old plans
+
+
+def test_slice_b_contrast_and_fx_roundtrip():
+    plan = MixPlan(
+        mix_id="m" * 64, song1_id="a" * 64, song2_id="b" * 64,
+        master_bpm=120.0, vocal_stretch=1.0, vocal_src=(16.0, 40.0), anchor=16.0,
+        placements=[Placement(anchor=16.0, vocal_src=(0.0, 12.0), fx="sweep_in")],
+        s1_vocal_regions=[(40.0, 52.0)],
+    )
+    reloaded = MixPlan.model_validate_json(plan.model_dump_json())
+    assert reloaded.placements[0].fx == "sweep_in"
+    assert reloaded.s1_vocal_regions == [(40.0, 52.0)]
