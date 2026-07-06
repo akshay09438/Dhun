@@ -5,7 +5,7 @@ _ai_arrange — never a real API call.
 
 import pytest
 
-from app.planner import fence, plan as planner, validate
+from app.planner import fence, llm, plan as planner, validate
 from tests.test_fence import make_analysis
 
 
@@ -202,4 +202,4 @@ def test_ai_midbar_starts_still_pass_the_referee(monkeypatch):
 
 
 def test_extract_json_tolerates_prose():
-    assert planner._extract_json('sure!\n{"placements": []}\nthanks') == {"placements": []}
+    assert llm.extract_json('sure!\n{"placements": []}\nthanks') == {"placements": []}

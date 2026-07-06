@@ -14,8 +14,8 @@ import json
 import os
 
 from app.models import LiveChip, SectionSuggestions, TrackAnalysis
+from app.planner import llm
 
-_MODEL = "claude-sonnet-5"
 _MAX_CHIPS = 3
 
 # The closed vocabulary: chip text -> (op, targets). The brain may pick ONLY these.
@@ -68,13 +68,6 @@ def _sections_of(a1: TrackAnalysis) -> list[tuple[float, float, str]]:
     return secs
 
 
-def _extract_json(text: str) -> dict:
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end == -1:
-        raise ValueError("no JSON object in model output")
-    return json.loads(text[start : end + 1])
-
-
 def _ai_suggest(sections: list[tuple[float, float, str]], prompt: str) -> dict[int, list[str]] | None:
     """Ask Claude for per-section chip texts. Returns {section_index: [text, ...]} with only
     known-vocabulary texts kept, or None on any failure (caller then uses the fallback)."""
@@ -94,10 +87,10 @@ def _ai_suggest(sections: list[tuple[float, float, str]], prompt: str) -> dict[i
             "user_request": prompt or "",
         }
         msg = client.messages.create(
-            model=_MODEL, max_tokens=600, system=_SUGGEST_SYSTEM,
+            model=llm.MODEL, max_tokens=600, system=_SUGGEST_SYSTEM,
             messages=[{"role": "user", "content": json.dumps(payload)}],
         )
-        raw = _extract_json(msg.content[0].text).get("sections", {})
+        raw = llm.extract_json(llm.first_text(msg)).get("sections", {})
         result: dict[int, list[str]] = {}
         for k, texts in raw.items():
             try:

@@ -15,10 +15,8 @@ import json
 import os
 
 from app.models import MixPlan, Placement, TrackAnalysis
-from app.planner import fence
+from app.planner import fence, llm
 
-# A small, fast model is plenty for arranging among pre-vetted options.
-_MODEL = "claude-sonnet-5"
 _MAX_PLACEMENTS = 3
 _ENTRY_MARGIN = 1.0  # secs of beat-only breathing room between one vocal's end and the next entry
 
@@ -84,14 +82,6 @@ def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement],
     return placements, s1_regions
 
 
-def _extract_json(text: str) -> dict:
-    """Tolerate a model that wraps its JSON in prose or a code fence."""
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end == -1:
-        raise ValueError("no JSON object in model output")
-    return json.loads(text[start : end + 1])
-
-
 def _default_arrangement(opts: dict, take: int) -> list[Placement]:
     """Deterministic arrangement: 2-3 anchors spread across the song's thirds (an energy
     ARC, not a cluster — Handbook H1/H2), each given a vocal slice trimmed to fit before
@@ -150,10 +140,10 @@ def _ai_arrange(opts: dict, prompt: str, take: int) -> list[Placement] | None:
             "make_it_different_from_previous_takes": take > 1,
         }
         msg = client.messages.create(
-            model=_MODEL, max_tokens=600, system=_ARRANGE_SYSTEM,
+            model=llm.MODEL, max_tokens=600, system=_ARRANGE_SYSTEM,
             messages=[{"role": "user", "content": json.dumps(payload)}],
         )
-        data = _extract_json(msg.content[0].text)
+        data = llm.extract_json(llm.first_text(msg))
         out: list[Placement] = []
         for p in data["placements"][:_MAX_PLACEMENTS]:
             anc = min(legal, key=lambda x: abs(x - float(p["anchor"])))  # snap to a legal anchor
