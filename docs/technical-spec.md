@@ -170,6 +170,12 @@ As the mix plays, the live player surfaces 1–3 **context-aware suggestion chip
 - **Tests:** `test_suggest.py` (fallback label→chips, no-sections default, AI-picked + unknown-dropped), `test_live_route.py` (+suggestions 404/409/200 with vocabulary chips), `test_live.py` (+"fade away"); `liveSchedule.test.ts` (+fade `applyOp`, `currentChips`), `api.test.ts` (+`getSuggestions`). **157 backend + 26 web green.** `LiveMix.test.tsx` unchanged (four-parts regression; chip logic covered in `liveSchedule`, raw-audio UI ear-verified).
 - **Danger-surface note:** `render.py`/`validate.py`/`live_stems.py`/`storage.py`/`songs.py`/config untouched; only `liveSchedule.test.ts` + `api.test.ts` (test-harness guard) went through confirm-and-apply.
 
+### Slice 3 fixes (founder ear-test)
+
+- **The AI was silently never running.** Newer models return a _thinking_ block first, so `msg.content[0].text` raised AttributeError, swallowed by the broad `except` → both `plan.py` (arrangement) and `suggest.py` (suggestions) always fell back to rules. Fix: `app/planner/llm.py` (`MODEL`, `first_text` skips non-text blocks, `extract_json`), model `claude-sonnet-4-5`; both planners use it. AI now genuinely drives arrangements + suggestions (rules remain the fallback). Regenerate to get an AI mix (old caches are rules-made).
+- **Live Vocals = Song 2's continuous vocal.** The live Vocals part was the _sparse arranged_ bus (silent between placements), so "bring the vocal in" did nothing outside them. New `workers/live_stems.render_full_vocal` (Song 2's whole vocal, one global stretch, from t=0) feeds the live-vocal route instead; cache `.vocalbus`→`.livevocal`. Continuous for Song 2's length (a single global stretch — a live approximation; the Download keeps the per-bar-locked arc). `render_vocal_bus` now unused by the app (kept + tested).
+- **Chips no longer feel static.** `suggest_moves` merges consecutive same-chip sections; `LiveMix` shows a "now playing: <part> · m:ss" indicator (from `currentSection` + the live playhead) so the user sees which part drives the current chips.
+
 ## Known follow-ups
 
 - CI `verify` job is Node-only today; add a Python (pytest) job when a GitHub remote is set up. Also point the coverage job at `apps/web/coverage/` (or emit to repo-root `coverage/`).
