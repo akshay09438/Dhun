@@ -77,6 +77,19 @@ Route (`app/routes/mix.py`, async — mirrors stems/analysis): `POST /mix {song1
 
 **Time-stretch:** FFmpeg `atempo` (pitch-preserved, LGPL-core, already installed) — the as-built realization of the spec's SoundTouch choice, kept small (±8%). GPL `librubberband` exists in the dev FFmpeg but the pipeline does not depend on it.
 
+## As-built (M4 Slice A — the living arrangement + regenerate)
+
+M3's single drop grows into a full arrangement; the brain still plans a `MixPlan`, the engine executes it, the LLM never touches audio.
+
+- **Models** (`app/models.py`): `Placement(anchor, vocal_src, beat_breath)`; `MixPlan.placements: list[Placement]` + `take: int` — **additive** (the scalar `anchor`/`vocal_src` stay, so M3-era cached `*.mixplan.json` still parse).
+- **The fence** (`planner/fence.py`): `arrangement_options` returns the M3 legal set plus ranked phrase anchors and the available vocal slices; `rendered_vocal_secs`/`placement_end` are the **single source of truth** for a placed vocal's real length (`source / stretch` — see the atempo note).
+- **The driver** (`planner/plan.py`): Claude arranges 2–3 non-overlapping placements building an energy arc, with a deterministic fallback; `take` rotates the arrangement for Regenerate; `_dedupe_nonoverlapping` guards one-vocal-at-a-time before render. AI slices re-clamped to `MAX_VOCAL_SECS`.
+- **The referee** (`planner/validate.py`, dangerous): now checks **no overlap across placements** (R1, via the shared `placement_end`) + each entry on a downbeat (R3), plus M3's B3/R6. R1 source-single holds by construction.
+- **The engine** (`workers/render.py`, dangerous): loops placements, laying each vocal on the continuous bed; `beat_breath` **ducks the bed to 35%** for one bar (never silence — the M3 dead-air fix stays). Windows temp-cleanup made race-safe.
+- **Route** (`routes/mix.py`): `/mix` takes an optional `take`; `mix_id` folds in `take` + `ENGINE_VERSION` (`m4a.2`) so each take is a distinct cached render. **Web:** a two-lane arrangement timeline + "Give me another take" + Download.
+
+**The atempo length contract (a fixed bug worth remembering):** FFmpeg `atempo=stretch` outputs `source_duration / stretch`, **not** `* stretch`. For `stretch < 1` (a faster vocal, ~half of compatible pairs) the vocal plays _longer_; an early M4 cut used the inverted `* stretch` in the driver and referee, so vocals could overlap (two voices) past the checks. Caught by the adversarial review; fixed by routing both through `fence.placement_end`.
+
 ## Known follow-ups
 
 - CI `verify` job is Node-only today; add a Python (pytest) job when a GitHub remote is set up. Also point the coverage job at `apps/web/coverage/` (or emit to repo-root `coverage/`).
