@@ -51,3 +51,32 @@ def test_context_returns_bpm_and_downbeats(monkeypatch, tmp_path):
     r = client.get(f"/live/context/{HEX}")
     assert r.status_code == 200
     assert r.json()["bpm"] == 124.0 and r.json()["downbeats"][0] == 0.5
+
+
+import dataclasses as _dc
+
+from app.routes import live as live_route
+
+
+def _use_live_tmp(monkeypatch, tmp_path):
+    monkeypatch.setattr(live_route, "settings",
+                        _dc.replace(live_route.settings, data_dir=tmp_path))
+
+
+def test_vocal_bus_bad_id_is_404():
+    r = client.get("/live/vocal-bus/nothex")
+    assert r.status_code == 404
+
+
+def test_vocal_bus_without_a_plan_is_409(monkeypatch, tmp_path):
+    _use_live_tmp(monkeypatch, tmp_path)
+    r = client.get(f"/live/vocal-bus/{HEX}")
+    assert r.status_code == 409
+
+
+def test_vocal_bus_serves_the_wav_when_present(monkeypatch, tmp_path):
+    _use_live_tmp(monkeypatch, tmp_path)
+    (tmp_path / f"{HEX}.vocalbus.wav").write_bytes(b"RIFF....WAVEfake")  # pre-seeded "ready"
+    r = client.get(f"/live/vocal-bus/{HEX}")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("audio/")
