@@ -1,0 +1,5 @@
+Drop the songs you want in the catalog here.
+
+- Any format is fine: .mp3, .wav, .m4a, .flac, .ogg
+- Name each file with the song name, e.g.  One Kiss.mp3
+- When you've added them, tell me and I'll load them into the app.

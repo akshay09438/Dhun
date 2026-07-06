@@ -36,7 +36,7 @@ Casual music fans and creators who can't DJ but want to make good-sounding mashu
 ## Screen 1 — Pick your two songs ✅ built (curated catalog — MVP pivot 2026-07-06)
 
 - **Purpose:** get the raw material in — **from a curated catalog, not uploads** (founder decision 2026-07-06: users kept hitting "tempos too far apart" from misread/incompatible uploads, so the MVP preloads hand-verified songs where **every pairing blends by construction**).
-- **On it:** two song slots — "Song 1 → its beat" and "Song 2 → its vocals". Clicking a slot opens a **dropdown of the preloaded songs** (each pre-analyzed, tempo-verified once by us); a song picked in one slot is disabled in the other. Prompt box pre-filled as before.
+- **On it:** two song slots — "Song 1 → its beat" and "Song 2 → its vocals". Clicking a slot opens a **dropdown of the preloaded songs for that role only** — Song 1 lists only beat songs, Song 2 only vocal songs (filtered by each catalog entry's `role_hint`). Each song is pre-analyzed and tempo-verified once by us. **No prompt box** (it steered nothing at mix time — live steering happens on the Play screen, so it was removed to keep Setup clean).
 - **Main action:** pick two songs → **Mix it**.
 - **Empty / error:** an empty catalog says "No songs in the library yet"; a failed catalog load says so plainly. No file-type errors anymore — there are no uploads.
 - _(The upload flow still exists in the backend — it's how the operator ingests new catalog songs — but users never see it. "Uploads only" from the V1 table is superseded by this pivot for the validation MVP; open uploads may return post-validation, ideally with the tempo-fix control.)_

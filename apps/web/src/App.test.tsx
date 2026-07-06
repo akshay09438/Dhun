@@ -144,17 +144,22 @@ describe("App — the catalog flow", () => {
     expect(screen.getByTestId("bus-vocals")).toBeTruthy();
   });
 
-  it("disables a song already picked in the other slot", async () => {
+  it("shows only beats in Song 1 and only vocals in Song 2", async () => {
     mockBackend();
     render(<App />);
+
+    // Song 1 dropdown: the beat is offered, the vocal is not.
     fireEvent.click(screen.getByTestId("song-slot-1"));
-    fireEvent.click(
+    expect(
       await screen.findByRole("option", { name: /father ocean/i }),
-    );
+    ).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /tere bina/i })).toBeNull();
+
+    // Song 2 dropdown: the vocal is offered, the beat is not.
     fireEvent.click(screen.getByTestId("song-slot-2"));
-    const dup = (await screen.findByRole("option", {
-      name: /father ocean/i,
-    })) as HTMLButtonElement;
-    expect(dup.disabled).toBe(true);
+    expect(
+      await screen.findByRole("option", { name: /tere bina/i }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /father ocean/i })).toBeNull();
   });
 });

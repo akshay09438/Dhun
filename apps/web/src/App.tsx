@@ -14,13 +14,14 @@ import GeneratingScreen from "./components/screens/GeneratingScreen";
 import PlayScreen from "./components/screens/PlayScreen";
 import ExportScreen from "./components/screens/ExportScreen";
 
-const DEFAULT_PROMPT = "Song 1's beat, Song 2's vocals — mixed like a DJ";
+// The setup prompt box was removed (it steered nothing at mix time — live steering
+// happens on the Play screen). Mixes are made with an empty prompt.
+const MIX_PROMPT = "";
 
 export function App() {
   const [screen, setScreen] = useState<Screen>("setup");
   const [pick1, setPick1] = useState<LibrarySongDTO | null>(null);
   const [pick2, setPick2] = useState<LibrarySongDTO | null>(null);
-  const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
   const [songs, setSongs] = useState<SongDTO[]>([]);
   const [mix, setMix] = useState<MixDTO | null>(null);
   const [mixId, setMixId] = useState<string | undefined>(undefined);
@@ -32,7 +33,7 @@ export function App() {
   /** Fetch a playful AI name for the mix (fallback-safe; never blocks the UI). */
   function loadName(s1: SongDTO, s2: SongDTO) {
     setMixName("");
-    getMixName(s1.original_name, s2.original_name, prompt)
+    getMixName(s1.original_name, s2.original_name, MIX_PROMPT)
       .then(setMixName)
       .catch(() => setMixName(""));
   }
@@ -46,7 +47,7 @@ export function App() {
       // Catalog songs are already ingested — no upload; go straight to the study.
       const chosen: SongDTO[] = [pick1, pick2];
       setSongs(chosen);
-      const made = await studyAndMix(pick1.id, pick2.id, setStage, prompt);
+      const made = await studyAndMix(pick1.id, pick2.id, setStage, MIX_PROMPT);
       setMix(made);
       setMixId(made.mix_id);
       loadName(pick1, pick2);
@@ -62,7 +63,7 @@ export function App() {
     const take = (mix?.plan?.take ?? 1) + 1;
     setRegenerating(true);
     try {
-      const made = await makeMix(songs[0].id, songs[1].id, prompt, take);
+      const made = await makeMix(songs[0].id, songs[1].id, MIX_PROMPT, take);
       setMix(made);
       setMixId(made.mix_id);
     } catch {
@@ -92,8 +93,6 @@ export function App() {
           pick2={pick2}
           onPick1={setPick1}
           onPick2={setPick2}
-          prompt={prompt}
-          onPrompt={setPrompt}
           canMix={Boolean(pick1) && Boolean(pick2)}
           onMixIt={handleMixIt}
         />

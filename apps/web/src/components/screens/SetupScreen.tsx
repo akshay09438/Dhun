@@ -9,8 +9,6 @@ export default function SetupScreen({
   pick2,
   onPick1,
   onPick2,
-  prompt,
-  onPrompt,
   canMix,
   onMixIt,
 }: {
@@ -18,8 +16,6 @@ export default function SetupScreen({
   pick2: LibrarySongDTO | null;
   onPick1: (s: LibrarySongDTO | null) => void;
   onPick2: (s: LibrarySongDTO | null) => void;
-  prompt: string;
-  onPrompt: (v: string) => void;
   canMix: boolean;
   onMixIt: () => void;
 }) {
@@ -33,6 +29,10 @@ export default function SetupScreen({
       .then(setLibrary)
       .catch(() => setLibError(true));
   }, []);
+
+  // Each slot only offers songs for its role: Song 1 = beats, Song 2 = vocals.
+  const beats = library.filter((s) => s.role_hint === "beat");
+  const vocals = library.filter((s) => s.role_hint === "vocals");
 
   // Any click outside the open dropdown closes it.
   useEffect(() => {
@@ -58,10 +58,9 @@ export default function SetupScreen({
         <SongSlot
           n={1}
           picked={pick1}
-          other={pick2}
           placeholder="Song One"
           role="→ its beat"
-          library={library}
+          library={beats}
           libError={libError}
           open={open === 1}
           onToggle={() => setOpen(open === 1 ? null : 1)}
@@ -70,22 +69,13 @@ export default function SetupScreen({
         <SongSlot
           n={2}
           picked={pick2}
-          other={pick1}
           placeholder="Song Two"
           role="→ its vocals"
-          library={library}
+          library={vocals}
           libError={libError}
           open={open === 2}
           onToggle={() => setOpen(open === 2 ? null : 2)}
           onChoose={(s) => choose(2, s)}
-        />
-
-        <textarea
-          className={styles.prompt}
-          value={prompt}
-          onChange={(e) => onPrompt(e.target.value)}
-          rows={2}
-          aria-label="Describe your mix"
         />
 
         <button className="btnPrimary" disabled={!canMix} onClick={onMixIt}>
@@ -112,7 +102,6 @@ export default function SetupScreen({
 function SongSlot({
   n,
   picked,
-  other,
   placeholder,
   role,
   library,
@@ -123,7 +112,6 @@ function SongSlot({
 }: {
   n: number;
   picked: LibrarySongDTO | null;
-  other: LibrarySongDTO | null;
   placeholder: string;
   role: string;
   library: LibrarySongDTO[];
@@ -164,32 +152,23 @@ function SongSlot({
           {!libError && library.length === 0 && (
             <div className={styles.dropNote}>No songs in the library yet.</div>
           )}
-          {library.map((s) => {
-            const taken = other?.id === s.id;
-            return (
-              <button
-                key={s.id}
-                type="button"
-                role="option"
-                aria-selected={picked?.id === s.id}
-                className={
-                  picked?.id === s.id
-                    ? `${styles.dropItem} ${styles.dropItemActive}`
-                    : styles.dropItem
-                }
-                disabled={taken}
-                title={
-                  taken ? "Already picked in the other slot" : s.original_name
-                }
-                onClick={() => onChoose(s)}
-              >
-                {s.original_name}
-                {s.role_hint ? (
-                  <span className={styles.hint}>{s.role_hint}</span>
-                ) : null}
-              </button>
-            );
-          })}
+          {library.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              role="option"
+              aria-selected={picked?.id === s.id}
+              className={
+                picked?.id === s.id
+                  ? `${styles.dropItem} ${styles.dropItemActive}`
+                  : styles.dropItem
+              }
+              title={s.original_name}
+              onClick={() => onChoose(s)}
+            >
+              {s.original_name}
+            </button>
+          ))}
         </div>
       )}
     </div>

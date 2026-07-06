@@ -36,8 +36,6 @@ function renderSetup(over: Partial<Parameters<typeof SetupScreen>[0]> = {}) {
       pick2={null}
       onPick1={noop}
       onPick2={noop}
-      prompt=""
-      onPrompt={noop}
       canMix={false}
       onMixIt={noop}
       {...over}
@@ -61,6 +59,35 @@ test("clicking a song slot opens the catalog dropdown and picking calls back", a
   expect((onPick1.mock.calls[0][0] as LibrarySongDTO).original_name).toBe(
     "Father Ocean",
   );
+});
+
+test("Song 1 offers only beats; Song 2 offers only vocals", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({ ok: true, json: async () => LIB }),
+  );
+  renderSetup();
+
+  fireEvent.click(screen.getByTestId("song-slot-1"));
+  expect(
+    await screen.findByRole("option", { name: /father ocean/i }),
+  ).toBeTruthy();
+  expect(screen.queryByRole("option", { name: /rather be/i })).toBeNull();
+
+  fireEvent.click(screen.getByTestId("song-slot-2"));
+  expect(
+    await screen.findByRole("option", { name: /rather be/i }),
+  ).toBeTruthy();
+  expect(screen.queryByRole("option", { name: /father ocean/i })).toBeNull();
+});
+
+test("no prompt box on the setup screen", () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({ ok: true, json: async () => LIB }),
+  );
+  const { container } = renderSetup();
+  expect(container.querySelector("textarea")).toBeNull();
 });
 
 test("an empty library says so instead of showing a blank dropdown", async () => {
