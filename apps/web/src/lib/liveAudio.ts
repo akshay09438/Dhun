@@ -4,13 +4,9 @@ import {
   type LiveOpDTO,
   type LiveContextDTO,
 } from "./api";
-import {
-  barSeconds,
-  busesOf,
-  nextBarTime,
-  rampTarget,
-  type BusName,
-} from "./liveSchedule";
+import { barSeconds, busesOf, nextBarTime, type BusName } from "./liveSchedule";
+
+const FADE_BARS = 4; // "fade away" ramps the whole mix out over four bars
 
 export class LivePlayer {
   private ctx = new AudioContext();
@@ -71,19 +67,21 @@ export class LivePlayer {
     return Math.max(0, this.ctx.currentTime - this.startCtxTime);
   }
 
-  /** Schedule a mute/unmute on the next bar, ramped over one bar, for every named bus. */
+  /** Schedule a mute/unmute/fade on the next bar, ramped over 1 bar (or FADE_BARS for a
+   *  fade), for every named bus. */
   schedule(op: LiveOpDTO, ctx: LiveContextDTO): void {
-    if (op.op !== "mute" && op.op !== "unmute") return;
+    if (op.op !== "mute" && op.op !== "unmute" && op.op !== "fade") return;
     const bpm = ctx.bpm ?? 120;
     const barSong = nextBarTime(ctx.downbeats, this.songTime(), bpm);
     const startCtx = this.startCtxTime + barSong; // song time -> ctx time
-    const target = rampTarget(op);
+    const target = op.op === "unmute" ? 1 : 0; // mute and fade both go to 0
+    const bars = op.op === "fade" ? FADE_BARS : 1;
     for (const bus of busesOf(op)) {
       const g = this.gains.get(bus);
       if (!g) continue;
       g.gain.cancelScheduledValues(startCtx);
       g.gain.setValueAtTime(g.gain.value, startCtx);
-      g.gain.linearRampToValueAtTime(target, startCtx + barSeconds(bpm)); // smooth 1-bar fade
+      g.gain.linearRampToValueAtTime(target, startCtx + barSeconds(bpm) * bars);
     }
   }
 

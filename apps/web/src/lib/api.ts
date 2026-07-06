@@ -153,7 +153,7 @@ export async function getMixStatus(mixId: string): Promise<MixDTO> {
 }
 
 export type LiveOpDTO = {
-  op: "mute" | "unmute" | "decline";
+  op: "mute" | "unmute" | "decline" | "fade";
   target: string | null;
   targets?: string[];
   when: string;
@@ -161,7 +161,25 @@ export type LiveOpDTO = {
   reason: string | null;
 };
 
+export type LiveChipDTO = { text: string; op: string; targets: string[] };
+export type SectionSuggestionsDTO = {
+  start: number;
+  end: number;
+  label: string;
+  chips: LiveChipDTO[];
+};
+
 export type LiveContextDTO = { bpm: number | null; downbeats: number[] };
+
+/** Per-section suggestion chips for a finished mix (one cached AI call server-side). */
+export async function getSuggestions(
+  mixId: string,
+): Promise<SectionSuggestionsDTO[]> {
+  const res = await fetch(`${API_BASE}/live/suggestions/${mixId}`);
+  if (!res.ok) throw new Error("Couldn't load suggestions.");
+  const data = await res.json();
+  return data.sections ?? [];
+}
 
 /** Turn a typed steering command into a structured op the player runs on the beat. */
 export async function postLiveCommand(
