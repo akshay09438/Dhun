@@ -30,12 +30,32 @@ export function busesOf(op: OpLike): BusName[] {
 }
 
 export function applyOp(state: BusState, op: OpLike): BusState {
-  if (op.op !== "mute" && op.op !== "unmute") return state;
+  if (op.op !== "mute" && op.op !== "unmute" && op.op !== "fade") return state;
+  const on = op.op === "unmute"; // mute and fade both settle a bus to off
   const next = { ...state };
-  for (const b of busesOf(op)) next[b] = op.op === "unmute";
+  for (const b of busesOf(op)) next[b] = on;
   return next;
 }
 
 export function rampTarget(op: { op: string }): number {
   return op.op === "unmute" ? 1 : 0;
+}
+
+export type Chip = { text: string; op: string; targets: string[] };
+export type Section = {
+  start: number;
+  end: number;
+  label: string;
+  chips: Chip[];
+};
+
+/** The chips for the section the playhead is in: the last section whose start <= songTime
+ *  (sections are sorted by start). Empty when there are no sections. */
+export function currentChips(sections: Section[], songTime: number): Chip[] {
+  let cur: Section | undefined;
+  for (const s of sections) {
+    if (s.start <= songTime + 1e-6) cur = s;
+    else break;
+  }
+  return cur?.chips ?? [];
 }

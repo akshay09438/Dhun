@@ -1,4 +1,11 @@
-import { barSeconds, nextBarTime, applyOp, rampTarget } from "./liveSchedule";
+import {
+  barSeconds,
+  nextBarTime,
+  applyOp,
+  rampTarget,
+  currentChips,
+  type Section,
+} from "./liveSchedule";
 
 test("barSeconds is one 4/4 bar", () => {
   expect(barSeconds(120)).toBeCloseTo(2.0);
@@ -54,4 +61,38 @@ test("applyOp unmutes all with a full targets list", () => {
 test("applyOp still honors a single target when targets is absent", () => {
   const s = { drums: true, bass: true, other: true, vocals: true };
   expect(applyOp(s, { op: "mute", target: "vocals" }).vocals).toBe(false);
+});
+
+test("applyOp treats a fade as all named buses off", () => {
+  const s = { drums: true, bass: true, other: true, vocals: true };
+  const r = applyOp(s, {
+    op: "fade",
+    target: null,
+    targets: ["drums", "bass", "other", "vocals"],
+  });
+  expect(r).toEqual({ drums: false, bass: false, other: false, vocals: false });
+});
+
+test("currentChips picks the section the playhead is in", () => {
+  const sections: Section[] = [
+    {
+      start: 0,
+      end: 30,
+      label: "intro",
+      chips: [{ text: "A", op: "mute", targets: ["bass"] }],
+    },
+    {
+      start: 30,
+      end: 60,
+      label: "chorus",
+      chips: [{ text: "B", op: "unmute", targets: ["vocals"] }],
+    },
+  ];
+  expect(currentChips(sections, 5).map((c) => c.text)).toEqual(["A"]);
+  expect(currentChips(sections, 45).map((c) => c.text)).toEqual(["B"]);
+  expect(currentChips(sections, 30).map((c) => c.text)).toEqual(["B"]); // boundary belongs to the new section
+});
+
+test("currentChips is empty for no sections", () => {
+  expect(currentChips([], 10)).toEqual([]);
 });
