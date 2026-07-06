@@ -126,7 +126,8 @@ class LiveOp(BaseModel):
     """
 
     op: str
-    target: str | None = None  # which bus: "bass" | "drums" | "other" | ...
+    target: str | None = None  # single bus (Slice 1 back-compat); mirrors targets[0] when one part
+    targets: list[str] = []  # the buses this op affects — may be several ("drop everything but the beat")
     when: str = "next_bar"
     say: str = ""  # DJ-language reply shown to the user
     reason: str | None = None  # why a command was declined (out of scope)

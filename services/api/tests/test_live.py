@@ -24,3 +24,34 @@ def test_out_of_scope_is_declined_plainly():
 
 def test_empty_command_declines():
     assert parse_command("   ").op == "decline"
+
+
+def test_remove_the_vocals_mutes_vocals():
+    op = parse_command("remove the vocals")
+    assert op.op == "mute" and op.targets == ["vocals"]
+
+
+def test_bring_the_vocals_back_unmutes_vocals():
+    op = parse_command("bring the vocals back")
+    assert op.op == "unmute" and op.targets == ["vocals"]
+
+
+def test_drop_everything_but_the_beat_mutes_all_but_drums():
+    op = parse_command("drop everything but the beat")
+    assert op.op == "mute" and set(op.targets) == {"bass", "other", "vocals"}
+    assert "drums" not in op.targets
+
+
+def test_bring_it_all_back_unmutes_everything():
+    op = parse_command("bring it all back")
+    assert op.op == "unmute" and set(op.targets) == {"drums", "bass", "other", "vocals"}
+
+
+def test_take_the_melody_out_mutes_other():
+    op = parse_command("take the melody out")
+    assert op.op == "mute" and op.targets == ["other"]
+
+
+def test_bass_command_still_sets_both_target_and_targets():
+    op = parse_command("take the bass out")
+    assert op.op == "mute" and op.target == "bass" and op.targets == ["bass"]
