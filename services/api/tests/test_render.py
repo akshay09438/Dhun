@@ -26,10 +26,10 @@ def _tone(path, freq=220.0, secs=4.0, amp=0.4, sr=44100):
 
 def _stems(tmp_path):
     paths = {}
-    for name, f in (("drums", 110.0), ("bass", 55.0), ("other", 330.0)):
+    for name, f in (("drums", 110.0), ("bass", 55.0), ("other", 330.0), ("vocals", 660.0)):
         p = tmp_path / f"{name}.wav"
         _tone(p, freq=f, secs=8.0)  # bed long enough to hold placements out to ~6s
-        paths[name] = p
+        paths[name] = p  # "vocals" here is Song 1's own vocal stem (used for contrast)
     vocal = tmp_path / "vocal.wav"
     _tone(vocal, freq=440.0, secs=8.0)
     return paths, vocal
@@ -93,6 +93,30 @@ def test_beat_breath_ducks_the_bar_not_silences_it(tmp_path):
     y, sr = sf.read(out, dtype="float32", always_2d=True)
     bar_before = float(np.max(np.abs(y[int(0.2 * sr):int(1.9 * sr)])))
     assert bar_before > 1e-3  # NOT dead air (the M3 gap bug stays fixed)
+
+
+def test_render_mixes_song1_vocal_in_contrast_span(tmp_path):
+    stems, vocal = _stems(tmp_path)
+    out = tmp_path / "mix.wav"
+    plan = _arr_plan([(1.0, (0.0, 1.5), False)])
+    plan.s1_vocal_regions = [(4.0, 6.0)]  # Song 1's own vocal answers 4-6s
+    render.render_mix(plan, stems, vocal, out)
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    e = lambda a, b: float(np.mean(np.abs(y[int(a * sr):int(b * sr)])))
+    # the contrast span carries more energy than the beat-only stretch just before it
+    assert e(4.0, 6.0) > e(2.5, 3.9)
+
+
+def test_render_sweep_opens_up_before_entry(tmp_path):
+    stems, vocal = _stems(tmp_path)
+    out = tmp_path / "mix.wav"
+    plan = _arr_plan([(3.0, (0.0, 1.0), False)])  # 120bpm bar=2s -> sweep over 1.0-3.0s
+    plan.placements[0].fx = "sweep_in"
+    render.render_mix(plan, stems, vocal, out)
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    hf = lambda a, b: float(np.mean(np.abs(np.diff(y[int(a * sr):int(b * sr)], axis=0))))
+    # early part of the swept bar is muffled (low brightness), later part opens up
+    assert hf(1.1, 1.6) < hf(2.4, 2.9)
 
 
 def test_guard_duration_caps_over_long_audio(monkeypatch):

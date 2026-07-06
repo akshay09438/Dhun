@@ -49,12 +49,12 @@ def _setup_pair(tmp_path, song2_bpm=118.0):
     # uploaded songs
     _tone(tmp_path / f"{SONG1}.wav", 200.0)
     _tone(tmp_path / f"{SONG2}.wav", 300.0)
-    # analyses
-    _write_analysis(tmp_path, SONG1, 120.0, [])
+    # analyses (Song 1 sings 40-55s so a contrast window exists in a late gap)
+    _write_analysis(tmp_path, SONG1, 120.0, [(40.0, 55.0)])
     _write_analysis(tmp_path, SONG2, song2_bpm, [(0.0, 4.0)])
     # stems (WAV content in .mp3-named files, as the real cache stores)
-    for name, f in (("drums", 110.0), ("bass", 55.0), ("other", 330.0)):
-        _tone(tmp_path / f"{SONG1}.{name}.mp3", f)
+    for name, f in (("drums", 110.0), ("bass", 55.0), ("other", 330.0), ("vocals", 660.0)):
+        _tone(tmp_path / f"{SONG1}.{name}.mp3", f)  # Song 1's own vocals feed the contrast move
     _tone(tmp_path / f"{SONG2}.vocals.mp3", 440.0)
 
 
@@ -120,6 +120,15 @@ def test_mix_declines_far_tempo_with_reason(tmp_path, monkeypatch):
     body = _poll(r.json()["mix_id"], "error")
     assert body["status"] == "error"
     assert "tempo" in body["message"].lower()
+
+
+def test_mix_carries_contrast(tmp_path, monkeypatch):
+    _use_tmp(monkeypatch, tmp_path)
+    _setup_pair(tmp_path)
+    r = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2})
+    body = _poll(r.json()["mix_id"], "ready")
+    assert body["status"] == "ready"
+    assert body["plan"]["s1_vocal_regions"]  # Song 1's own vocal answers (contrast) flows through
 
 
 def test_regenerate_is_a_distinct_cached_take(tmp_path, monkeypatch):

@@ -71,11 +71,23 @@ def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[s
             violations.append("a vocal entry is not on a downbeat of Song 1 (R3)")
         if p.vocal_src[1] <= p.vocal_src[0]:
             violations.append("a vocal slice is empty")
-    for a, b in zip(ordered, ordered[1:]):  # R1: one vocal at a time — no overlap
+    for a, b in zip(ordered, ordered[1:]):  # R1: one vocal at a time — no S2↔S2 overlap
         # Uses the shared rendered-length math (source / stretch), so the referee and the
         # driver measure a vocal's real end identically and can never drift apart.
         if b.anchor < placement_end(a.anchor, a.vocal_src, plan.vocal_stretch) - 1e-6:
             violations.append("two vocal placements overlap (R1)")
+
+    # R1 across both songs (Slice B contrast): Song 1's own vocal must sit only in the
+    # gaps — never overlapping any Song 2 placement window, else two lead voices play.
+    for s, e in getattr(plan, "s1_vocal_regions", []):
+        if e <= s:
+            violations.append("a Song 1 vocal region is empty")
+            continue
+        for p in ordered:
+            p_end = placement_end(p.anchor, p.vocal_src, plan.vocal_stretch)
+            if s < p_end - 1e-6 and e > p.anchor + 1e-6:  # spans overlap
+                violations.append("Song 1 and Song 2 vocals overlap (R1)")
+                break
     return violations
 
 

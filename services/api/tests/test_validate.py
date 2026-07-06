@@ -16,11 +16,12 @@ def make_plan(anchor=16.0, stretch=1.0, vocal_src=(16.0, 40.0)):
     )
 
 
-def make_arrangement_plan(placements, stretch=1.0):
+def make_arrangement_plan(placements, stretch=1.0, s1_regions=None):
     return MixPlan(
         mix_id="m" * 64, song1_id="a" * 64, song2_id="b" * 64, master_bpm=120.0,
         vocal_stretch=stretch, vocal_src=placements[0].vocal_src,
         anchor=placements[0].anchor, placements=placements,
+        s1_vocal_regions=s1_regions or [],
     )
 
 
@@ -78,6 +79,28 @@ def test_validate_flags_overlap_only_visible_at_sub_unity_stretch():
          Placement(anchor=36.0, vocal_src=(0.0, 8.0))]
     v = validate.validate_plan(make_arrangement_plan(p, stretch=0.93), a1, a2)
     assert any("R1" in m or "overlap" in m.lower() for m in v)
+
+
+def test_validate_flags_s1_s2_vocal_overlap():
+    # Song 1's own vocal (20-30) overlaps Song 2's placement window (16 -> ~24): two voices.
+    a1, a2 = make_analysis(), make_analysis()
+    p = [Placement(anchor=16.0, vocal_src=(0.0, 8.0))]
+    v = validate.validate_plan(make_arrangement_plan(p, s1_regions=[(20.0, 30.0)]), a1, a2)
+    assert any("R1" in m or "overlap" in m.lower() for m in v)
+
+
+def test_validate_accepts_s1_vocal_in_a_gap():
+    a1, a2 = make_analysis(), make_analysis()
+    p = [Placement(anchor=16.0, vocal_src=(0.0, 8.0))]  # ends ~24
+    v = validate.validate_plan(make_arrangement_plan(p, s1_regions=[(30.0, 40.0)]), a1, a2)
+    assert v == []  # Song 1's vocal sits cleanly after Song 2's
+
+
+def test_validate_flags_empty_s1_region():
+    a1, a2 = make_analysis(), make_analysis()
+    p = [Placement(anchor=16.0, vocal_src=(0.0, 8.0))]
+    v = validate.validate_plan(make_arrangement_plan(p, s1_regions=[(30.0, 30.0)]), a1, a2)
+    assert any("empty" in m.lower() for m in v)
 
 
 def test_validate_render_clean(tmp_path):

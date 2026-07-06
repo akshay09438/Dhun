@@ -25,12 +25,14 @@ from typing import Mapping
 
 import numpy as np
 import soundfile as sf
+from scipy.signal import butter, sosfilt
 
 SR = 44100  # everything renders at CD rate, stereo
 _TARGET_PEAK = 10 ** (-1.0 / 20)  # -1 dBFS headroom
 _CEILING = 0.999  # brickwall safety — must stay below the validator's clip ceiling
 _FADE_MS = 8.0  # edge fade that kills entry/exit clicks
 _BREATH_DUCK = 0.35  # the bed dips to this for one bar before a flagged entry (tension, not silence)
+_SWEEP_LO_HZ = 300.0  # filter-sweep floor: the bed muffles to this cutoff, then opens up
 _FFMPEG_TIMEOUT = 180
 # Bound decoded audio so a tiny-but-hours-long low-bitrate file can't balloon in
 # memory (the upload cap is on bytes, not duration). A decoded stereo minute is
@@ -103,6 +105,19 @@ def _edge_fade(y: np.ndarray) -> np.ndarray:
     return y
 
 
+def _sweep_bed(seg: np.ndarray, sr: int) -> np.ndarray:
+    """A rising low-pass 'filter sweep': the bed starts muffled (cut above ~300 Hz) and
+    opens up across the segment, building anticipation into the next entry. A click-free
+    crossfade from a low-passed copy to the original — bed-only, so it can't clip."""
+    n = len(seg)
+    if n < 64:
+        return seg
+    sos = butter(4, _SWEEP_LO_HZ / (sr / 2), btype="low", output="sos")
+    muffled = sosfilt(sos, seg, axis=0).astype(np.float32)
+    ramp = np.linspace(0.0, 1.0, n, dtype=np.float32)[:, None]  # 0 = muffled -> 1 = open
+    return muffled * (1.0 - ramp) + seg * ramp
+
+
 def _placements_of(plan):
     """The plan's vocal placements — or the scalar anchor/vocal_src as a one-element
     arrangement, so a legacy (M3) single-placement plan still renders."""
@@ -127,16 +142,34 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
     bed = _sum_stems([song1_stems["drums"], song1_stems["bass"], song1_stems["other"]])
     bar = int((60.0 / plan.master_bpm) * 4 * SR)
 
+    def _hold(buf: np.ndarray, need: int) -> np.ndarray:
+        if need > len(buf):  # extend the bed with silence so it can hold this audio
+            return np.vstack([buf, np.zeros((need - len(buf), 2), dtype=np.float32)])
+        return buf
+
     for p in _placements_of(plan):
         start, end = p.vocal_src
         voc = _edge_fade(_vocal_take(song2_vocal, start, max(end - start, 0.0), plan.vocal_stretch))
         anchor = max(0, int(p.anchor * SR))  # never place before the start
+        b0 = max(0, anchor - bar)
         if getattr(p, "beat_breath", False):  # DUCK the bed for one bar (tension), never silence it
-            bed[max(0, anchor - bar):anchor] *= _BREATH_DUCK
+            bed[b0:anchor] *= _BREATH_DUCK
+        if getattr(p, "fx", None) == "sweep_in":  # muffled -> open across the bar before the entry
+            bed[b0:anchor] = _sweep_bed(bed[b0:anchor], SR)
         need = anchor + len(voc)
-        if need > len(bed):  # extend the bed so it can hold this vocal
-            bed = np.vstack([bed, np.zeros((need - len(bed), 2), dtype=np.float32)])
+        bed = _hold(bed, need)
         bed[anchor:need] += voc
+
+    # Slice B contrast: Song 1's OWN vocal answers in the beat-only gaps (never overlapping
+    # Song 2's vocal — the referee guarantees it). No stretch — it is already Song 1's tempo.
+    s1_vocals = song1_stems.get("vocals")
+    for s, e in getattr(plan, "s1_vocal_regions", []):
+        if s1_vocals is None:
+            break
+        take = _edge_fade(_vocal_take(s1_vocals, s, max(e - s, 0.0), 1.0))
+        a0 = max(0, int(s * SR))
+        bed = _hold(bed, a0 + len(take))
+        bed[a0:a0 + len(take)] += take
 
     peak = float(np.max(np.abs(bed))) if bed.size else 0.0
     if peak > 0.0:

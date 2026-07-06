@@ -49,7 +49,8 @@ _S1_STEMS = ("drums", "bass", "other")
 # cached mix from an older engine is never silently served after we improve it.
 # m3.2: beat_breath forced off (the ~2s dead-air gap). m4a.1: full arrangement +
 # regenerate. m4a.2: fixed the inverted atempo length math (vocals could overlap).
-ENGINE_VERSION = "m4a.2"
+# m4b.1: contrast (Song 1's vocal in gaps) + subtle sweep + confidence fallbacks.
+ENGINE_VERSION = "m4b.1"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.
@@ -114,6 +115,9 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int) 
         validate.assert_plan(plan, a1, a2)
 
         stems = {s: stem_path(song1_id, s) for s in _S1_STEMS}
+        s1_voc = stem_path(song1_id, "vocals")  # Song 1's own vocal, for the contrast move
+        if s1_voc.exists():
+            stems["vocals"] = s1_voc
         render_mix(plan, stems, stem_path(song2_id, "vocals"), _mix_wav(mix_id))
         validate.assert_render(_mix_wav(mix_id))
 
