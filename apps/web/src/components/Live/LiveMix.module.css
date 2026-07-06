@@ -1,0 +1,21 @@
+.live {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.buses {
+  display: flex;
+  gap: 8px;
+}
+.on {
+  opacity: 1;
+  font-weight: 600;
+}
+.off {
+  opacity: 0.35;
+  text-decoration: line-through;
+}
+.status {
+  min-height: 1.4em;
+  color: #444;
+}
