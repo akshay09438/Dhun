@@ -90,6 +90,17 @@ M3's single drop grows into a full arrangement; the brain still plans a `MixPlan
 
 **The atempo length contract (a fixed bug worth remembering):** FFmpeg `atempo=stretch` outputs `source_duration / stretch`, **not** `* stretch`. For `stretch < 1` (a faster vocal, ~half of compatible pairs) the vocal plays _longer_; an early M4 cut used the inverted `* stretch` in the driver and referee, so vocals could overlap (two voices) past the checks. Caught by the adversarial review; fixed by routing both through `fence.placement_end`.
 
+## As-built (M4 Slice B — contrast + subtle FX + confidence fallbacks)
+
+Additive on Slice A; the two-voices rule now spans both songs.
+
+- **Models:** `Placement.fx: str | None` (`"sweep_in"`), `MixPlan.s1_vocal_regions: list[tuple[float,float]]` — both additive (M3/M4a plans still parse). `fx` is left a bare string on purpose (an enum would make cached plans more brittle); the referee typo-guards it instead.
+- **Fence:** `contrast_windows` — the beat-only gaps between Song-2 placements (via the shared `placement_end`) intersected with where Song 1 itself sings, margin-protected (2 s) so a contrast never touches a Song-2 vocal or the next duck/sweep bar.
+- **Driver** (`_apply_flourishes`, `_confident`): on a confident Song 1 → one contrast window + one `sweep_in` on the final entry; on a shaky Song 1 (`bpm_confidence < 0.5`) → play safe (≤2 placements, no contrast/fx/breath). The AI's picks are stripped/gated after it runs, so a misbehaving model can't force fancy moves on bad data.
+- **Referee** (dangerous): R1 now holds **across both songs** — every `s1_vocal_regions` span is checked against every Song-2 placement window (`placement_end`); overlap → violation. Also typo-guards unknown `fx`. Verified by an adversarial review that could not defeat the two-voices guarantee (straddles, sub-unity stretch, unsorted plans, evil-AI injection).
+- **Engine** (dangerous): applies `_sweep_bed` (a rising low-pass crossfade, eased at the leading edge so it can't click; overshoot folded into the −1 dBFS normalize + clip guard) before a `sweep_in` entry; mixes Song 1's own vocal stem into each contrast span at ratio 1.0 (it is already Song 1's tempo). Degrades gracefully if the Song-1 vocal stem is missing.
+- **Route:** passes Song 1's `vocals` stem; `ENGINE_VERSION m4b.1`. **Web:** the timeline shows Song 1's vocal in a distinct color + a sweep mark, with a legend.
+
 ## Known follow-ups
 
 - CI `verify` job is Node-only today; add a Python (pytest) job when a GitHub remote is set up. Also point the coverage job at `apps/web/coverage/` (or emit to repo-root `coverage/`).
