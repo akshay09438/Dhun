@@ -23,13 +23,16 @@ _MAX_PLACEMENTS = 3
 _ENTRY_MARGIN = 1.0  # secs of beat-only breathing room between one vocal's end and the next entry
 
 _ARRANGE_SYSTEM = (
-    "You are a DJ arranging Song 2's vocal over Song 1's beat. From the given legal "
-    "phrase anchors (seconds, best-energy first) and vocal slices, choose 2-3 non-"
-    "overlapping placements that build a set: keep an instrumental intro, land the vocal "
-    "on high-energy sections, leave a verse of just beat between entries, and finish "
-    "strong. Don't start on the very first anchor. Set beat_breath=true before a big "
-    "re-entry (a one-bar tension dip, not silence). If take_number>1, choose a genuinely "
-    "different arrangement. STRICT JSON only, nothing else: "
+    "You are a DJ arranging Song 2's vocal over Song 1's beat. From the given legal phrase "
+    "anchors (seconds) and vocal slices, choose 2-3 non-overlapping placements that shape an "
+    "arc across the WHOLE song, using track_length_seconds as your canvas. Spread the "
+    "placements over the song's thirds — one early (after an instrumental intro, not the very "
+    "first anchor), one around the middle, and one in the FINAL THIRD as the strongest entry. "
+    "Do NOT cluster them all in the middle or leave the first half or the ending empty. Leave "
+    "a stretch of just beat between entries. Set beat_breath=true before a big re-entry (a one-"
+    "bar tension dip, not silence). recommended_spread_anchors shows one good arc; you may use "
+    "or improve it. If take_number>1, choose a genuinely different arrangement. STRICT JSON "
+    'only, nothing else: '
     '{"placements":[{"anchor":<sec>,"vocal_slice":[<start>,<end>],"beat_breath":<bool>}]}'
 )
 
@@ -90,18 +93,18 @@ def _extract_json(text: str) -> dict:
 
 
 def _default_arrangement(opts: dict, take: int) -> list[Placement]:
-    """Deterministic arrangement: 2-3 top-energy phrase anchors (spaced so vocals never
-    overlap), each given a vocal slice trimmed to fit before the next entry, rotated by
-    `take` for regenerate variety. The first placement never breathes; later ones do."""
-    anchors = sorted(opts["anchors_ranked"])
+    """Deterministic arrangement: 2-3 anchors spread across the song's thirds (an energy
+    ARC, not a cluster — Handbook H1/H2), each given a vocal slice trimmed to fit before
+    the next entry, rotated by `take` for regenerate variety. The first placement never
+    breathes; later ones do."""
+    anchors_ranked = opts["anchors_ranked"]
     slices = opts["vocal_slices"]
     stretch = opts["vocal_stretch"]
-    if len(anchors) < 2:
-        return [Placement(anchor=anchors[0] if anchors else 0.0, vocal_src=slices[0])]
+    if len(anchors_ranked) < 2:
+        return [Placement(anchor=anchors_ranked[0] if anchors_ranked else 0.0, vocal_src=slices[0])]
 
-    n = min(_MAX_PLACEMENTS, len(anchors))
-    offset = (take - 1) % max(1, len(anchors) - n + 1)  # slide the window per take
-    chosen = anchors[offset : offset + n]
+    n = min(_MAX_PLACEMENTS, len(anchors_ranked))
+    chosen = fence.arc_anchors(anchors_ranked, opts["track_end"], count=n, take=take)  # spread, in time order
     placements: list[Placement] = []
     for i, anc in enumerate(chosen):
         s0, s1 = slices[i % len(slices)]
@@ -116,7 +119,7 @@ def _default_arrangement(opts: dict, take: int) -> list[Placement]:
     if not placements:  # nothing fit — one safe placement at the best anchor
         s0, s1 = slices[0]
         end = s0 + min(s1 - s0, fence.MAX_VOCAL_SECS)
-        placements = [Placement(anchor=anchors[0], vocal_src=(s0, round(end, 3)))]
+        placements = [Placement(anchor=chosen[0] if chosen else anchors_ranked[0], vocal_src=(s0, round(end, 3)))]
     return placements
 
 
@@ -131,9 +134,15 @@ def _ai_arrange(opts: dict, prompt: str, take: int) -> list[Placement] | None:
         import anthropic
 
         client = anthropic.Anthropic(api_key=api_key)
+        track_end = opts.get("track_end", 0.0)
         payload = {
             "shared_tempo_bpm": opts["master_bpm"],
-            "phrase_anchors_seconds": [round(a, 1) for a in legal[:8]],
+            "track_length_seconds": round(track_end, 1),  # the whole canvas, so it can span it
+            "phrase_anchors_seconds": [round(a, 1) for a in legal[:12]],
+            "recommended_spread_anchors": [
+                round(a, 1) for a in fence.arc_anchors(legal, track_end, count=_MAX_PLACEMENTS, take=take)
+            ],
+            "song1_sections": [[round(s0, 1), lbl] for s0, lbl in opts.get("sections", [])][:12],
             "vocal_slices_seconds": [[round(s, 1), round(e, 1)] for s, e in opts["vocal_slices"]],
             "keys_compatible": opts["key_fit"],
             "user_request": prompt or "",
@@ -156,6 +165,16 @@ def _ai_arrange(opts: dict, prompt: str, take: int) -> list[Placement] | None:
         return out or None
     except Exception:
         return None
+
+
+def _spans_song(placements: list[Placement], track_end: float) -> bool:
+    """Does the arrangement reach across the whole song — a vocal in the first half AND a
+    strong entry in the final third — rather than clustering in the middle? This encodes
+    the founder's acceptance test and guards against a clustering AI (or thin analysis)."""
+    if not placements or track_end <= 0:
+        return True  # nothing to judge against — don't force a needless rebuild
+    anchors = [p.anchor for p in placements]
+    return min(anchors) <= track_end / 2 and max(anchors) >= track_end * 2 / 3
 
 
 def _dedupe_nonoverlapping(placements: list[Placement], stretch: float) -> list[Placement]:
@@ -183,6 +202,12 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     if not placements:
         placements = _default_arrangement(opts, take)
     placements = _dedupe_nonoverlapping(placements, opts["vocal_stretch"])
+    # The arc guard: if the plan (AI's or a thin fallback) clusters instead of spanning the
+    # song, rebuild it as a deterministic energy arc so the vocal always reaches the whole
+    # track with a strong finish — the founder's acceptance test, guaranteed by construction.
+    if not _spans_song(placements, opts.get("track_end", 0.0)):
+        placements = _dedupe_nonoverlapping(_default_arrangement(opts, take), opts["vocal_stretch"])
+        source = "rules"
     placements, s1_regions = _apply_flourishes(a1, placements, opts["vocal_stretch"])
     first = placements[0]
     return MixPlan(

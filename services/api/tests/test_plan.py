@@ -116,5 +116,45 @@ def test_declines_when_unmixable():
     assert "tempo" in str(exc.value).lower()
 
 
+def test_long_song_vocal_spans_the_whole_song(monkeypatch):
+    """The arc fix: on a long song with its loud sections in the middle, the vocal must
+    still reach the first half AND the final third — not clump in the middle (the
+    founder's actual complaint on a 7-minute song)."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)  # deterministic
+    energy = [0.3] * 128
+    for i in range(56, 72):  # loudest sections are in the middle — the clustering trap
+        energy[i] = 0.9
+    a1 = make_analysis(bpm=120.0, n_bars=128, energy=energy)  # ~256s (~4.3 min)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 30.0), (40.0, 70.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    track_end = a1.beats[-1]
+    anchors = [p.anchor for p in plan.placements]
+    assert min(anchors) <= track_end / 2       # a vocal in the first half (no empty start)
+    assert max(anchors) >= track_end * 2 / 3    # a strong entry in the final third
+
+
+def test_clustered_ai_arrangement_is_spread_by_the_guard(monkeypatch):
+    """Even if the AI clusters every vocal in the middle, the arc guard rebuilds a spread
+    arrangement so the song never has an empty half."""
+    from app.models import Placement
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: [
+        Placement(anchor=120.0, vocal_src=(0.0, 20.0)),   # all three bunched
+        Placement(anchor=145.0, vocal_src=(0.0, 20.0)),    # around the middle
+        Placement(anchor=170.0, vocal_src=(0.0, 20.0)),    # of a ~256s track
+    ])
+    a1 = make_analysis(bpm=120.0, n_bars=128)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 30.0), (40.0, 70.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    track_end = a1.beats[-1]
+    anchors = [p.anchor for p in plan.placements]
+    assert min(anchors) <= track_end / 2
+    assert max(anchors) >= track_end * 2 / 3
+    assert plan.source == "rules"  # the guard replaced the clustered AI plan
+
+
 def test_extract_json_tolerates_prose():
     assert planner._extract_json('sure!\n{"placements": []}\nthanks') == {"placements": []}

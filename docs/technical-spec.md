@@ -101,6 +101,16 @@ Additive on Slice A; the two-voices rule now spans both songs.
 - **Engine** (dangerous): applies `_sweep_bed` (a rising low-pass crossfade, eased at the leading edge so it can't click; overshoot folded into the −1 dBFS normalize + clip guard) before a `sweep_in` entry; mixes Song 1's own vocal stem into each contrast span at ratio 1.0 (it is already Song 1's tempo). Degrades gracefully if the Song-1 vocal stem is missing.
 - **Route:** passes Song 1's `vocals` stem; `ENGINE_VERSION m4b.1`. **Web:** the timeline shows Song 1's vocal in a distinct color + a sweep mark, with a legend.
 
+## As-built (M4 Slice C — the energy arc: vocal spans the whole song)
+
+The prior arrangement ranked anchors by **energy only**, so on a long song (e.g. a real 7:52 pair) the 2–3 placements clustered where the song is loudest (the middle), leaving the first half and the ending empty. This layer makes the arrangement follow an energy **arc** across the whole song — straight from the DJ Handbook (H1 shape-an-arc, H2 think-in-thirds, H5 don't-peak-early, H6 waves). Same placement count (no render-cost change); only _where_ they land moves. Purely in the planning code — the referee and engine are untouched.
+
+- **Fence** (`planner/fence.py`): `arc_anchors(anchors_ranked, track_end, count, take)` — splits the timeline into `count` equal bands and takes the best-energy anchor in each, so one vocal moment lands in every third and the final band gives a strong late entry; `take` rotates the within-band pick for Regenerate variety; falls back to what exists when anchors are too few. `arrangement_options` now also returns `track_end` (the whole canvas) and `sections` (Song 1's shape, for the AI).
+- **Driver** (`planner/plan.py`): `_default_arrangement` selects via `arc_anchors` (spread) instead of a sliding window of consecutive anchors. A new **arc guard** — `_spans_song` — rebuilds any plan (a clustering AI, or thin analysis) as the deterministic arc when it fails to reach both the first half and the final third; the guard makes the founder's acceptance test true **by construction**, regardless of how the plan was produced. The AI prompt + payload now include `track_length_seconds`, `song1_sections`, and a `recommended_spread_anchors`, and instruct it to spread across the thirds with a strong finish.
+- **Route** (`routes/mix.py`): `ENGINE_VERSION m4c.1` so cached clustered mixes aren't re-served.
+- **Verified end-to-end (no cloud cost)** on the real cached 122-BPM 7:52 beat + 125-BPM vocal: Take 1 vocal at 1:52 / 5:01 / 5:32 (+ Song 1's own vocal answering at 2:41, sweep on the last entry); Take 2 at 1:36 / 4:29 / 6:51 — both span first-half→final-third, takes differ, render passed the referee. 96 backend tests (was 91) + 10 web green.
+- **Known limit (deliberate, next layer):** still 2–3 vocal moments, so a very long song can feel a touch sparse between entries. Adding _more_ vocal returns touches `workers/render.py` (a dangerous surface) and is the explicitly-deferred next layer, gated on the founder finding it too sparse by ear.
+
 ## Known follow-ups
 
 - CI `verify` job is Node-only today; add a Python (pytest) job when a GitHub remote is set up. Also point the coverage job at `apps/web/coverage/` (or emit to repo-root `coverage/`).

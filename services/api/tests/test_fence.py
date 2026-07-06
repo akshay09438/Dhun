@@ -159,3 +159,26 @@ def test_contrast_windows_empty_when_s1_silent_in_gaps():
     placements = [Placement(anchor=16.0, vocal_src=(0.0, 12.0)),
                   Placement(anchor=90.0, vocal_src=(0.0, 12.0))]
     assert fence.contrast_windows(a1, placements, stretch=1.0) == []
+
+
+def test_arc_anchors_spreads_across_thirds():
+    # anchors evenly across a 240s track -> the arc must take one per third, so the
+    # vocal reaches the whole song (a strong entry near the end), never clustered.
+    anchors = [float(t) for t in range(0, 240, 16)]  # 0,16,...,224
+    picks = fence.arc_anchors(anchors, track_end=240.0, count=3)
+    assert len(picks) == 3
+    assert picks[0] < 80.0             # first third
+    assert 80.0 <= picks[1] < 160.0    # middle third
+    assert picks[2] >= 160.0           # final third — the strong finish
+
+
+def test_arc_anchors_rotates_with_take_for_variety():
+    anchors = [0.0, 20.0, 100.0, 200.0]  # first band [0,80) has two options to rotate
+    a = fence.arc_anchors(anchors, track_end=240.0, count=3, take=1)
+    b = fence.arc_anchors(anchors, track_end=240.0, count=3, take=2)
+    assert a != b  # Regenerate gets a genuinely different pick within a band
+
+
+def test_arc_anchors_falls_back_when_too_few():
+    # fewer anchors than placements -> just use what's there (short songs are limited)
+    assert fence.arc_anchors([10.0, 20.0], track_end=240.0, count=3) == [10.0, 20.0]

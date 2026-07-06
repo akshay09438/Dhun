@@ -77,6 +77,36 @@ def candidate_drops(a1: TrackAnalysis, need_secs: float) -> list[float]:
     return usable
 
 
+def arc_anchors(anchors_ranked: list[float], track_end: float,
+                count: int = 3, take: int = 1) -> list[float]:
+    """Distribute `count` vocal entries across the track to shape an energy ARC, instead
+    of letting them cluster where the song is merely loudest.
+
+    Straight from the DJ Handbook (H1 shape-an-arc, H2 think-in-thirds, H5 don't-peak-
+    early): split the timeline into `count` equal bands and take the best-energy anchor
+    in each, so one vocal moment lands in every third of the song and — because the last
+    band is the final third — a strong entry is saved for the end. `anchors_ranked` must
+    be energy-best-first (as `candidate_drops` returns), so band[0] is the loudest anchor
+    in that band and quiet intros stay instrumental. `take` rotates the pick within a band
+    for Regenerate variety. Returns anchors in time order.
+    """
+    if not anchors_ranked or track_end <= 0 or len(anchors_ranked) <= count:
+        return sorted(anchors_ranked)
+    picks: list[float] = []
+    for i in range(count):
+        lo, hi = track_end * i / count, track_end * (i + 1) / count
+        band = [a for a in anchors_ranked if lo <= a < hi]  # energy-desc within the band
+        if band:
+            picks.append(band[(take - 1) % len(band)])
+    if len(picks) < count:  # sparse anchors left a band empty — backfill the loudest unused
+        for a in anchors_ranked:
+            if a not in picks:
+                picks.append(a)
+            if len(picks) >= count:
+                break
+    return sorted(set(picks))
+
+
 def best_vocal_slice(a2: TrackAnalysis) -> tuple[float, float]:
     """The slice of Song 2's vocal to lay on the drop: its strongest (longest) sung
     stretch, snapped to start on a downbeat ('the one'), capped to a punchy length.
@@ -187,10 +217,17 @@ def arrangement_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
         return base
     slices = vocal_slices(a2)
     need = min(e - s for s, e in slices) * base["vocal_stretch"]
+    anchors_ranked = candidate_drops(a1, need)  # best energy first, with runway
+    track_end = (
+        a1.beats[-1] if a1.beats
+        else (max(anchors_ranked) + need if anchors_ranked else need)
+    )
     return {
         **base,
-        "anchors_ranked": candidate_drops(a1, need),  # best energy first, with runway
+        "anchors_ranked": anchors_ranked,
         "vocal_slices": slices,
+        "track_end": track_end,  # the whole song's length, so the arrangement can span it
+        "sections": [(s.start, s.label) for s in a1.sections],  # Song 1's shape, for the AI
     }
 
 
