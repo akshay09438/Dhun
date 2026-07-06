@@ -84,7 +84,9 @@ def _ai_suggest(sections: list[tuple[float, float, str]], prompt: str) -> dict[i
     try:
         import anthropic
 
-        client = anthropic.Anthropic(api_key=key)
+        # Explicit short timeout: this runs in-request, so a hung API must fall back fast
+        # (any error is caught below → deterministic chips), honoring the "instant" promise.
+        client = anthropic.Anthropic(api_key=key, timeout=8.0)
         payload = {
             "sections": [{"index": i, "label": lbl, "start": round(s0, 1)}
                          for i, (s0, _s1, lbl) in enumerate(sections)],
