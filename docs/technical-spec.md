@@ -187,6 +187,18 @@ Removes the manual per-song **Split** + **Analyze** buttons: the user drops two 
 - **Tests:** `study.test.ts` (stage order; split-before-analyze), `api.test.ts` (+`splitSong`/`analyzeSong`/`makeMix` poll + error), `Uploader.test.tsx` (rewritten: hands-free happy path lands on the mix with no Split/Analyze buttons; step-failure → error + Start over; upload-failure message), `Mix.test.tsx` (+`initialMix` renders without a network call). **162 backend + 32 web green.**
 - **Danger-surface note:** only the web `*.test.ts`/`*.test.tsx` files (test-harness guard) went through confirm-and-apply. No backend/engine/storage/route change.
 
+## As-built ("Beat up" — the last live energy move)
+
+Completes the V1 live command set. Founder-chosen sound: **"the beat takes over"** — melody + vocals duck so drums + bass drive; no tempo change (that's V2), so the energy comes from ducking to the groove. Gain-only, clip-safe (never boosts above 1), reversible with "bring it all back".
+
+- **Model** (`app/models.py`): no change — `LiveOp.op` is a free `str`, so `"beat_up"` is carried as-is.
+- **Live driver** (`app/planner/live.py`): `_BEAT_UP` phrases ("beat up", "energy up", "pump it up", "amp it up", …) → `LiveOp(op="beat_up", targets=["other","vocals"], say="letting the beat take over…")`. Checked right after fade, before the combos, so "drop everything but the beat" still parses as a mute despite the word "beat".
+- **Web — pure logic** (`liveSchedule.ts`): `applyOp` treats `"beat_up"` specially — every bus reads **on** (nothing is muted, the tops only duck), so the tap toggles reflect what's audible.
+- **Web — audio engine** (`liveAudio.ts`): `schedule` handles `"beat_up"` — ramps every bus over one bar on the next downbeat to `BEAT_UP_LEVELS` (drums 1, bass 1, melody/vocals `BEAT_UP_DUCK` = 0.4). Only reduces gains → no added clipping.
+- **Web — screen** (`LiveMix.tsx`): a **"Beat up"** button (`beatUp()` builds the op locally — no server round-trip) beside the four parts; typed "beat up" still routes through the parser. `api.ts` `LiveOpDTO.op` widened to include `"beat_up"`.
+- **Tests:** `test_live.py` (+beat_up parse, synonyms, not-confused-with-the-combo); `liveSchedule.test.ts` (+beat_up → all buses on); `LiveMix.test.tsx` (+Beat up control renders). **168 backend + 33 web green.** The actual gain ducking is ear-verified (Web Audio isn't exercised in jsdom, consistent with the other live moves).
+- **Danger-surface note:** only the web `*.test.ts`/`*.test.tsx` files (test-harness guard) went through confirm-and-apply; no engine/validator/storage/route change.
+
 ## Known follow-ups
 
 - CI `verify` job is Node-only today; add a Python (pytest) job when a GitHub remote is set up. Also point the coverage job at `apps/web/coverage/` (or emit to repo-root `coverage/`).

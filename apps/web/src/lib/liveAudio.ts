@@ -7,6 +7,15 @@ import {
 import { barSeconds, busesOf, nextBarTime, type BusName } from "./liveSchedule";
 
 const FADE_BARS = 4; // "fade away" ramps the whole mix out over four bars
+// "Beat up" = the beat takes over: melody + vocals duck to this level so drums + bass
+// drive. Only reduces gains (never boosts above 1) — clip-safe by construction.
+const BEAT_UP_DUCK = 0.4;
+const BEAT_UP_LEVELS: Record<BusName, number> = {
+  drums: 1,
+  bass: 1,
+  other: BEAT_UP_DUCK,
+  vocals: BEAT_UP_DUCK,
+};
 
 export class LivePlayer {
   private ctx = new AudioContext();
@@ -70,18 +79,36 @@ export class LivePlayer {
   /** Schedule a mute/unmute/fade on the next bar, ramped over 1 bar (or FADE_BARS for a
    *  fade), for every named bus. */
   schedule(op: LiveOpDTO, ctx: LiveContextDTO): void {
-    if (op.op !== "mute" && op.op !== "unmute" && op.op !== "fade") return;
+    if (
+      op.op !== "mute" &&
+      op.op !== "unmute" &&
+      op.op !== "fade" &&
+      op.op !== "beat_up"
+    )
+      return;
     const bpm = ctx.bpm ?? 120;
     const barSong = nextBarTime(ctx.downbeats, this.songTime(), bpm);
     const startCtx = this.startCtxTime + barSong; // song time -> ctx time
+    const endCtx =
+      startCtx + barSeconds(bpm) * (op.op === "fade" ? FADE_BARS : 1);
+
+    // "Beat up" ramps every bus to its beat-up level (drums/bass full, tops ducked).
+    if (op.op === "beat_up") {
+      for (const [bus, g] of this.gains) {
+        g.gain.cancelScheduledValues(startCtx);
+        g.gain.setValueAtTime(g.gain.value, startCtx);
+        g.gain.linearRampToValueAtTime(BEAT_UP_LEVELS[bus], endCtx);
+      }
+      return;
+    }
+
     const target = op.op === "unmute" ? 1 : 0; // mute and fade both go to 0
-    const bars = op.op === "fade" ? FADE_BARS : 1;
     for (const bus of busesOf(op)) {
       const g = this.gains.get(bus);
       if (!g) continue;
       g.gain.cancelScheduledValues(startCtx);
       g.gain.setValueAtTime(g.gain.value, startCtx);
-      g.gain.linearRampToValueAtTime(target, startCtx + barSeconds(bpm) * bars);
+      g.gain.linearRampToValueAtTime(target, endCtx);
     }
   }
 

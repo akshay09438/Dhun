@@ -64,3 +64,22 @@ def test_fade_away_is_a_fade_of_everything():
 
 def test_fade_it_out_synonym():
     assert parse_command("fade it out").op == "fade"
+
+
+def test_beat_up_lets_the_beat_take_over():
+    # "The beat takes over": melody + vocals duck so drums + bass drive. The op names
+    # the parts that duck; the browser holds drums/bass at full.
+    op = parse_command("beat up")
+    assert op.op == "beat_up"
+    assert set(op.targets) == {"other", "vocals"}
+    assert op.say  # a DJ-language reply
+
+
+def test_beat_up_synonyms():
+    for phrase in ("energy up", "pump it up", "amp it up", "more energy"):
+        assert parse_command(phrase).op == "beat_up", phrase
+
+
+def test_beat_up_is_not_confused_with_the_beat_only_combo():
+    # "drop everything but the beat" must still mute (not beat_up), despite the word "beat".
+    assert parse_command("drop everything but the beat").op == "mute"

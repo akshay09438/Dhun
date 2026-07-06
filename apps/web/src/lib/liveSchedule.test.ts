@@ -4,8 +4,24 @@ import {
   applyOp,
   rampTarget,
   currentChips,
+  type BusState,
   type Section,
 } from "./liveSchedule";
+
+test("beat_up leaves every part audible (all buses on — melody/vocals only duck)", () => {
+  const muted: BusState = {
+    drums: true,
+    bass: true,
+    other: false,
+    vocals: false,
+  };
+  expect(applyOp(muted, { op: "beat_up" })).toEqual({
+    drums: true,
+    bass: true,
+    other: true,
+    vocals: true,
+  });
+});
 
 test("barSeconds is one 4/4 bar", () => {
   expect(barSeconds(120)).toBeCloseTo(2.0);

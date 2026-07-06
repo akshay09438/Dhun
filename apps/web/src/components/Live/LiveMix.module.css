@@ -31,6 +31,25 @@
   cursor: not-allowed;
 }
 
+.moves {
+  display: flex;
+  gap: 8px;
+}
+.moveBtn {
+  cursor: pointer;
+  border: 1px solid #7c5cff;
+  color: #7c5cff;
+  background: transparent;
+  border-radius: 999px;
+  padding: 4px 14px;
+  font: inherit;
+  font-weight: 600;
+}
+.moveBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .suggestions {
   display: flex;
   flex-wrap: wrap;

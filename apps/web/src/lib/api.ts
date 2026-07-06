@@ -212,7 +212,7 @@ export async function makeMix(
 }
 
 export type LiveOpDTO = {
-  op: "mute" | "unmute" | "decline" | "fade";
+  op: "mute" | "unmute" | "decline" | "fade" | "beat_up";
   target: string | null;
   targets?: string[];
   when: string;

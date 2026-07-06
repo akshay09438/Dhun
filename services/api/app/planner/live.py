@@ -29,6 +29,10 @@ _ALL_BACK = ("bring it all back", "bring everything back", "full mix", "all back
 # Slice-1 generic "bring it back" / undo -> restore the bass (kept for back-compat).
 _UNMUTE_GENERIC = ("bring it back", "back to normal", "undo")
 _FADE = ("fade away", "fade it out", "fade out", "fade the mix out", "fade the music out")
+# "Beat up" = the beat takes over: melody + vocals duck so drums + bass drive. No tempo
+# change (that's V2) — energy comes from the mix ducking to the groove.
+_BEAT_UP = ("beat up", "energy up", "more energy", "amp it up", "hype it up",
+            "pump it up", "turn it up", "bring the energy up", "raise the energy")
 
 
 def _mute(targets: list[str], say: str) -> LiveOp:
@@ -47,6 +51,13 @@ def parse_command(text: str) -> LiveOp:
 
     if any(p in t for p in _FADE):
         return LiveOp(op="fade", targets=list(_ALL), say="fading the whole mix out")
+
+    if any(p in t for p in _BEAT_UP):
+        return LiveOp(
+            op="beat_up",
+            targets=["other", "vocals"],
+            say="letting the beat take over — melody and vocals duck on the next bar",
+        )
 
     # Combos first (they contain words that would otherwise match single parts).
     if any(p in t for p in _ALL_BACK):

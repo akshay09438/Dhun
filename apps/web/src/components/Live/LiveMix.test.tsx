@@ -7,4 +7,5 @@ test("LiveMix shows the four part controls without crashing (no Web Audio in jsd
   expect(screen.getByText("Bass")).toBeTruthy();
   expect(screen.getByText("Melody")).toBeTruthy();
   expect(screen.getByText("Vocals")).toBeTruthy();
+  expect(screen.getByText("Beat up")).toBeTruthy(); // the energy move
 });

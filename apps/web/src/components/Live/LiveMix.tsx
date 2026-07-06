@@ -122,10 +122,28 @@ export default function LiveMix({
 
   /** Apply an op to the audio + the on/off state (shared by taps, chips, typed commands). */
   function runOp(op: LiveOpDTO) {
-    if (op.op === "mute" || op.op === "unmute" || op.op === "fade") {
+    if (
+      op.op === "mute" ||
+      op.op === "unmute" ||
+      op.op === "fade" ||
+      op.op === "beat_up"
+    ) {
       playerRef.current?.schedule(op, ctxRef.current);
       setBusState((s) => applyOp(s, op));
     }
+  }
+
+  function beatUp() {
+    const op: LiveOpDTO = {
+      op: "beat_up",
+      target: null,
+      targets: ["other", "vocals"],
+      when: "next_bar",
+      say: "",
+      reason: null,
+    };
+    runOp(op);
+    setStatus("letting the beat take over on the next bar");
   }
 
   function tapChip(chip: Chip) {
@@ -200,6 +218,18 @@ export default function LiveMix({
             </button>
           );
         })}
+      </div>
+      <div className={styles.moves}>
+        <button
+          type="button"
+          data-testid="beat-up"
+          className={styles.moveBtn}
+          disabled={!ready}
+          title="Melody & vocals duck so the beat drives — on the next bar"
+          onClick={beatUp}
+        >
+          Beat up
+        </button>
       </div>
       {chips.length > 0 && (
         <div className={styles.suggestions} aria-label="suggestions">

@@ -30,6 +30,11 @@ export function busesOf(op: OpLike): BusName[] {
 }
 
 export function applyOp(state: BusState, op: OpLike): BusState {
+  // "Beat up" only ducks melody + vocals — every part stays audible, so all buses
+  // read as on (the tap toggles reflect what you can hear).
+  if (op.op === "beat_up") {
+    return { drums: true, bass: true, other: true, vocals: true };
+  }
   if (op.op !== "mute" && op.op !== "unmute" && op.op !== "fade") return state;
   const on = op.op === "unmute"; // mute and fade both settle a bus to off
   const next = { ...state };
