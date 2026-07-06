@@ -4,43 +4,43 @@ _The single source of truth for "where things stand" between sessions. `/handoff
 
 ## Last updated
 
-2026-07-06 (M3 session - the first real mix built, heard live, and fixed)
+2026-07-06 (M4 session - full DJ arrangement built end to end)
 
 ## Where things stand (one breath)
 
-**M3 is built and the app made its first real mix.** Upload two songs → clean & playable (M1) → split into vocals/drums/bass/other (M2a) → analyzed like a DJ: BPM, key, structure, energy, vocal map (M2b) → **now: "Make my mix" produces Song 1's beat + Song 2's vocal, tempo-locked and dropped on the strongest section, playable and downloadable (M3).** The founder heard a genuine merge on a compatible pair this session - the milestone moment. Two independent reviews (scalability + adversarial safety) ran; their fixes are applied. **74 tests green** (65 backend + 9 web). All on branch `feat/m3-mix`.
+Upload two songs → clean & playable (M1) → split into stems (M2a) → analyzed like a DJ (M2b) → **"Make my mix" now produces a full DJ arrangement:** Song 1's beat throughout, Song 2's vocal weaving in/out across several sections, a real one-bar beat-breath and one subtle filter sweep into a big entry, **Song 1's own vocal answering in a gap for contrast** (the two songs trade, never two voices at once), auto-simplified on shaky songs — with a **Regenerate** button and an arrangement timeline that shows both voices. **M3 is done and live-confirmed. M4 is complete in code** (Slice A live-confirmed by the founder; Slice B built + independently reviewed **SAFE** + verified on a real render). **101 tests green** (91 backend + 10 web). All on branch `feat/m4-arrangement`.
 
 ## In flight
 
-- **One thing pending: the post-fix re-listen.** The founder's first live mix had a ~2-second silent "pause" right before the vocal (the AI's "beat-breath" rendered as one bar of dead air). **This was fixed this session** (beat now plays continuously; `ENGINE_VERSION` bumped so the gappy cached mix isn't re-served) and committed, but the founder had **not yet re-listened to the fixed version** when the session closed. **This is the open M3 acceptance step.**
-- **Working tree clean**; M3 + the gap fix are committed (`d52d812`, `b44b62f`). Suite green (evidence below).
-- **Servers left running** for the re-listen: backend on :8000 (fresh, running the fix) and web on :5173. App URL: http://localhost:5173.
-- **No GitHub remote** - work lives on local branch `feat/m3-mix`; no PR could be opened. Offer to set up a remote next session (for PRs + backup).
+- **Nothing half-done.** Working tree clean; every M4 piece committed on `feat/m4-arrangement`. Suite green (evidence below).
+- **The one open item is a human LISTEN, not code.** The full M4 (contrast + sweep) has **not been ear-checked by the founder yet** — automated checks and the adversarial review confirm it's _safe and structurally correct_, but whether the contrast and the sweep _sound good_ (any faint click? contrast balance?) is the one thing CI can't judge. The safety reviewer explicitly recommended a human listen to one real contrast+sweep mix. **This is the open M4 acceptance step.**
+- **Servers left running** on M4b code: backend :8000, web :5173 → http://localhost:5173.
+- **No GitHub remote** - work lives on local branches (`feat/m3-mix`, `feat/m4-arrangement`); no PRs. Offer to set up a remote next session (backup + PRs).
 
 ## Do first next session
 
-1. **Re-listen to the fixed mix** (the pending M3 acceptance). Best pair (verified compatible): **Father Ocean (Song 1, beat - 122 BPM, 10B) + Dua Lipa "Don't Start Now" (Song 2, vocal - 124 BPM, 10A)** - ~1.6% tempo apart and a perfect relative-key match. Flow: refresh http://localhost:5173 → re-upload the two songs (analysis/stems are cached, so instant) → Make my mix. Judge it on: the ~2s gap is gone, beat runs continuously under the vocal, entry is on-beat and click-free. If a residual **vocal-vs-beat drift** over the long placement is audible, that's the next thing to chase (partly an M4 phase-lock job).
-2. **If the re-listen is clean → M3 is done.** Then start **M4 (full DJ arrangement + regenerate)**: the vocal weaving in/out (≥2 placements), a _real_ beat-breath (tension/bass-cut, not silence), keep-S1-vocal for contrast, FX, confidence fallbacks, and the "give me another take" button. This is where the app stops feeling sparse.
-3. Consider connecting a **GitHub remote** and opening PRs for the M3 work.
+1. **Live-listen the full M4** (the open acceptance). App is running M4b; make a mix from a compatible pair (the cached **122-BPM beat + 125-BPM vocal** works, or Father Ocean + Dua Lipa "Don't Start Now"). Judge: does Song 1's voice answering in a gap feel like a cool _trade_; is the sweep a nice build **with no click** at its start; does it feel richer than Slice A; does Regenerate give a genuinely different take. If good → **M4 fully done**.
+2. **Then land the mix-WAV cache eviction sweep** — the top backlog item, **before the ~50-user test**: Regenerate saves a new ~40 MB WAV per take and nothing deletes them (disk hit 0 once before). A keep-newest-N / age sweep over `data/*.mix.wav` (deletes finished mixes → belongs in `storage.py`, a **dangerous** surface, so gate it). In-process/local only; no Redis/Postgres.
+3. **Then M5** (lean live commands) - or M6 polish (loudness master + short-clip export) per priority.
 
 ## Verification evidence (which checks ran, what they returned)
 
 Ran at handoff time, 2026-07-06:
 
-- Backend: `pytest -q` in `services/api` → **65 passed** (was 26 pre-M3; +39 for fence/plan/validate/render/mix-route + hardening + the gap fix). Includes a real end-to-end render through FFmpeg on synthetic songs.
-- Web: `npm run typecheck` → **PASS** · `npm run lint` → **PASS** · `npm test` (vitest) → **9 passed** (3 files).
-- **Live, real songs this session:** the app produced and played a genuine mix on a compatible pair (the merge sounded good). Surfaced one real bug (~2s dead-air gap) - **fixed and committed**; the fixed version is **not yet re-listened** (see In flight). The ±8% tempo guard correctly declined mismatched pairs (Father Ocean 122 vs Tere Bina 143 → ~15%; vs Sahiba 100 → ~22%) with plain-language reasons - working as designed.
+- Backend: `pytest -q` in `services/api` → **91 passed** (was 26 pre-M3; M3 + M4a + M4b added the fence/planner/validate/render/mix-route suites incl. real-FFmpeg renders and the two-voices-overlap guards).
+- Web: `npm run typecheck` → **PASS** · `npm run lint` → **PASS** · `npm test` (vitest) → **10 passed** (3 files).
+- **Real end-to-end render this session (no cloud cost, cached pair 122+125 BPM, stretch 0.976 — the fixed sub-unity case):** a full Slice B arrangement — S2 vocal at 0:18 / 0:33 / 0:49 (sweep on the 0:49 entry), **Song 1's own vocal answering at 2:41 for contrast**, **S1/S2 NO-OVERLAP verified**, valid 7:56 stereo WAV (peak 0.891, audible 0.88). Both independent reviews on M4a and M4b ran; the M4a safety review **caught a real overlap bug (inverted atempo math), fixed same session**; the M4b safety review returned **SAFE**.
 
 ## Open escalations
 
-- **None blocking.** No red suite, no work waiting on a human decision.
+- **None blocking.** No red suite, no work waiting on a human decision (only the optional live listen).
 - **CLAIMS to re-verify (not settled facts):**
-  - The two dangerous-surface files (`workers/render.py`, `services/api/app/planner/validate.py`) were created and later **hardened** this session (near-silence guard; decoded-duration cap; tempo/anchor guards) via the confirm-and-apply flow with the founder's explicit approval; approval was cleared afterward. An adversarial review returned **not-proven-safe** on two "should-fix" gaps, both now hardened - **re-verify next session that those guards actually hold** (a near-silent render is rejected; a tiny-but-hours-long file can't balloon memory) rather than trusting this sentence.
-  - The M1 "before any public exposure" items **remain open** and gate any public launch: sandbox/resource-limit FFmpeg on untrusted input, proxy-level rate/body limits, HTTP-level traversal + oversize tests. Add a **duration cap at upload** (M3 only caps at render).
-- **M4 / scaling backlog (logged, deliberate - not needed at validation scale):** mix-WAV cache has no eviction (fastest-growing data; worse once regenerate lands); extend `MixPlan` **additively** for M4's multiple placements so cached plan JSON still parses; extract the async-job skeleton (now duplicated in stems/analysis/mix); in-memory `_jobs` + local-disk readiness break at the first multi-worker deploy / object-storage move.
-- **Keys / cost:** `REPLICATE_API_TOKEN` + `ANTHROPIC_API_KEY` in the gitignored root `.env`. This session spent Replicate credit analyzing/splitting new songs (Tere Bina, Sahiba, and the compatible vocal) - **check remaining credit** before a heavy next session. Anthropic (`claude-sonnet-5`) powers the mix planner; cost is negligible (tiny structured calls) and it falls back to rules if the key/network is absent.
-- **Environment truths (unchanged, hard-won):** PyTorch/librosa/madmom cannot run on this Windows-ARM machine - heavy audio goes through Replicate; local DSP is FFmpeg + numpy/scipy only. Time-stretch is **FFmpeg `atempo`** (LGPL, already installed) - do not add GPL rubberband to the pipeline. Watch disk as cached stems/mixes accumulate.
+  - The M4 dangerous-surface guards (`workers/render.py`, `services/api/app/planner/validate.py`) were built + hardened via confirm-and-apply with founder approval; approvals cleared. Adversarial review verdict **SAFE** (two-lead-voices guarantee held under attack). **Re-verify next session by ear** that a real contrast+sweep mix has no click and the contrast sits right - that is the one dimension code review couldn't cover.
+  - M1 "before any public exposure" items **remain open** and gate a public launch: sandbox/resource-limit FFmpeg on untrusted input, proxy rate/body limits, HTTP traversal/oversize tests, and a **duration cap at upload** (render caps at 12 min; upload only caps bytes).
+- **Backlog (logged, deliberate - not blockers at validation scale):** (a) **mix-WAV cache eviction = top item before the user test** (see Do-first #2). (b) async-job skeleton triplicated (stems/analysis/mix) - extract one helper on next touch. (c) in-memory `_jobs` + local-disk readiness break at first multi-worker deploy / object-storage move. (d) `bpm_confidence is None` defaults to "confident" (only reachable on legacy analyses; real pipeline always sets it) - consider defaulting unknown→shaky. (e) `Placement.fx` is a bare string (deliberate, referee typo-guards it); if `s1_vocal_regions` ever grows a per-region field, promote the tuple to a named model in the same change.
+- **Keys / cost:** `REPLICATE_API_TOKEN` + `ANTHROPIC_API_KEY` in the gitignored root `.env`. **Check remaining Replicate credit** before a session that splits/analyzes new songs. Anthropic (`claude-sonnet-5`) powers the arrangement planner; negligible cost and it falls back to deterministic rules if the key/network is absent (the deterministic fallback is what the real renders above used).
+- **Environment truths (unchanged):** PyTorch/librosa/madmom can't run on this Windows-ARM machine - heavy audio via Replicate; local DSP is FFmpeg + numpy/scipy only. Time-stretch is FFmpeg `atempo` (LGPL); the sweep uses `scipy.signal`. Watch disk as cached stems/mixes accumulate (see backlog a).
 
 ## How to run the app
 
-See README.md. Quick: backend `.venv/Scripts/python -m uvicorn app.main:app --port 8000` (from `services/api`), web `npm run dev` (from root), open http://localhost:5173. Or the `.claude/launch.json` configs (backend + web). Both are currently running.
+See README.md. Quick: backend `.venv/Scripts/python -m uvicorn app.main:app --port 8000` (from `services/api`), web `npm run dev` (from root), open http://localhost:5173. Or the `.claude/launch.json` configs. Both are currently running on the M4b code.
