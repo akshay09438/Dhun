@@ -31,7 +31,7 @@ def _use_tmp(monkeypatch, tmp_path):
                             dataclasses.replace(mod.settings, data_dir=tmp_path))
     monkeypatch.setattr(mix_route, "_jobs", {})
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr(plan_mod, "_ai_choose", lambda opts, prompt: None)  # force fallback
+    monkeypatch.setattr(plan_mod, "_ai_arrange", lambda opts, prompt, take: None)  # force fallback
 
 
 def _tone(path, freq, secs=6.0, sr=44100):
