@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from app.models import MixPlan
+from app.models import MixPlan, Placement
 from app.planner import validate
 from tests.test_fence import make_analysis
 
@@ -13,6 +13,14 @@ def make_plan(anchor=16.0, stretch=1.0, vocal_src=(16.0, 40.0)):
     return MixPlan(
         mix_id="m" * 64, song1_id="a" * 64, song2_id="b" * 64,
         master_bpm=120.0, vocal_stretch=stretch, vocal_src=vocal_src, anchor=anchor,
+    )
+
+
+def make_arrangement_plan(placements, stretch=1.0):
+    return MixPlan(
+        mix_id="m" * 64, song1_id="a" * 64, song2_id="b" * 64, master_bpm=120.0,
+        vocal_stretch=stretch, vocal_src=placements[0].vocal_src,
+        anchor=placements[0].anchor, placements=placements,
     )
 
 
@@ -37,6 +45,28 @@ def test_validate_plan_flags_empty_slice():
     a1, a2 = make_analysis(), make_analysis()
     v = validate.validate_plan(make_plan(vocal_src=(16.0, 16.0)), a1, a2)
     assert any("slice" in m for m in v)
+
+
+def test_validate_flags_overlapping_placements():
+    a1, a2 = make_analysis(), make_analysis()  # downbeats every 2s
+    p = [Placement(anchor=16.0, vocal_src=(0.0, 24.0)),  # 24s vocal from 16 -> ends 40
+         Placement(anchor=32.0, vocal_src=(0.0, 8.0))]   # enters 32 -> overlaps
+    v = validate.validate_plan(make_arrangement_plan(p), a1, a2)
+    assert any("overlap" in m.lower() or "R1" in m for m in v)
+
+
+def test_validate_flags_offbeat_placement():
+    a1, a2 = make_analysis(), make_analysis()
+    p = [Placement(anchor=16.0, vocal_src=(0.0, 8.0)),
+         Placement(anchor=33.1, vocal_src=(0.0, 8.0))]  # 33.1 not on a 2s downbeat
+    assert any("R3" in m for m in validate.validate_plan(make_arrangement_plan(p), a1, a2))
+
+
+def test_validate_accepts_clean_arrangement():
+    a1, a2 = make_analysis(), make_analysis()
+    p = [Placement(anchor=16.0, vocal_src=(0.0, 8.0)),
+         Placement(anchor=32.0, vocal_src=(0.0, 8.0))]
+    assert validate.validate_plan(make_arrangement_plan(p), a1, a2) == []
 
 
 def test_validate_render_clean(tmp_path):

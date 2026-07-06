@@ -30,6 +30,7 @@ SR = 44100  # everything renders at CD rate, stereo
 _TARGET_PEAK = 10 ** (-1.0 / 20)  # -1 dBFS headroom
 _CEILING = 0.999  # brickwall safety — must stay below the validator's clip ceiling
 _FADE_MS = 8.0  # edge fade that kills entry/exit clicks
+_BREATH_DUCK = 0.35  # the bed dips to this for one bar before a flagged entry (tension, not silence)
 _FFMPEG_TIMEOUT = 180
 # Bound decoded audio so a tiny-but-hours-long low-bitrate file can't balloon in
 # memory (the upload cap is on bytes, not duration). A decoded stereo minute is
@@ -102,30 +103,40 @@ def _edge_fade(y: np.ndarray) -> np.ndarray:
     return y
 
 
+def _placements_of(plan):
+    """The plan's vocal placements — or the scalar anchor/vocal_src as a one-element
+    arrangement, so a legacy (M3) single-placement plan still renders."""
+    if getattr(plan, "placements", None):
+        return plan.placements
+    return [type("P", (), {"anchor": plan.anchor, "vocal_src": plan.vocal_src,
+                           "beat_breath": getattr(plan, "beat_breath", False)})()]
+
+
 def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
                out_path: Path) -> Path:
     """Render `plan` to a WAV at out_path.
 
     song1_stems maps drums/bass/other to Song 1's stem files; song2_vocal is Song 2's
-    isolated vocal file. `plan` is any object exposing master_bpm, vocal_stretch,
-    vocal_src, anchor, and beat_breath.
+    isolated vocal file. `plan` exposes master_bpm, vocal_stretch, and either a list of
+    `placements` (each with anchor / vocal_src / beat_breath) or the scalar anchor /
+    vocal_src fallback. Song 1's beat runs continuously; each placement lays the vocal
+    on top; beat_breath ducks the bed for one bar before that entry (never silence).
     """
     if plan.master_bpm <= 0:
         raise RenderError("plan has a non-positive tempo")
     bed = _sum_stems([song1_stems["drums"], song1_stems["bass"], song1_stems["other"]])
+    bar = int((60.0 / plan.master_bpm) * 4 * SR)
 
-    start, end = plan.vocal_src
-    voc = _edge_fade(_vocal_take(song2_vocal, start, max(end - start, 0.0), plan.vocal_stretch))
-
-    anchor = max(0, int(plan.anchor * SR))  # never place before the start
-    if plan.beat_breath:  # silence Song 1's beat for one bar right before the vocal
-        bar = int((60.0 / plan.master_bpm) * 4 * SR)
-        bed[max(0, anchor - bar):anchor] *= 0.0
-
-    need = anchor + len(voc)
-    if need > len(bed):  # extend the bed so it can hold the whole vocal
-        bed = np.vstack([bed, np.zeros((need - len(bed), 2), dtype=np.float32)])
-    bed[anchor:need] += voc
+    for p in _placements_of(plan):
+        start, end = p.vocal_src
+        voc = _edge_fade(_vocal_take(song2_vocal, start, max(end - start, 0.0), plan.vocal_stretch))
+        anchor = max(0, int(p.anchor * SR))  # never place before the start
+        if getattr(p, "beat_breath", False):  # DUCK the bed for one bar (tension), never silence it
+            bed[max(0, anchor - bar):anchor] *= _BREATH_DUCK
+        need = anchor + len(voc)
+        if need > len(bed):  # extend the bed so it can hold this vocal
+            bed = np.vstack([bed, np.zeros((need - len(bed), 2), dtype=np.float32)])
+        bed[anchor:need] += voc
 
     peak = float(np.max(np.abs(bed))) if bed.size else 0.0
     if peak > 0.0:

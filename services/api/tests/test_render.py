@@ -28,10 +28,10 @@ def _stems(tmp_path):
     paths = {}
     for name, f in (("drums", 110.0), ("bass", 55.0), ("other", 330.0)):
         p = tmp_path / f"{name}.wav"
-        _tone(p, freq=f)
+        _tone(p, freq=f, secs=8.0)  # bed long enough to hold placements out to ~6s
         paths[name] = p
     vocal = tmp_path / "vocal.wav"
-    _tone(vocal, freq=440.0, secs=6.0)
+    _tone(vocal, freq=440.0, secs=8.0)
     return paths, vocal
 
 
@@ -39,6 +39,16 @@ def _plan(anchor=1.0, stretch=1.0, vocal_src=(0.0, 2.0), beat_breath=False, mast
     return types.SimpleNamespace(
         master_bpm=master_bpm, vocal_stretch=stretch, vocal_src=vocal_src,
         anchor=anchor, beat_breath=beat_breath,
+    )
+
+
+def _arr_plan(placements, breath=False):
+    """A duck-typed arrangement plan. placements = [(anchor, (start,end), beat_breath), ...]."""
+    return types.SimpleNamespace(
+        master_bpm=120.0, vocal_stretch=1.0,
+        vocal_src=placements[0][1], anchor=placements[0][0], beat_breath=breath,
+        placements=[types.SimpleNamespace(anchor=a, vocal_src=v, beat_breath=b)
+                    for a, v, b in placements],
     )
 
 
@@ -64,13 +74,25 @@ def test_render_applies_time_stretch(tmp_path):
     assert float(np.max(np.abs(y))) <= render._CEILING
 
 
-def test_beat_breath_silences_the_bar_before_entry(tmp_path):
+def test_render_places_vocal_in_multiple_spots(tmp_path):
     stems, vocal = _stems(tmp_path)
     out = tmp_path / "mix.wav"
-    # anchor 2.0s, 120bpm -> one bar = 2.0s, so the whole first 2s should be silenced
-    render.render_mix(_plan(anchor=2.0, beat_breath=True), stems, vocal, out)
+    render.render_mix(_arr_plan([(1.0, (0.0, 1.5), False), (4.0, (0.0, 1.5), False)]),
+                      stems, vocal, out)
     y, sr = sf.read(out, dtype="float32", always_2d=True)
-    assert float(np.max(np.abs(y[: int(1.9 * sr)]))) < 1e-3  # near-silent breath
+    e = lambda a, b: float(np.mean(np.abs(y[int(a * sr):int(b * sr)])))
+    # both vocal windows carry more energy than the beat-only gap between them
+    assert e(1.0, 2.5) > e(2.6, 3.9) and e(4.0, 5.5) > e(2.6, 3.9)
+
+
+def test_beat_breath_ducks_the_bar_not_silences_it(tmp_path):
+    stems, vocal = _stems(tmp_path)
+    out = tmp_path / "mix.wav"
+    # anchor 2.0s, 120bpm -> one bar = 2.0s; the bar before is DUCKED, not dead air
+    render.render_mix(_arr_plan([(2.0, (0.0, 1.0), True)], breath=True), stems, vocal, out)
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    bar_before = float(np.max(np.abs(y[int(0.2 * sr):int(1.9 * sr)])))
+    assert bar_before > 1e-3  # NOT dead air (the M3 gap bug stays fixed)
 
 
 def test_guard_duration_caps_over_long_audio(monkeypatch):

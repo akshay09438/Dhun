@@ -5,14 +5,14 @@ checked before we spend time rendering; the real rendered WAV is checked before 
 is ever served, because analysis can be wrong and a plan that reads fine can still
 produce a broken sound (DJ Handbook Part 9: verify at the moment of firing).
 
-M3's hard rules:
-  R1 (single lead vocal) and R2 (single bassline) are guaranteed *by construction*
-     here — the bed is Song 1's instrumental (its own vocal removed) and the only
-     vocal added is Song 2's single slice, so there is never a second vocal or a
-     second bassline to check. We assert the things we can measure:
-  R3  the vocal enters on a downbeat of Song 1 (never mid-bar).
+The hard rules:
+  R1 (single lead vocal): only Song 2's vocal is ever added (Song 1's is removed), so
+     the source is single by construction — but an M4 arrangement places it in several
+     spots, so we assert those placements never OVERLAP in time (never two voices at
+     once). R2 (single bassline) holds by construction (only Song 1's bass).
+  R3  every vocal entry lands on a downbeat of Song 1 (never mid-bar).
   B3  the tempo stretch stays inside the safe band (no warble).
-  R6  the finished audio is neither silent nor clipping.
+  R6  the finished audio is neither silent/near-silent nor clipping.
 """
 
 from __future__ import annotations
@@ -51,16 +51,30 @@ def _on_a_downbeat(t: float, downbeats: list[float]) -> bool:
     return any(abs(t - d) <= BEAT_TOLERANCE_SECS for d in downbeats)
 
 
+def _placements_of(plan: MixPlan) -> list:
+    """The plan's vocal placements — or the scalar anchor/vocal_src as a one-element
+    arrangement, so a legacy (M3) single-placement plan still validates."""
+    if plan.placements:
+        return list(plan.placements)
+    return [type("P", (), {"anchor": plan.anchor, "vocal_src": plan.vocal_src})()]
+
+
 def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[str]:
     """Return the list of hard-rule violations in the plan (empty == clean)."""
     violations: list[str] = []
-    if not _on_a_downbeat(plan.anchor, a1.downbeats):
-        violations.append("vocal entry is not on a downbeat of Song 1 (R3)")
     if not SAFE_STRETCH_LO <= plan.vocal_stretch <= SAFE_STRETCH_HI:
         violations.append("tempo stretch is outside the safe band (B3)")
-    start, end = plan.vocal_src
-    if end <= start:
-        violations.append("vocal slice is empty")
+
+    ordered = sorted(_placements_of(plan), key=lambda p: p.anchor)
+    for p in ordered:
+        if not _on_a_downbeat(p.anchor, a1.downbeats):
+            violations.append("a vocal entry is not on a downbeat of Song 1 (R3)")
+        if p.vocal_src[1] <= p.vocal_src[0]:
+            violations.append("a vocal slice is empty")
+    for a, b in zip(ordered, ordered[1:]):  # R1: one vocal at a time — no overlap
+        a_end = a.anchor + (a.vocal_src[1] - a.vocal_src[0]) * plan.vocal_stretch
+        if b.anchor < a_end - 1e-6:
+            violations.append("two vocal placements overlap (R1)")
     return violations
 
 
