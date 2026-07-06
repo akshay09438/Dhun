@@ -54,3 +54,9 @@
 .chip:hover {
   background: rgba(124, 92, 255, 0.24);
 }
+
+.nowPlaying {
+  margin-left: 10px;
+  opacity: 0.7;
+  font-size: 0.85em;
+}

@@ -105,6 +105,19 @@ def _ai_suggest(sections: list[tuple[float, float, str]], prompt: str) -> dict[i
         return None
 
 
+def _merge_same(out: list[SectionSuggestions]) -> list[SectionSuggestions]:
+    """Collapse consecutive sections whose chips are identical into one span — so the live
+    chips only 'change' at a genuine transition, not across repeated same-suggestion parts."""
+    merged: list[SectionSuggestions] = []
+    for s in out:
+        prev = merged[-1] if merged else None
+        if prev and [c.text for c in prev.chips] == [c.text for c in s.chips]:
+            prev.end = s.end  # extend the previous span over this identical one
+        else:
+            merged.append(s)
+    return merged
+
+
 def suggest_moves(a1: TrackAnalysis, prompt: str = "") -> list[SectionSuggestions]:
     """1-3 suggestion chips per Song-1 section, AI-picked with a deterministic fallback."""
     sections = _sections_of(a1)
@@ -116,4 +129,4 @@ def suggest_moves(a1: TrackAnalysis, prompt: str = "") -> list[SectionSuggestion
         if not chips:  # guard: never emit an empty section
             chips = [_chip(t) for t in _fallback_texts(label)][:_MAX_CHIPS]
         out.append(SectionSuggestions(start=s0, end=s1, label=label, chips=chips))
-    return out
+    return _merge_same(out)

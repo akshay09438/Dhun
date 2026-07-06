@@ -25,6 +25,15 @@ def test_fallback_maps_labels_to_vocabulary_chips(monkeypatch):
     assert any(c.text == "Bring the vocal in" for c in out[1].chips)
 
 
+def test_consecutive_same_chip_sections_are_merged(monkeypatch):
+    monkeypatch.setattr(suggest, "_ai_suggest", lambda *a, **k: None)  # fallback
+    # three intros in a row (identical chips) then a chorus -> should collapse to intro+chorus.
+    out = suggest_moves(_analysis(["intro", "intro", "intro", "chorus"]))
+    assert [s.label for s in out] == ["intro", "chorus"]
+    assert out[0].start == 0.0 and out[0].end == 90.0  # merged span of the three intros
+    assert out[1].start == 90.0
+
+
 def test_no_sections_gives_one_default_section(monkeypatch):
     monkeypatch.setattr(suggest, "_ai_suggest", lambda *a, **k: None)
     out = suggest_moves(TrackAnalysis(song_id="a" * 64, status="ready", sections=[]))

@@ -11,10 +11,17 @@ import {
 import {
   applyOp,
   currentChips,
+  currentSection,
   type BusState,
   type BusName,
   type Chip,
 } from "../../lib/liveSchedule";
+
+function fmtTime(t: number): string {
+  const m = Math.floor(t / 60);
+  const s = Math.floor(t % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
 import styles from "./LiveMix.module.css";
 
 const STEM_BUSES: BusName[] = ["drums", "bass", "other"];
@@ -49,6 +56,7 @@ export default function LiveMix({
   const [text, setText] = useState("");
   const [sections, setSections] = useState<SectionSuggestionsDTO[]>([]);
   const [chips, setChips] = useState<Chip[]>([]);
+  const [nowLabel, setNowLabel] = useState("");
 
   // (Re)load the player whenever the song or the current take (mixId) changes, so the
   // live vocals always match the mix on screen.
@@ -82,15 +90,18 @@ export default function LiveMix({
       .catch(() => setSections([])); // chips are optional — parts + typed commands still work
   }, [mixId]);
 
-  // While playing, follow the playhead and show the current section's chips.
+  // While playing, follow the playhead: show the current section's chips + which part we're in.
   useEffect(() => {
     if (!playing || sections.length === 0) {
       setChips([]);
+      setNowLabel("");
       return;
     }
     const id = setInterval(() => {
       const t = playerRef.current?.songTime() ?? 0;
       setChips(currentChips(sections, t));
+      const sec = currentSection(sections, t);
+      setNowLabel(sec ? `${sec.label} · ${fmtTime(t)}` : fmtTime(t));
     }, 250);
     return () => clearInterval(id);
   }, [playing, sections]);
@@ -162,6 +173,11 @@ export default function LiveMix({
       <button onClick={togglePlay} disabled={!ready}>
         {playing ? "Pause" : "Play"}
       </button>
+      {nowLabel && (
+        <span className={styles.nowPlaying} data-testid="now-playing">
+          ▶ {nowLabel}
+        </span>
+      )}
       <div className={styles.buses}>
         {PARTS.map(({ bus, label }) => {
           const disabled = bus === "vocals" && !vocalsAvailable;

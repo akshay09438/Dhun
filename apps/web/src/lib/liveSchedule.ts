@@ -49,13 +49,21 @@ export type Section = {
   chips: Chip[];
 };
 
-/** The chips for the section the playhead is in: the last section whose start <= songTime
- *  (sections are sorted by start). Empty when there are no sections. */
-export function currentChips(sections: Section[], songTime: number): Chip[] {
+/** The section the playhead is in: the last section whose start <= songTime (sections are
+ *  sorted by start). Undefined when there are no sections. */
+export function currentSection(
+  sections: Section[],
+  songTime: number,
+): Section | undefined {
   let cur: Section | undefined;
   for (const s of sections) {
     if (s.start <= songTime + 1e-6) cur = s;
     else break;
   }
-  return cur?.chips ?? [];
+  return cur;
+}
+
+/** The chips for the section the playhead is in. Empty when there are no sections. */
+export function currentChips(sections: Section[], songTime: number): Chip[] {
+  return currentSection(sections, songTime)?.chips ?? [];
 }
