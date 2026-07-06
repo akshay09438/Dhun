@@ -13,13 +13,35 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const ID1 = "a".repeat(64);
+const ID2 = "c".repeat(64);
+
+const LIBRARY = {
+  songs: [
+    {
+      id: ID1,
+      original_name: "Father Ocean",
+      url: `/songs/${ID1}/audio`,
+      status: "ready",
+      role_hint: "beat",
+    },
+    {
+      id: ID2,
+      original_name: "Tere Bina",
+      url: `/songs/${ID2}/audio`,
+      status: "ready",
+      role_hint: "vocals",
+    },
+  ],
+};
+
 const READY_MIX = {
   mix_id: "m",
   status: "ready",
   url: "/mix/m/audio",
   plan: {
-    master_bpm: 120,
-    vocal_stretch: 1.0,
+    master_bpm: 122,
+    vocal_stretch: 0.976,
     anchor: 16,
     beat_breath: false,
     take: 1,
@@ -33,38 +55,20 @@ const READY_MIX = {
   message: null,
 };
 
-/** A backend where every step is instantly ready (the cached-demo-pair case). */
+/** A backend where the catalog is loaded and every study step is instantly ready. */
 function mockBackend() {
   vi.stubGlobal(
     "fetch",
     vi.fn().mockImplementation((url: string, opts?: { method?: string }) => {
       const u = String(url);
       const method = opts?.method ?? "GET";
-      if (u.endsWith("/songs") && method === "POST")
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({
-            songs: [
-              {
-                id: "a",
-                original_name: "father ocean.mp3",
-                url: "/songs/a/audio",
-                status: "ready",
-              },
-              {
-                id: "b",
-                original_name: "tere bina.wav",
-                url: "/songs/b/audio",
-                status: "ready",
-              },
-            ],
-          }),
-        });
+      if (u.endsWith("/library"))
+        return Promise.resolve({ ok: true, json: async () => LIBRARY });
       if (u.includes("/stems"))
         return Promise.resolve({
           ok: true,
           json: async () => ({
-            song_id: "a",
+            song_id: "x",
             status: "ready",
             stems: { vocals: "/v" },
           }),
@@ -73,9 +77,9 @@ function mockBackend() {
         return Promise.resolve({
           ok: true,
           json: async () => ({
-            song_id: "a",
+            song_id: "x",
             status: "ready",
-            bpm: 120,
+            bpm: 122,
             key: null,
             sections: [],
           }),
@@ -83,7 +87,7 @@ function mockBackend() {
       if (u.endsWith("/mix/name") && method === "POST")
         return Promise.resolve({
           ok: true,
-          json: async () => ({ name: "Tere Ocean" }),
+          json: async () => ({ name: "Ocean Bina" }),
         });
       if (u.endsWith("/mix") && method === "POST")
         return Promise.resolve({ ok: true, json: async () => READY_MIX });
@@ -97,15 +101,18 @@ function mockBackend() {
   );
 }
 
-function pickBothSongs() {
-  const in1 = screen.getByLabelText(/choose song one/i);
-  const in2 = screen.getByLabelText(/choose song two/i);
-  fireEvent.change(in1, { target: { files: [new File([""], "beat.wav")] } });
-  fireEvent.change(in2, { target: { files: [new File([""], "voc.wav")] } });
+async function pickBothSongs() {
+  // Song 1 slot -> dropdown -> Father Ocean
+  fireEvent.click(screen.getByTestId("song-slot-1"));
+  fireEvent.click(await screen.findByRole("option", { name: /father ocean/i }));
+  // Song 2 slot -> dropdown -> Tere Bina
+  fireEvent.click(screen.getByTestId("song-slot-2"));
+  fireEvent.click(await screen.findByRole("option", { name: /tere bina/i }));
 }
 
-describe("App — the four-screen flow", () => {
-  it("opens on Setup with 'Mix it' disabled until both songs are chosen", () => {
+describe("App — the catalog flow", () => {
+  it("opens on Setup with 'Mix it' disabled until both songs are picked", () => {
+    mockBackend();
     render(<App />);
     const btn = screen.getByRole("button", {
       name: /mix it/i,
@@ -113,18 +120,41 @@ describe("App — the four-screen flow", () => {
     expect(btn.disabled).toBe(true);
   });
 
-  it("runs upload → generating → play and lands on the mix with its AI name and controls", async () => {
+  it("has no file inputs anywhere — songs come from the catalog only", () => {
+    mockBackend();
+    const { container } = render(<App />);
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+  });
+
+  it("picks two catalog songs → generating → lands on the named mix", async () => {
     mockBackend();
     render(<App />);
-    pickBothSongs();
-    fireEvent.click(screen.getByRole("button", { name: /mix it/i }));
+    await pickBothSongs();
 
-    // Lands on the Play screen with the AI-generated name and the live controls.
+    const btn = screen.getByRole("button", {
+      name: /mix it/i,
+    }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    fireEvent.click(btn);
+
     await waitFor(() =>
-      expect(screen.getAllByText(/tere ocean/i).length).toBeGreaterThan(0),
+      expect(screen.getAllByText(/ocean bina/i).length).toBeGreaterThan(0),
     );
     expect(screen.getByTestId("beat-up")).toBeTruthy();
-    expect(screen.getByTestId("bus-drums")).toBeTruthy();
     expect(screen.getByTestId("bus-vocals")).toBeTruthy();
+  });
+
+  it("disables a song already picked in the other slot", async () => {
+    mockBackend();
+    render(<App />);
+    fireEvent.click(screen.getByTestId("song-slot-1"));
+    fireEvent.click(
+      await screen.findByRole("option", { name: /father ocean/i }),
+    );
+    fireEvent.click(screen.getByTestId("song-slot-2"));
+    const dup = (await screen.findByRole("option", {
+      name: /father ocean/i,
+    })) as HTMLButtonElement;
+    expect(dup.disabled).toBe(true);
   });
 });

@@ -33,13 +33,13 @@ Casual music fans and creators who can't DJ but want to make good-sounding mashu
 
 ---
 
-## Screen 1 — Bring your two songs
+## Screen 1 — Pick your two songs ✅ built (curated catalog — MVP pivot 2026-07-06)
 
-- **Purpose:** get the raw material in.
-- **On it:** two drop zones — "Song 1: the beat" and "Song 2: the vocals" — plus a prompt box pre-filled with "Mix Song 1's beat with Song 2's vocals, like a DJ" so a blank-brain user can just press go. One-line explainer.
-- **Main action:** drop two files → **Make my mix**.
-- **Empty / first-run:** a clear example pairing and a "not sure? try these two" demo pair so a first-timer succeeds immediately.
-- **Error:** unsupported/corrupt file, or a mismatch too extreme to sound good → plain-language message + suggestion, never a crash.
+- **Purpose:** get the raw material in — **from a curated catalog, not uploads** (founder decision 2026-07-06: users kept hitting "tempos too far apart" from misread/incompatible uploads, so the MVP preloads hand-verified songs where **every pairing blends by construction**).
+- **On it:** two song slots — "Song 1 → its beat" and "Song 2 → its vocals". Clicking a slot opens a **dropdown of the preloaded songs** (each pre-analyzed, tempo-verified once by us); a song picked in one slot is disabled in the other. Prompt box pre-filled as before.
+- **Main action:** pick two songs → **Mix it**.
+- **Empty / error:** an empty catalog says "No songs in the library yet"; a failed catalog load says so plainly. No file-type errors anymore — there are no uploads.
+- _(The upload flow still exists in the backend — it's how the operator ingests new catalog songs — but users never see it. "Uploads only" from the V1 table is superseded by this pivot for the validation MVP; open uploads may return post-validation, ideally with the tempo-fix control.)_
 
 ## Screen 2 — Studying your songs (the wait) ✅ built
 

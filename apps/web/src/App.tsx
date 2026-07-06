@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   getMixName,
   makeMix,
-  uploadSongs,
+  type LibrarySongDTO,
   type MixDTO,
   type SongDTO,
 } from "./lib/api";
@@ -18,8 +18,8 @@ const DEFAULT_PROMPT = "Song 1's beat, Song 2's vocals — mixed like a DJ";
 
 export function App() {
   const [screen, setScreen] = useState<Screen>("setup");
-  const [file1, setFile1] = useState<File | null>(null);
-  const [file2, setFile2] = useState<File | null>(null);
+  const [pick1, setPick1] = useState<LibrarySongDTO | null>(null);
+  const [pick2, setPick2] = useState<LibrarySongDTO | null>(null);
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
   const [songs, setSongs] = useState<SongDTO[]>([]);
   const [mix, setMix] = useState<MixDTO | null>(null);
@@ -38,22 +38,18 @@ export function App() {
   }
 
   async function handleMixIt() {
-    if (!file1 || !file2) return;
+    if (!pick1 || !pick2) return;
     setScreen("generating");
     setStage("uploading");
     setError("");
     try {
-      const res = await uploadSongs(file1, file2);
-      setSongs(res.songs);
-      const made = await studyAndMix(
-        res.songs[0].id,
-        res.songs[1].id,
-        setStage,
-        prompt,
-      );
+      // Catalog songs are already ingested — no upload; go straight to the study.
+      const chosen: SongDTO[] = [pick1, pick2];
+      setSongs(chosen);
+      const made = await studyAndMix(pick1.id, pick2.id, setStage, prompt);
       setMix(made);
       setMixId(made.mix_id);
-      loadName(res.songs[0], res.songs[1]);
+      loadName(pick1, pick2);
       setScreen("play");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
@@ -76,12 +72,12 @@ export function App() {
     }
   }
 
-  /** Back to Setup with empty drop zones, ready for a new pair of songs. */
+  /** Back to Setup with empty song slots, ready for a new pair. */
   function startOver() {
     setScreen("setup");
     setError("");
-    setFile1(null);
-    setFile2(null);
+    setPick1(null);
+    setPick2(null);
     setSongs([]);
     setMix(null);
     setMixId(undefined);
@@ -92,13 +88,13 @@ export function App() {
     <Frame screen={screen}>
       {screen === "setup" && (
         <SetupScreen
-          file1={file1}
-          file2={file2}
-          onPick1={setFile1}
-          onPick2={setFile2}
+          pick1={pick1}
+          pick2={pick2}
+          onPick1={setPick1}
+          onPick2={setPick2}
           prompt={prompt}
           onPrompt={setPrompt}
-          canMix={Boolean(file1) && Boolean(file2)}
+          canMix={Boolean(pick1) && Boolean(pick2)}
           onMixIt={handleMixIt}
         />
       )}

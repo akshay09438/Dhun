@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from app.config import settings  # noqa: E402
 from app.routes.analysis import router as analysis_router  # noqa: E402
+from app.routes.library import router as library_router  # noqa: E402
 from app.routes.live import router as live_router  # noqa: E402
 from app.routes.mix import router as mix_router  # noqa: E402
 from app.routes.songs import router as songs_router  # noqa: E402
@@ -41,3 +42,4 @@ app.include_router(stems_router)
 app.include_router(analysis_router)
 app.include_router(mix_router)
 app.include_router(live_router)
+app.include_router(library_router)

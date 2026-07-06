@@ -12,7 +12,7 @@ export type StudyStage =
 
 /** The step list the studying screen renders (drives the checklist). */
 export const STUDY_STEPS: { stage: StudyStage; label: string }[] = [
-  { stage: "uploading", label: "Uploading your two songs" },
+  { stage: "uploading", label: "Loading your two songs" },
   { stage: "splitting", label: "Splitting the vocals, drums & bass" },
   { stage: "analyzing", label: "Finding the beat, key & structure" },
   { stage: "planning", label: "Planning your arrangement" },

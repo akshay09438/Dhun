@@ -1,8 +1,12 @@
+import { useEffect, useRef, useState } from "react";
+import { getLibrary, type LibrarySongDTO } from "../../lib/api";
 import styles from "./SetupScreen.module.css";
 
+/** MVP setup: users pick two songs from the curated catalog (no uploads).
+ *  Every catalog song is pre-analyzed and tempo-verified, so any pair blends. */
 export default function SetupScreen({
-  file1,
-  file2,
+  pick1,
+  pick2,
   onPick1,
   onPick2,
   prompt,
@@ -10,34 +14,70 @@ export default function SetupScreen({
   canMix,
   onMixIt,
 }: {
-  file1: File | null;
-  file2: File | null;
-  onPick1: (f: File | null) => void;
-  onPick2: (f: File | null) => void;
+  pick1: LibrarySongDTO | null;
+  pick2: LibrarySongDTO | null;
+  onPick1: (s: LibrarySongDTO | null) => void;
+  onPick2: (s: LibrarySongDTO | null) => void;
   prompt: string;
   onPrompt: (v: string) => void;
   canMix: boolean;
   onMixIt: () => void;
 }) {
+  const [library, setLibrary] = useState<LibrarySongDTO[]>([]);
+  const [libError, setLibError] = useState(false);
+  const [open, setOpen] = useState<1 | 2 | null>(null);
+  const consoleRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    getLibrary()
+      .then(setLibrary)
+      .catch(() => setLibError(true));
+  }, []);
+
+  // Any click outside the open dropdown closes it.
+  useEffect(() => {
+    if (open === null) return;
+    const close = (e: MouseEvent) => {
+      if (!consoleRef.current?.contains(e.target as Node)) setOpen(null);
+    };
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [open]);
+
+  function choose(slot: 1 | 2, song: LibrarySongDTO) {
+    (slot === 1 ? onPick1 : onPick2)(song);
+    setOpen(null);
+  }
+
   return (
     <>
-      <div className="console">
+      <div className="console" ref={consoleRef}>
         <p className="kicker">New mix</p>
-        <h1 className="title">Describe your mix</h1>
+        <h1 className="title">Pick your two songs</h1>
 
-        <UploadCard
+        <SongSlot
           n={1}
-          file={file1}
+          picked={pick1}
+          other={pick2}
           placeholder="Song One"
           role="→ its beat"
-          onPick={onPick1}
+          library={library}
+          libError={libError}
+          open={open === 1}
+          onToggle={() => setOpen(open === 1 ? null : 1)}
+          onChoose={(s) => choose(1, s)}
         />
-        <UploadCard
+        <SongSlot
           n={2}
-          file={file2}
+          picked={pick2}
+          other={pick1}
           placeholder="Song Two"
           role="→ its vocals"
-          onPick={onPick2}
+          library={library}
+          libError={libError}
+          open={open === 2}
+          onToggle={() => setOpen(open === 2 ? null : 2)}
+          onChoose={(s) => choose(2, s)}
         />
 
         <textarea
@@ -55,9 +95,9 @@ export default function SetupScreen({
 
       <div className="stage">
         <div className={styles.tiles}>
-          <Tile label={file1 ? file1.name : "SONG 1"} />
+          <Tile label={pick1 ? pick1.original_name : "SONG 1"} />
           <span className={styles.tilePlus}>＋</span>
-          <Tile label={file2 ? file2.name : "SONG 2"} />
+          <Tile label={pick2 ? pick2.original_name : "SONG 2"} />
         </div>
         <p className={styles.tagline}>
           Two songs in.
@@ -69,35 +109,90 @@ export default function SetupScreen({
   );
 }
 
-function UploadCard({
+function SongSlot({
   n,
-  file,
+  picked,
+  other,
   placeholder,
   role,
-  onPick,
+  library,
+  libError,
+  open,
+  onToggle,
+  onChoose,
 }: {
   n: number;
-  file: File | null;
+  picked: LibrarySongDTO | null;
+  other: LibrarySongDTO | null;
   placeholder: string;
   role: string;
-  onPick: (f: File | null) => void;
+  library: LibrarySongDTO[];
+  libError: boolean;
+  open: boolean;
+  onToggle: () => void;
+  onChoose: (s: LibrarySongDTO) => void;
 }) {
   return (
-    <label className={styles.upload}>
-      <span className={styles.plus}>{file ? "↺" : "+"}</span>
-      <span className={styles.badge}>{n}</span>
-      <span className={styles.songName} title={file?.name}>
-        {file ? file.name : placeholder}
-      </span>
-      <span className={styles.role}>{role}</span>
-      <input
-        className={styles.fileInput}
-        type="file"
-        accept="audio/*"
-        aria-label={`Choose ${placeholder}`}
-        onChange={(e) => onPick(e.target.files?.[0] ?? null)}
-      />
-    </label>
+    <div className={styles.slotWrap}>
+      <button
+        type="button"
+        className={styles.upload}
+        data-testid={`song-slot-${n}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <span className={styles.plus}>{picked ? "↺" : "▾"}</span>
+        <span className={styles.badge}>{n}</span>
+        <span className={styles.songName} title={picked?.original_name}>
+          {picked ? picked.original_name : placeholder}
+        </span>
+        <span className={styles.role}>{role}</span>
+      </button>
+
+      {open && (
+        <div
+          className={styles.dropdown}
+          role="listbox"
+          aria-label={`Choose ${placeholder}`}
+        >
+          {libError && (
+            <div className={styles.dropNote}>
+              Couldn&rsquo;t load the songs. Is the app&rsquo;s backend running?
+            </div>
+          )}
+          {!libError && library.length === 0 && (
+            <div className={styles.dropNote}>No songs in the library yet.</div>
+          )}
+          {library.map((s) => {
+            const taken = other?.id === s.id;
+            return (
+              <button
+                key={s.id}
+                type="button"
+                role="option"
+                aria-selected={picked?.id === s.id}
+                className={
+                  picked?.id === s.id
+                    ? `${styles.dropItem} ${styles.dropItemActive}`
+                    : styles.dropItem
+                }
+                disabled={taken}
+                title={
+                  taken ? "Already picked in the other slot" : s.original_name
+                }
+                onClick={() => onChoose(s)}
+              >
+                {s.original_name}
+                {s.role_hint ? (
+                  <span className={styles.hint}>{s.role_hint}</span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 

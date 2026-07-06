@@ -12,6 +12,16 @@ export type SongDTO = {
   status: string;
 };
 
+export type LibrarySongDTO = SongDTO & { role_hint?: string };
+
+/** The curated song catalog (MVP: users pick from these instead of uploading). */
+export async function getLibrary(): Promise<LibrarySongDTO[]> {
+  const res = await fetch(`${API_BASE}/library`);
+  if (!res.ok) throw new Error("Couldn't load the song library.");
+  const data = await res.json();
+  return data.songs ?? [];
+}
+
 /** Upload two songs to be cleaned; returns the two playable records. */
 export async function uploadSongs(
   file1: File,
