@@ -115,3 +115,18 @@ class Mix(BaseModel):
     url: str | None = None
     plan: MixPlan | None = None
     message: str | None = None
+
+
+class LiveOp(BaseModel):
+    """One live steering instruction the browser executes on the beat.
+
+    The brain (deterministic parser now; the LLM later) turns a typed command into
+    this structured op; the browser schedules it on the next bar. The LLM never
+    touches audio — it only fills this. op is "mute" | "unmute" | "decline".
+    """
+
+    op: str
+    target: str | None = None  # which bus: "bass" | "drums" | "other" | ...
+    when: str = "next_bar"
+    say: str = ""  # DJ-language reply shown to the user
+    reason: str | None = None  # why a command was declined (out of scope)
