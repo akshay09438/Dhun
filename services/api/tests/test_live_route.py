@@ -1,10 +1,24 @@
+import dataclasses
 import json
+
 from fastapi.testclient import TestClient
-from app.main import app
+
+from app import storage
+from app.audio import analysis as an
 from app.audio.analysis import analysis_path
+from app.main import app
 
 client = TestClient(app)
 HEX = "a" * 64
+
+
+def _use_tmp(monkeypatch, tmp_path):
+    """Redirect the data dir to a temp path so a test never reads/writes the real data/
+    (mirrors test_analysis_route._use_tmp — the seeded analysis must not leak or collide)."""
+    monkeypatch.setattr(storage, "settings",
+                        dataclasses.replace(storage.settings, data_dir=tmp_path))
+    monkeypatch.setattr(an, "settings",
+                        dataclasses.replace(an.settings, data_dir=tmp_path))
 
 
 def _seed_analysis(song_id, bpm=120.0, downbeats=(0.0, 2.0, 4.0)):
@@ -31,7 +45,8 @@ def test_bad_song_id_is_404():
     assert r.status_code == 404
 
 
-def test_context_returns_bpm_and_downbeats():
+def test_context_returns_bpm_and_downbeats(monkeypatch, tmp_path):
+    _use_tmp(monkeypatch, tmp_path)
     _seed_analysis(HEX, bpm=124.0, downbeats=(0.5, 2.5, 4.5))
     r = client.get(f"/live/context/{HEX}")
     assert r.status_code == 200
