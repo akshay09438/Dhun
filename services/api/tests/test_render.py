@@ -119,6 +119,14 @@ def test_render_sweep_opens_up_before_entry(tmp_path):
     assert hf(1.1, 1.6) < hf(2.4, 2.9)
 
 
+def test_sweep_bed_leading_edge_is_continuous():
+    t = np.linspace(0, 400, 4410, endpoint=False)
+    mono = (0.5 * np.sin(2 * np.pi * 5 * t)).astype("float32")
+    seg = np.stack([mono, mono], axis=1)  # stereo
+    out = render._sweep_bed(seg, render.SR)
+    assert abs(float(out[0, 0]) - float(seg[0, 0])) < 1e-6  # starts on the original -> no click
+
+
 def test_guard_duration_caps_over_long_audio(monkeypatch):
     monkeypatch.setattr(render, "_MAX_DECODED_SECS", 1)  # pretend the cap is 1s
     too_long = np.zeros((2 * render.SR, 2), dtype="float32")  # 2s > 1s

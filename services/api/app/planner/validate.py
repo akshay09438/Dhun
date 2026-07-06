@@ -35,6 +35,10 @@ BEAT_TOLERANCE_SECS = 0.06
 # while sitting far below any real mix (whose audible fraction is ~0.9+).
 AUDIBLE_FLOOR = 0.01
 MIN_AUDIBLE_FRACTION = 0.02
+# Effects the engine actually implements. A plan asking for anything else (e.g. a typo like
+# "sweep-in") would silently render no effect — for a product whose worst outcome is a
+# worse-sounding mix, we fail it loudly instead of shipping it quietly.
+_KNOWN_FX = {"sweep_in"}
 
 
 class ValidationError(Exception):
@@ -71,6 +75,9 @@ def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[s
             violations.append("a vocal entry is not on a downbeat of Song 1 (R3)")
         if p.vocal_src[1] <= p.vocal_src[0]:
             violations.append("a vocal slice is empty")
+        fx = getattr(p, "fx", None)
+        if fx is not None and fx not in _KNOWN_FX:
+            violations.append(f"unknown effect '{fx}' (the engine would silently do nothing)")
     for a, b in zip(ordered, ordered[1:]):  # R1: one vocal at a time — no S2↔S2 overlap
         # Uses the shared rendered-length math (source / stretch), so the referee and the
         # driver measure a vocal's real end identically and can never drift apart.

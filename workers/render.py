@@ -107,15 +107,24 @@ def _edge_fade(y: np.ndarray) -> np.ndarray:
 
 def _sweep_bed(seg: np.ndarray, sr: int) -> np.ndarray:
     """A rising low-pass 'filter sweep': the bed starts muffled (cut above ~300 Hz) and
-    opens up across the segment, building anticipation into the next entry. A click-free
-    crossfade from a low-passed copy to the original — bed-only, so it can't clip."""
+    opens up across the segment, building anticipation into the next entry — a crossfade
+    from a low-passed copy to the original. The filter can overshoot the input peak, but
+    that is folded into the final peak-normalize + clip guard downstream, so the master
+    never clips."""
     n = len(seg)
     if n < 64:
         return seg
     sos = butter(4, _SWEEP_LO_HZ / (sr / 2), btype="low", output="sos")
     muffled = sosfilt(sos, seg, axis=0).astype(np.float32)
     ramp = np.linspace(0.0, 1.0, n, dtype=np.float32)[:, None]  # 0 = muffled -> 1 = open
-    return muffled * (1.0 - ramp) + seg * ramp
+    swept = muffled * (1.0 - ramp) + seg * ramp
+    # Ease the leading edge from the original bed into the muffled sweep over ~10 ms so the
+    # start of the sweep can't click against the un-muffled bed sample just before it.
+    k = min(int(sr * 0.01), n // 2)
+    if k > 0:
+        lead = np.linspace(0.0, 1.0, k, dtype=np.float32)[:, None]
+        swept[:k] = seg[:k] * (1.0 - lead) + swept[:k] * lead
+    return swept
 
 
 def _placements_of(plan):

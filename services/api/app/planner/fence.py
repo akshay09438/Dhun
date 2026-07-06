@@ -213,7 +213,7 @@ def placement_end(anchor: float, vocal_src: tuple[float, float], stretch: float)
 
 
 def contrast_windows(a1: TrackAnalysis, placements, stretch: float,
-                     min_secs: float = 6.0, margin: float = 1.0) -> list[tuple[float, float]]:
+                     min_secs: float = 6.0, margin: float = 2.0) -> list[tuple[float, float]]:
     """The beat-only gaps between Song-2 placements where Song 1 *actually sings* — the
     only spots Song 1's own vocal can answer without ever overlapping Song 2's vocal.
 

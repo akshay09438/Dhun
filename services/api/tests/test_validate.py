@@ -103,6 +103,14 @@ def test_validate_flags_empty_s1_region():
     assert any("empty" in m.lower() for m in v)
 
 
+def test_validate_flags_unknown_fx():
+    # a typo'd effect the engine doesn't implement would silently do nothing — fail it loudly
+    a1, a2 = make_analysis(), make_analysis()
+    p = [Placement(anchor=16.0, vocal_src=(0.0, 8.0), fx="sweep-in")]  # hyphen typo
+    v = validate.validate_plan(make_arrangement_plan(p), a1, a2)
+    assert any("unknown effect" in m.lower() for m in v)
+
+
 def test_validate_render_clean(tmp_path):
     wav = tmp_path / "ok.wav"
     sf.write(wav, (0.5 * np.sin(np.linspace(0, 100, 44100))).astype("float32"), 44100)
