@@ -27,8 +27,30 @@ const song2: SongDTO = {
   status: "ready",
 };
 
+function readyPlan(take = 1) {
+  return {
+    mix_id: "m",
+    status: "ready",
+    url: "/mix/m/audio",
+    plan: {
+      master_bpm: 120,
+      vocal_stretch: 1.0,
+      anchor: 16,
+      beat_breath: false,
+      take,
+      placements: [
+        { anchor: 16, vocal_src: [0, 12], beat_breath: false },
+        { anchor: 64, vocal_src: [0, 12], beat_breath: true },
+      ],
+      notes: "Vocal weaves in at 0:16, 1:04, tempo-locked to Song 1.",
+      source: "rules",
+    },
+    message: null,
+  };
+}
+
 describe("MixMaker", () => {
-  it("makes a mix and shows the player, the DJ note, and a download", async () => {
+  it("arranges the mix and shows the timeline, the take, and Regenerate", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string, opts?: { method?: string }) => {
@@ -44,25 +66,7 @@ describe("MixMaker", () => {
             }),
           });
         }
-        // GET /mix/m — ready
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({
-            mix_id: "m",
-            status: "ready",
-            url: "/mix/m/audio",
-            plan: {
-              master_bpm: 120,
-              vocal_stretch: 1.0,
-              anchor: 64,
-              beat_breath: false,
-              notes:
-                "Song 2's vocal enters on the drop at 1:04, tempo-locked to Song 1.",
-              source: "rules",
-            },
-            message: null,
-          }),
-        });
+        return Promise.resolve({ ok: true, json: async () => readyPlan(1) });
       }),
     );
 
@@ -70,11 +74,51 @@ describe("MixMaker", () => {
     fireEvent.click(screen.getByRole("button", { name: /make my mix/i }));
 
     await waitFor(() => {
-      expect(screen.getByTestId("mix-player")).toBeTruthy();
-      expect(screen.getByText(/enters on the drop at 1:04/i)).toBeTruthy();
+      expect(screen.getAllByTestId("vocal-block")).toHaveLength(2); // the weave is shown
+      expect(screen.getByText(/take 1/i)).toBeTruthy();
+      expect(
+        screen.getByRole("button", { name: /give me another take/i }),
+      ).toBeTruthy();
       expect(
         screen.getByRole("button", { name: /download the mix/i }),
       ).toBeTruthy();
+    });
+  });
+
+  it("regenerate asks the backend for the next take", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation((url: string, opts?: { method?: string }) => {
+        if (String(url).endsWith("/mix") && opts?.method === "POST") {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              mix_id: "m",
+              status: "processing",
+              url: null,
+              plan: null,
+              message: null,
+            }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: async () => readyPlan(1) });
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<MixMaker song1={song1} song2={song2} />);
+    fireEvent.click(screen.getByRole("button", { name: /make my mix/i }));
+    await screen.findByRole("button", { name: /give me another take/i });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /give me another take/i }),
+    );
+
+    await waitFor(() => {
+      const posts = fetchMock.mock.calls.filter(
+        ([, o]) => o?.method === "POST",
+      );
+      const tookSecond = posts.some(([, o]) => JSON.parse(o.body).take === 2);
+      expect(tookSecond).toBe(true);
     });
   });
 

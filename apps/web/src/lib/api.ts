@@ -89,11 +89,19 @@ export async function getAnalysisStatus(
   return res.json();
 }
 
+export type PlacementDTO = {
+  anchor: number;
+  vocal_src: [number, number];
+  beat_breath: boolean;
+};
+
 export type MixPlanDTO = {
   master_bpm: number;
   vocal_stretch: number;
   anchor: number;
   beat_breath: boolean;
+  placements: PlacementDTO[];
+  take: number;
   notes: string;
   source: string; // "ai" | "rules"
 };
@@ -111,11 +119,17 @@ export async function startMix(
   song1Id: string,
   song2Id: string,
   prompt = "",
+  take = 1,
 ): Promise<MixDTO> {
   const res = await fetch(`${API_BASE}/mix`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ song1_id: song1Id, song2_id: song2Id, prompt }),
+    body: JSON.stringify({
+      song1_id: song1Id,
+      song2_id: song2Id,
+      prompt,
+      take,
+    }),
   });
   if (!res.ok) {
     // 409 carries a plain-language reason (e.g. "Song 1 hasn't been analyzed yet.")

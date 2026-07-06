@@ -11,22 +11,21 @@ import styles from "./Mix.module.css";
 type MixState = "idle" | "mixing" | "done" | "error";
 
 /**
- * The heart of M3: turn the two ready songs into one finished mix — Song 1's beat
- * with Song 2's vocal dropped in on the beat — then play and download it. Requires
- * both songs to be analyzed and split first; if they aren't, the backend says so in
- * plain language and we surface it.
+ * The heart of M4: turn the two ready songs into a full DJ arrangement — Song 1's
+ * beat running throughout with Song 2's vocal weaving in and out — then show the
+ * arrangement, let the user regenerate a different take, and download it.
  */
 export function MixMaker({ song1, song2 }: { song1: SongDTO; song2: SongDTO }) {
   const [state, setState] = useState<MixState>("idle");
   const [mix, setMix] = useState<MixDTO | null>(null);
   const [error, setError] = useState("");
 
-  async function handleMix() {
+  async function handleMix(take = 1) {
     setState("mixing");
     setError("");
     setMix(null);
     try {
-      const started = await startMix(song1.id, song2.id);
+      const started = await startMix(song1.id, song2.id, "", take);
       if (started.status === "ready") {
         setMix(started);
         setState("done");
@@ -66,27 +65,25 @@ export function MixMaker({ song1, song2 }: { song1: SongDTO; song2: SongDTO }) {
     URL.revokeObjectURL(href);
   }
 
+  const take = mix?.plan?.take ?? 1;
+
   return (
     <section className={styles.wrap} data-testid="mix">
       <h2 className={styles.heading}>Make your mix</h2>
       <p className={styles.hint}>
-        Song 1&rsquo;s beat with Song 2&rsquo;s vocal, dropped in on the beat
-        like a DJ.
+        Song 1&rsquo;s beat with Song 2&rsquo;s vocal, arranged in and out like
+        a DJ.
       </p>
 
-      {state !== "done" && (
-        <button
-          className={styles.make}
-          onClick={handleMix}
-          disabled={state === "mixing"}
-        >
-          {state === "mixing" ? "Mixing…" : "Make my mix"}
+      {state === "idle" && (
+        <button className={styles.make} onClick={() => handleMix(1)}>
+          Make my mix
         </button>
       )}
 
       {state === "mixing" && (
         <p className={styles.progress}>
-          Beat-matching and arranging your mix… (~1–2 min)
+          Beat-matching and arranging your mix&hellip; (~1&ndash;2 min)
         </p>
       )}
 
@@ -98,21 +95,85 @@ export function MixMaker({ song1, song2 }: { song1: SongDTO; song2: SongDTO }) {
 
       {state === "done" && mix?.url && (
         <div className={styles.result}>
-          {mix.plan?.notes && <p className={styles.notes}>{mix.plan.notes}</p>}
-          <span className={styles.badge}>
-            {mix.plan?.source === "ai" ? "AI DJ" : "DJ rules"}
-          </span>
+          <div className={styles.resultHead}>
+            {mix.plan?.notes && (
+              <p className={styles.notes}>{mix.plan.notes}</p>
+            )}
+            <span className={styles.badge}>take {take}</span>
+          </div>
+
+          <Arrangement mix={mix} />
+
           <audio
             data-testid="mix-player"
             controls
             src={`${API_BASE}${mix.url}`}
             className={styles.audio}
           />
-          <button className={styles.download} onClick={handleDownload}>
-            Download the mix
-          </button>
+
+          <div className={styles.actions}>
+            <button
+              className={styles.regenerate}
+              onClick={() => handleMix(take + 1)}
+            >
+              Give me another take
+            </button>
+            <button className={styles.download} onClick={handleDownload}>
+              Download the mix
+            </button>
+          </div>
         </div>
       )}
     </section>
+  );
+}
+
+/** The two-lane arrangement view: the beat runs throughout; the vocal comes in and out. */
+function Arrangement({ mix }: { mix: MixDTO }) {
+  const placements = mix.plan?.placements ?? [];
+  const stretch = mix.plan?.vocal_stretch ?? 1;
+  if (placements.length === 0) return null;
+
+  const blocks = placements.map((p) => {
+    const start = p.anchor;
+    const end = p.anchor + (p.vocal_src[1] - p.vocal_src[0]) * stretch;
+    return { start, end, breath: p.beat_breath };
+  });
+  const total = Math.max(...blocks.map((b) => b.end), 1);
+
+  return (
+    <div
+      className={styles.timeline}
+      role="img"
+      aria-label="Arrangement timeline"
+    >
+      <div className={styles.lane}>
+        <span className={styles.laneLabel}>beat</span>
+        <div className={styles.beatBar}>plays throughout</div>
+      </div>
+      <div className={styles.lane}>
+        <span className={styles.laneLabel}>vocal</span>
+        <div className={styles.vocalTrack}>
+          {blocks.map((b, i) => (
+            <div
+              key={i}
+              data-testid="vocal-block"
+              className={styles.vocalBlock}
+              title={
+                b.breath
+                  ? "vocal in (with a beat-breath before it)"
+                  : "vocal in"
+              }
+              style={{
+                left: `${(b.start / total) * 100}%`,
+                width: `${((b.end - b.start) / total) * 100}%`,
+              }}
+            >
+              {b.breath ? "⤳" : ""}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
