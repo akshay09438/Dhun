@@ -151,3 +151,35 @@ export async function getMixStatus(mixId: string): Promise<MixDTO> {
   }
   return res.json();
 }
+
+export type LiveOpDTO = {
+  op: "mute" | "unmute" | "decline";
+  target: string | null;
+  when: string;
+  say: string;
+  reason: string | null;
+};
+
+export type LiveContextDTO = { bpm: number | null; downbeats: number[] };
+
+/** Turn a typed steering command into a structured op the player runs on the beat. */
+export async function postLiveCommand(
+  song1Id: string,
+  song2Id: string,
+  text: string,
+): Promise<LiveOpDTO> {
+  const res = await fetch(`${API_BASE}/live/command`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ song1_id: song1Id, song2_id: song2Id, text }),
+  });
+  if (!res.ok) throw new Error("Couldn't run that command.");
+  return res.json();
+}
+
+/** The beatgrid the live player schedules on (Song 1's tempo + downbeats). */
+export async function getLiveContext(song1Id: string): Promise<LiveContextDTO> {
+  const res = await fetch(`${API_BASE}/live/context/${song1Id}`);
+  if (!res.ok) throw new Error("Couldn't load the beat map.");
+  return res.json();
+}
