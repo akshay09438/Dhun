@@ -191,4 +191,4 @@ Removes the manual per-song **Split** + **Analyze** buttons: the user drops two 
 
 - CI `verify` job is Node-only today; add a Python (pytest) job when a GitHub remote is set up. Also point the coverage job at `apps/web/coverage/` (or emit to repo-root `coverage/`).
 - Non-Western (Indian/Bollywood/Punjabi) key + structure detection is weaker — hand-verify those demo pairs.
-- Before any public exposure (per the M1 security review): sandbox/resource-limit FFmpeg on untrusted input, add rate-limiting + body-size limits at the proxy, and add HTTP-level traversal/oversize tests.
+- Before any public exposure (per the M1 security review): sandbox/resource-limit FFmpeg on untrusted input, add rate-limiting + body-size limits at the proxy, and add HTTP-level traversal/oversize tests. **Also lock CORS down** — dev currently trusts any `localhost`/`127.0.0.1` port (`config.allowed_cors_origin_regex`); replace that with the real deployed origin for production.

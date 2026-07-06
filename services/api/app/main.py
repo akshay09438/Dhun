@@ -25,6 +25,7 @@ app = FastAPI(title="Prompt-DJ API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.allowed_cors_origins),
+    allow_origin_regex=settings.allowed_cors_origin_regex,
     allow_methods=["*"],
     allow_headers=["*"],
 )

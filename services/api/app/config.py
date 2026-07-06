@@ -20,6 +20,12 @@ class Settings:
     allowed_exts: frozenset[str] = frozenset({".mp3", ".wav", ".m4a", ".flac", ".ogg"})
     # Browser origins allowed to call the API (Vite dev server).
     allowed_cors_origins: tuple[str, ...] = ("http://localhost:5173",)
+    # In dev the Vite server may land on any port (5173 taken → 5174, …). Trust any
+    # localhost/127.0.0.1 port so the browser is never blocked with "Failed to fetch".
+    # This only admits pages served FROM the local machine — a remote website's origin
+    # never matches, so it stays blocked. LOCK THIS DOWN to the real deployed origin
+    # before any public exposure (see the pre-launch security list).
+    allowed_cors_origin_regex: str = r"http://(localhost|127\.0\.0\.1):\d+"
 
 
 settings = Settings()
