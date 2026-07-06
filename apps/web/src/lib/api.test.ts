@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, test } from "vitest";
 import { uploadSongs, postLiveCommand, getLiveContext } from "./api";
+import { fetchVocalBus } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -83,3 +84,21 @@ describe("getLiveContext", () => {
     expect(ctx.downbeats).toEqual([0, 2, 4]);
   });
 });
+
+test("fetchVocalBus polls past 202 and returns the audio bytes", async () => {
+  const calls: number[] = [];
+  const g = globalThis as unknown as { fetch: typeof fetch };
+  const real = g.fetch;
+  g.fetch = (async () => {
+    calls.push(1);
+    if (calls.length < 2) return new Response(null, { status: 202 });
+    return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const buf = await fetchVocalBus("a".repeat(64));
+    expect(new Uint8Array(buf)).toEqual(new Uint8Array([1, 2, 3]));
+    expect(calls.length).toBe(2);
+  } finally {
+    g.fetch = real;
+  }
+}, 10000);

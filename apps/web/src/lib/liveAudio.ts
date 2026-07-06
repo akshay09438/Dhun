@@ -1,6 +1,12 @@
-import { API_BASE, type LiveOpDTO, type LiveContextDTO } from "./api";
+import {
+  API_BASE,
+  fetchVocalBus,
+  type LiveOpDTO,
+  type LiveContextDTO,
+} from "./api";
 import {
   barSeconds,
+  busesOf,
   nextBarTime,
   rampTarget,
   type BusName,
@@ -14,18 +20,31 @@ export class LivePlayer {
   private startCtxTime = 0; // ctx.currentTime when playback (song time 0) began
   private playing = false;
 
-  async load(song1Id: string, buses: BusName[]): Promise<void> {
+  private addBus(bus: BusName, buf: AudioBuffer): void {
+    this.buffers.set(bus, buf);
+    const g = this.ctx.createGain();
+    g.gain.value = 1;
+    g.connect(this.ctx.destination);
+    this.gains.set(bus, g);
+  }
+
+  /** Load Song 1's instrumental stems, plus (when a mix exists) its arranged-vocal bus. */
+  async load(
+    song1Id: string,
+    stemBuses: BusName[],
+    mixId?: string,
+  ): Promise<void> {
     await Promise.all(
-      buses.map(async (bus) => {
+      stemBuses.map(async (bus) => {
         const res = await fetch(`${API_BASE}/songs/${song1Id}/stems/${bus}`);
         const buf = await this.ctx.decodeAudioData(await res.arrayBuffer());
-        this.buffers.set(bus, buf);
-        const g = this.ctx.createGain();
-        g.gain.value = 1;
-        g.connect(this.ctx.destination);
-        this.gains.set(bus, g);
+        this.addBus(bus, buf);
       }),
     );
+    if (mixId) {
+      const buf = await this.ctx.decodeAudioData(await fetchVocalBus(mixId));
+      this.addBus("vocals", buf);
+    }
   }
 
   play(): void {
@@ -52,18 +71,20 @@ export class LivePlayer {
     return Math.max(0, this.ctx.currentTime - this.startCtxTime);
   }
 
-  /** Schedule a mute/unmute on the next bar, ramped smoothly over one bar. */
+  /** Schedule a mute/unmute on the next bar, ramped over one bar, for every named bus. */
   schedule(op: LiveOpDTO, ctx: LiveContextDTO): void {
-    if ((op.op !== "mute" && op.op !== "unmute") || !op.target) return;
-    const g = this.gains.get(op.target as BusName);
-    if (!g) return;
+    if (op.op !== "mute" && op.op !== "unmute") return;
     const bpm = ctx.bpm ?? 120;
     const barSong = nextBarTime(ctx.downbeats, this.songTime(), bpm);
     const startCtx = this.startCtxTime + barSong; // song time -> ctx time
     const target = rampTarget(op);
-    g.gain.cancelScheduledValues(startCtx);
-    g.gain.setValueAtTime(g.gain.value, startCtx);
-    g.gain.linearRampToValueAtTime(target, startCtx + barSeconds(bpm)); // smooth 1-bar fade
+    for (const bus of busesOf(op)) {
+      const g = this.gains.get(bus);
+      if (!g) continue;
+      g.gain.cancelScheduledValues(startCtx);
+      g.gain.setValueAtTime(g.gain.value, startCtx);
+      g.gain.linearRampToValueAtTime(target, startCtx + barSeconds(bpm)); // smooth 1-bar fade
+    }
   }
 
   dispose(): void {

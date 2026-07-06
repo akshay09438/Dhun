@@ -155,6 +155,7 @@ export async function getMixStatus(mixId: string): Promise<MixDTO> {
 export type LiveOpDTO = {
   op: "mute" | "unmute" | "decline";
   target: string | null;
+  targets?: string[];
   when: string;
   say: string;
   reason: string | null;
@@ -182,4 +183,20 @@ export async function getLiveContext(song1Id: string): Promise<LiveContextDTO> {
   const res = await fetch(`${API_BASE}/live/context/${song1Id}`);
   if (!res.ok) throw new Error("Couldn't load the beat map.");
   return res.json();
+}
+
+const VOCAL_BUS_POLL_MS = 1500;
+
+/** Fetch the arranged-vocal-bus WAV for a mix, polling past 202 while it renders. */
+export async function fetchVocalBus(mixId: string): Promise<ArrayBuffer> {
+  for (let i = 0; i < 80; i++) {
+    const res = await fetch(`${API_BASE}/live/vocal-bus/${mixId}`);
+    if (res.status === 200) return res.arrayBuffer();
+    if (res.status === 202) {
+      await new Promise((r) => setTimeout(r, VOCAL_BUS_POLL_MS));
+      continue;
+    }
+    throw new Error("Couldn't prepare the live vocals.");
+  }
+  throw new Error("Preparing the live vocals took too long.");
 }
