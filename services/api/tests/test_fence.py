@@ -118,3 +118,28 @@ def test_legal_options_declines_no_beat():
     a2 = make_analysis(vocal_regions=[(16.0, 40.0)])
     opts = fence.legal_options(a1, a2)
     assert not opts["mixable"] and "beat" in opts["reason"].lower()
+
+
+def test_vocal_slices_ranked_and_capped():
+    a2 = make_analysis(vocal_regions=[(8.0, 14.0), (20.0, 60.0), (70.0, 76.0)])
+    slices = fence.vocal_slices(a2)
+    assert slices[0][1] - slices[0][0] <= fence.MAX_VOCAL_SECS + 1e-6  # capped
+    assert len(slices) >= 2 and slices[0][0] == 20.0  # longest first, snapped to a downbeat
+
+
+def test_arrangement_options_happy():
+    energy = [0.3] * 32
+    for i in range(8, 16):
+        energy[i] = 0.9
+    a1 = make_analysis(bpm=120.0, n_bars=32, energy=energy)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(16.0, 40.0), (60.0, 80.0)])
+    opts = fence.arrangement_options(a1, a2)
+    assert opts["mixable"]
+    assert opts["anchors_ranked"] and opts["anchors_ranked"][0] == 16.0
+    assert len(opts["vocal_slices"]) >= 1
+
+
+def test_arrangement_options_declines_far_tempo():
+    a1 = make_analysis(bpm=120.0)
+    a2 = make_analysis(bpm=150.0, vocal_regions=[(16.0, 40.0)])
+    assert not fence.arrangement_options(a1, a2)["mixable"]

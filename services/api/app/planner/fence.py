@@ -152,3 +152,43 @@ def legal_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
         "drops": drops,  # ranked best-first
         "key_fit": key_fit,
     }
+
+
+def vocal_slices(a2: TrackAnalysis, limit: int = 4) -> list[tuple[float, float]]:
+    """Song 2's strongest sung stretches — longest first, snapped to a downbeat, each
+    capped to MAX_VOCAL_SECS. Falls back to a single best slice if regions are unknown."""
+    regions = sorted(
+        ((s, e) for s, e in a2.vocal_regions if e - s >= MIN_VOCAL_SECS),
+        key=lambda r: r[1] - r[0], reverse=True,
+    )[:limit]
+    if not regions:
+        return [best_vocal_slice(a2)]
+    out: list[tuple[float, float]] = []
+    for s, e in regions:
+        start = min(a2.downbeats, key=lambda d: abs(d - s)) if a2.downbeats else s
+        end = min(e, start + MAX_VOCAL_SECS)
+        out.append((round(start, 3), round(max(end, start + MIN_VOCAL_SECS), 3)))
+    return out
+
+
+def section_at(a1: TrackAnalysis, t: float) -> str:
+    """The Song-1 section label containing time t (or '' if unknown)."""
+    for s in a1.sections:
+        if s.start <= t < s.end:
+            return s.label
+    return ""
+
+
+def arrangement_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
+    """The legal menu for a full arrangement: the M3 legal set plus ranked phrase
+    anchors and the available vocal slices. Declines pass through unchanged."""
+    base = legal_options(a1, a2)
+    if not base["mixable"]:
+        return base
+    slices = vocal_slices(a2)
+    need = min(e - s for s, e in slices) * base["vocal_stretch"]
+    return {
+        **base,
+        "anchors_ranked": candidate_drops(a1, need),  # best energy first, with runway
+        "vocal_slices": slices,
+    }
