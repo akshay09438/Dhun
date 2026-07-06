@@ -3,10 +3,18 @@ import { LivePlayer } from "../../lib/liveAudio";
 import {
   postLiveCommand,
   getLiveContext,
+  getSuggestions,
   type LiveContextDTO,
   type LiveOpDTO,
+  type SectionSuggestionsDTO,
 } from "../../lib/api";
-import { applyOp, type BusState, type BusName } from "../../lib/liveSchedule";
+import {
+  applyOp,
+  currentChips,
+  type BusState,
+  type BusName,
+  type Chip,
+} from "../../lib/liveSchedule";
 import styles from "./LiveMix.module.css";
 
 const STEM_BUSES: BusName[] = ["drums", "bass", "other"];
@@ -39,6 +47,8 @@ export default function LiveMix({
   });
   const [status, setStatus] = useState("");
   const [text, setText] = useState("");
+  const [sections, setSections] = useState<SectionSuggestionsDTO[]>([]);
+  const [chips, setChips] = useState<Chip[]>([]);
 
   // (Re)load the player whenever the song or the current take (mixId) changes, so the
   // live vocals always match the mix on screen.
@@ -62,6 +72,29 @@ export default function LiveMix({
     return () => p.dispose();
   }, [song1Id, mixId]);
 
+  // Load the per-section suggestion chips for the current mix (once per take).
+  useEffect(() => {
+    setSections([]);
+    setChips([]);
+    if (!mixId) return;
+    getSuggestions(mixId)
+      .then(setSections)
+      .catch(() => setSections([])); // chips are optional — parts + typed commands still work
+  }, [mixId]);
+
+  // While playing, follow the playhead and show the current section's chips.
+  useEffect(() => {
+    if (!playing || sections.length === 0) {
+      setChips([]);
+      return;
+    }
+    const id = setInterval(() => {
+      const t = playerRef.current?.songTime() ?? 0;
+      setChips(currentChips(sections, t));
+    }, 250);
+    return () => clearInterval(id);
+  }, [playing, sections]);
+
   const vocalsAvailable = Boolean(mixId);
 
   function togglePlay() {
@@ -76,12 +109,25 @@ export default function LiveMix({
     }
   }
 
-  /** Apply an op to the audio + the on/off state (shared by taps and typed commands). */
+  /** Apply an op to the audio + the on/off state (shared by taps, chips, typed commands). */
   function runOp(op: LiveOpDTO) {
-    if (op.op === "mute" || op.op === "unmute") {
+    if (op.op === "mute" || op.op === "unmute" || op.op === "fade") {
       playerRef.current?.schedule(op, ctxRef.current);
       setBusState((s) => applyOp(s, op));
     }
+  }
+
+  function tapChip(chip: Chip) {
+    const op: LiveOpDTO = {
+      op: chip.op as LiveOpDTO["op"],
+      target: chip.targets.length === 1 ? chip.targets[0] : null,
+      targets: chip.targets,
+      when: "next_bar",
+      say: "",
+      reason: null,
+    };
+    runOp(op);
+    setStatus(`${chip.text.toLowerCase()} — on the next bar`);
   }
 
   function toggleBus(bus: BusName) {
@@ -139,6 +185,22 @@ export default function LiveMix({
           );
         })}
       </div>
+      {chips.length > 0 && (
+        <div className={styles.suggestions} aria-label="suggestions">
+          <span className={styles.suggestLabel}>Try:</span>
+          {chips.map((c) => (
+            <button
+              key={c.text}
+              type="button"
+              data-testid="suggestion-chip"
+              className={styles.chip}
+              onClick={() => tapChip(c)}
+            >
+              {c.text}
+            </button>
+          ))}
+        </div>
+      )}
       <form aria-label="command" onSubmit={onSubmit}>
         <input
           placeholder="Try: drop everything but the beat"

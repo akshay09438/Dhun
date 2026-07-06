@@ -30,3 +30,27 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0;
+}
+.suggestLabel {
+  opacity: 0.6;
+  font-size: 0.85em;
+}
+.chip {
+  cursor: pointer;
+  border: 1px solid #7c5cff;
+  background: rgba(124, 92, 255, 0.12);
+  color: inherit;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font: inherit;
+}
+.chip:hover {
+  background: rgba(124, 92, 255, 0.24);
+}
