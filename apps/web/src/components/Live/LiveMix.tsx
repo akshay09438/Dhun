@@ -95,8 +95,10 @@ export default function LiveMix({
       reason: null,
     };
     runOp(op);
+    // Reply with the friendly part name ("the beat"), not the raw bus key ("the other").
+    const label = PARTS.find((p) => p.bus === bus)?.label.toLowerCase() ?? bus;
     setStatus(
-      `${busState[bus] ? "dropping" : "bringing back"} the ${bus} on the next bar`,
+      `${busState[bus] ? "dropping" : "bringing back"} the ${label} on the next bar`,
     );
   }
 
