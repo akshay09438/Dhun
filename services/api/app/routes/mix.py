@@ -52,7 +52,9 @@ _S1_STEMS = ("drums", "bass", "other")
 # m4b.1: contrast (Song 1's vocal in gaps) + subtle sweep + confidence fallbacks.
 # m4c.1: energy-arc arrangement — vocal spreads across the whole song (thirds, strong
 #        finish) instead of clustering; a span guard rebuilds any clustered plan.
-ENGINE_VERSION = "m4c.1"
+# m4d.1: per-bar beat-lock — each vocal bar re-locked to Song 1's grid (no drift); the
+#        referee gains R7 (per-bar ratios in band + bars lock to the grid).
+ENGINE_VERSION = "m4d.1"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.

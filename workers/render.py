@@ -31,6 +31,12 @@ SR = 44100  # everything renders at CD rate, stereo
 _TARGET_PEAK = 10 ** (-1.0 / 20)  # -1 dBFS headroom
 _CEILING = 0.999  # brickwall safety — must stay below the validator's clip ceiling
 _FADE_MS = 8.0  # edge fade that kills entry/exit clicks
+_XFADE_MS = 8.0  # equal-power crossfade at each bar join in a beat-locked (warped) vocal
+# atempo handles 0.5–2.0 in a single pass; clamp a bar's ratio only to keep the FILTER
+# valid. The MUSICAL safe band (~0.92–1.08, no warble) is enforced upstream by the
+# planner's warp_map and the referee's R7 — so a real bar is never near these limits, and
+# the engine honors each bar's target length exactly, which is what keeps the beat locked.
+_ATEMPO_MIN, _ATEMPO_MAX = 0.5, 2.0
 _BREATH_DUCK = 0.35  # the bed dips to this for one bar before a flagged entry (tension, not silence)
 _SWEEP_LO_HZ = 300.0  # filter-sweep floor: the bed muffles to this cutoff, then opens up
 _FFMPEG_TIMEOUT = 180
@@ -82,6 +88,56 @@ def _vocal_take(src: Path, start: float, dur: float, ratio: float) -> np.ndarray
         _run_ffmpeg(cmd)
         y, _ = sf.read(out, dtype="float32", always_2d=True)
     return _guard_duration(y)
+
+
+def _vocal_take_warped(src: Path, warp: list) -> np.ndarray:
+    """Render a beat-locked vocal: stretch each bar of the slice to its own target length
+    (`out_secs`) and lay the bars back-to-back at their locked positions, joined by short
+    equal-power crossfades so no bar boundary clicks.
+
+    Because each bar starts exactly at the cumulative sum of the target lengths — which are
+    Song 1's own bar lengths — every bar re-locks to Song 1's grid, so the vocal can't drift
+    off the beat the way a single global stretch does. Each bar is rendered a hair long (a
+    crossfade tail) so consecutive bars overlap only in the fade region; the bar *starts*
+    (the downbeats) stay exact, so the crossfade smooths the seam without moving the beat.
+    """
+    xf = int(SR * _XFADE_MS / 1000)
+    segs: list[np.ndarray] = []
+    hops: list[int] = []
+    n = len(warp)
+    for i, (s0, s1, out_secs) in enumerate(warp):
+        dur = max(float(s1) - float(s0), 0.0)
+        if dur <= 0 or out_secs <= 0:
+            continue
+        ratio = dur / out_secs
+        if not (_ATEMPO_MIN <= ratio <= _ATEMPO_MAX):
+            # The planner (warp_map) and referee (R7) guarantee every bar ratio is in the
+            # musical safe band, well inside atempo's range. If one ever isn't, a caller
+            # bypassed those guards — fail loudly rather than clamp into a gap/overlap.
+            raise RenderError(f"beat-lock bar ratio {ratio:.3f} outside atempo range (a bad warp reached the engine)")
+        tail = 0.0 if i == n - 1 else (_XFADE_MS / 1000.0) * ratio  # extra source for the crossfade
+        seg = _vocal_take(src, float(s0), dur + tail, ratio)
+        segs.append(seg)
+        hops.append(int(round(out_secs * SR)))
+    if not segs:
+        return np.zeros((0, 2), dtype=np.float32)
+
+    total = sum(hops[:-1]) + len(segs[-1])
+    out = np.zeros((total + xf, 2), dtype=np.float32)
+    t = np.linspace(0.0, 1.0, xf, dtype=np.float32)[:, None] if xf > 0 else None
+    fade_in = np.sin(t * np.pi / 2) if t is not None else None   # equal-power pair (sin^2+cos^2=1)
+    fade_out = np.cos(t * np.pi / 2) if t is not None else None
+    pos = 0
+    for i, (seg, hop) in enumerate(zip(segs, hops)):
+        s = seg.copy()
+        k = min(xf, len(s))
+        if k > 0 and i > 0:          # crossfade this bar's head against the previous bar's tail
+            s[:k] *= fade_in[:k]
+        if k > 0 and i < len(segs) - 1:  # fade this bar's tail out into the next bar's head
+            s[len(s) - k:] *= fade_out[:k]
+        out[pos:pos + len(s)] += s
+        pos += hop
+    return out[:total]
 
 
 def _sum_stems(stem_paths: list[Path]) -> np.ndarray:
@@ -157,8 +213,12 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
         return buf
 
     for p in _placements_of(plan):
-        start, end = p.vocal_src
-        voc = _edge_fade(_vocal_take(song2_vocal, start, max(end - start, 0.0), plan.vocal_stretch))
+        warp = getattr(p, "warp", None)
+        if warp:  # M4d: per-bar beat-lock — each bar re-locked to Song 1's grid (no drift)
+            voc = _edge_fade(_vocal_take_warped(song2_vocal, warp))
+        else:  # legacy single global stretch (M3/M4a–c cached plans, or a thin-grid fallback)
+            start, end = p.vocal_src
+            voc = _edge_fade(_vocal_take(song2_vocal, start, max(end - start, 0.0), plan.vocal_stretch))
         anchor = max(0, int(p.anchor * SR))  # never place before the start
         b0 = max(0, anchor - bar)
         if getattr(p, "beat_breath", False):  # DUCK the bed for one bar (tension), never silence it

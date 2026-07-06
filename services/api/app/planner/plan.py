@@ -177,15 +177,28 @@ def _spans_song(placements: list[Placement], track_end: float) -> bool:
     return min(anchors) <= track_end / 2 and max(anchors) >= track_end * 2 / 3
 
 
+def _attach_warp(placements: list[Placement], a1: TrackAnalysis, a2: TrackAnalysis,
+                 stretch: float) -> list[Placement]:
+    """Give each Song-2 placement a per-bar phase-lock warp map (M4d) so its vocal re-locks
+    to Song 1's beat instead of drifting under one global stretch. With no usable grid on
+    either side, leave warp empty — the engine then uses the legacy global stretch."""
+    if not (a1.downbeats and a2.downbeats):
+        return placements
+    for p in placements:
+        p.warp = fence.warp_map(p.anchor, p.vocal_src, a1.downbeats, a2.downbeats, stretch)
+    return placements
+
+
 def _dedupe_nonoverlapping(placements: list[Placement], stretch: float) -> list[Placement]:
     """Sort by anchor and drop any placement that would overlap the previous vocal —
-    enforces one-voice-at-a-time before the render (the referee re-checks)."""
+    enforces one-voice-at-a-time before the render (the referee re-checks). Uses the
+    warp-aware real length so a beat-locked vocal's true end is what's compared."""
     kept: list[Placement] = []
     for p in sorted(placements, key=lambda pl: pl.anchor):
         if not kept:
             kept.append(p)
             continue
-        if p.anchor >= fence.placement_end(kept[-1].anchor, kept[-1].vocal_src, stretch):
+        if p.anchor >= fence.placement_end(kept[-1].anchor, kept[-1].vocal_src, stretch, kept[-1].warp):
             kept.append(p)
     return kept
 
@@ -201,12 +214,14 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     source = "ai" if placements else "rules"
     if not placements:
         placements = _default_arrangement(opts, take)
+    placements = _attach_warp(placements, a1, a2, opts["vocal_stretch"])  # per-bar beat-lock
     placements = _dedupe_nonoverlapping(placements, opts["vocal_stretch"])
     # The arc guard: if the plan (AI's or a thin fallback) clusters instead of spanning the
     # song, rebuild it as a deterministic energy arc so the vocal always reaches the whole
     # track with a strong finish — the founder's acceptance test, guaranteed by construction.
     if not _spans_song(placements, opts.get("track_end", 0.0)):
-        placements = _dedupe_nonoverlapping(_default_arrangement(opts, take), opts["vocal_stretch"])
+        rebuilt = _attach_warp(_default_arrangement(opts, take), a1, a2, opts["vocal_stretch"])
+        placements = _dedupe_nonoverlapping(rebuilt, opts["vocal_stretch"])
         source = "rules"
     placements, s1_regions = _apply_flourishes(a1, placements, opts["vocal_stretch"])
     first = placements[0]

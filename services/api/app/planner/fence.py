@@ -244,9 +244,57 @@ def rendered_vocal_secs(vocal_src: tuple[float, float], stretch: float) -> float
     return (vocal_src[1] - vocal_src[0]) / stretch if stretch > 0 else 0.0
 
 
-def placement_end(anchor: float, vocal_src: tuple[float, float], stretch: float) -> float:
-    """The real time (secs into the mix) a placed vocal finishes playing."""
+def placement_end(anchor: float, vocal_src: tuple[float, float], stretch: float,
+                  warp: list[tuple[float, float, float]] | None = None) -> float:
+    """The real time (secs into the mix) a placed vocal finishes playing.
+
+    With a per-bar `warp` map the vocal plays for exactly the sum of the bars' output
+    lengths (each bar re-locked to Song 1's grid); without one it is the single-ratio
+    rendered length. Both the driver and the referee call this, so they can never drift
+    onto different math about where a placed vocal ends (the R1 no-overlap guarantee).
+    """
+    if warp:
+        return anchor + sum(out_secs for _s, _e, out_secs in warp)
     return anchor + rendered_vocal_secs(vocal_src, stretch)
+
+
+def warp_map(anchor: float, vocal_src: tuple[float, float],
+             a1_downbeats: list[float], a2_downbeats: list[float], global_ratio: float,
+             lo: float = SAFE_STRETCH_LO, hi: float = SAFE_STRETCH_HI
+             ) -> list[tuple[float, float, float]]:
+    """Per-bar phase-lock: map each Song-2 bar in the vocal slice onto the matching Song-1
+    bar from the anchor, so every bar re-locks to the beat and drift can't accumulate
+    (Handbook 9.6). Returns `(src_start, src_end, out_secs)` segments — take the vocal
+    seconds `[src_start, src_end]` and stretch them to play for `out_secs`, which is the
+    matching Song-1 bar's length, so each bar boundary lands on a Song-1 downbeat.
+
+    A single global ratio can't stay aligned because real tempos wobble and BPM detection
+    is imperfect; this maps bar-to-bar instead. A glitchy bar (a missing beat → an out-of-
+    band local ratio) falls back to the global ratio for that bar (no warble). With too few
+    downbeats to define bars, returns one global segment (the legacy behaviour).
+    """
+    s0, s1 = vocal_src
+    d2 = [t for t in a2_downbeats if s0 - 1e-6 <= t <= s1 + 1e-6]
+    d1 = [t for t in a1_downbeats if t >= anchor - 1e-6]
+    if len(d2) < 2 or len(d1) < 2:
+        return [(round(s0, 3), round(s1, 3), (s1 - s0) / global_ratio)]
+
+    # Start the warp on Song 2's first downbeat inside the slice: any audio before it (a
+    # mid-bar start — the AI path doesn't snap the slice) is dropped rather than emitted as a
+    # leading partial, because a partial's length isn't a Song-1 bar and would shift EVERY
+    # later boundary off the grid (the F1 defect: the referee then rejected good mixes).
+    segs: list[tuple[float, float, float]] = []
+    m = min(len(d2), len(d1))  # only map bars both grids can cover
+    for k in range(m - 1):
+        src_len = d2[k + 1] - d2[k]
+        out_secs = d1[k + 1] - d1[k]  # the matching Song-1 bar length -> boundary locks to its downbeat
+        if out_secs <= 0 or not (lo <= src_len / out_secs <= hi):
+            return []  # a glitch bar can't lock without warbling or drifting -> fall back to legacy stretch
+        segs.append((round(d2[k], 3), round(d2[k + 1], 3), round(out_secs, 4)))
+
+    if s1 - d2[m - 1] > 1e-3:  # a trailing partial (the vocal's own tail) — the last boundary may be off-grid
+        segs.append((round(d2[m - 1], 3), round(s1, 3), round((s1 - d2[m - 1]) / global_ratio, 4)))
+    return segs
 
 
 def contrast_windows(a1: TrackAnalysis, placements, stretch: float,
@@ -262,11 +310,11 @@ def contrast_windows(a1: TrackAnalysis, placements, stretch: float,
     if not placements:
         return []
     ordered = sorted(placements, key=lambda p: p.anchor)
-    last_end = placement_end(ordered[-1].anchor, ordered[-1].vocal_src, stretch)
+    _end = lambda p: placement_end(p.anchor, p.vocal_src, stretch, getattr(p, "warp", None))
+    last_end = _end(ordered[-1])
     track_end = a1.beats[-1] if a1.beats else last_end + min_secs
 
-    gaps = [(placement_end(prev.anchor, prev.vocal_src, stretch), nxt.anchor)
-            for prev, nxt in zip(ordered, ordered[1:])]
+    gaps = [(_end(prev), nxt.anchor) for prev, nxt in zip(ordered, ordered[1:])]
     gaps.append((last_end, track_end))
 
     out: list[tuple[float, float]] = []

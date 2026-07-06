@@ -13,6 +13,8 @@ The hard rules:
   R3  every vocal entry lands on a downbeat of Song 1 (never mid-bar).
   B3  the tempo stretch stays inside the safe band (no warble).
   R6  the finished audio is neither silent/near-silent nor clipping.
+  R7  a beat-locked (warped) placement re-locks cleanly: every per-bar stretch stays in
+      the safe band, and each bar boundary lands on a Song 1 downbeat (no mid-bar drift).
 """
 
 from __future__ import annotations
@@ -60,7 +62,29 @@ def _placements_of(plan: MixPlan) -> list:
     arrangement, so a legacy (M3) single-placement plan still validates."""
     if plan.placements:
         return list(plan.placements)
-    return [type("P", (), {"anchor": plan.anchor, "vocal_src": plan.vocal_src})()]
+    return [type("P", (), {"anchor": plan.anchor, "vocal_src": plan.vocal_src, "warp": []})()]
+
+
+def _warp_violations(p, downbeats: list[float]) -> list[str]:
+    """R7: a warped placement must re-lock cleanly — every per-bar stretch inside the safe
+    band (no warble), and every full-bar boundary on a Song 1 downbeat (the vocal's own end,
+    the last boundary, may fall mid-bar). Empty warp => nothing to check (legacy path)."""
+    warp = getattr(p, "warp", None)
+    if not warp:
+        return []
+    out: list[str] = []
+    cum = p.anchor
+    for i, (s0, s1, out_secs) in enumerate(warp):
+        if out_secs <= 0 or not (SAFE_STRETCH_LO - 1e-6 <= (s1 - s0) / out_secs <= SAFE_STRETCH_HI + 1e-6):
+            msg = "a beat-lock bar is outside the safe stretch band (R7)"
+            if msg not in out:
+                out.append(msg)
+        cum += out_secs
+        if i < len(warp) - 1 and not _on_a_downbeat(cum, downbeats):  # interior boundary must lock
+            msg = "a beat-lock bar boundary drifted off Song 1's grid (R7)"
+            if msg not in out:
+                out.append(msg)
+    return out
 
 
 def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[str]:
@@ -78,10 +102,11 @@ def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[s
         fx = getattr(p, "fx", None)
         if fx is not None and fx not in _KNOWN_FX:
             violations.append(f"unknown effect '{fx}' (the engine would silently do nothing)")
+        violations.extend(_warp_violations(p, a1.downbeats))  # R7: beat-lock re-locks cleanly
     for a, b in zip(ordered, ordered[1:]):  # R1: one vocal at a time — no S2↔S2 overlap
-        # Uses the shared rendered-length math (source / stretch), so the referee and the
-        # driver measure a vocal's real end identically and can never drift apart.
-        if b.anchor < placement_end(a.anchor, a.vocal_src, plan.vocal_stretch) - 1e-6:
+        # Uses the shared rendered-length math (warp-aware source/stretch), so the referee
+        # and the driver measure a vocal's real end identically and can never drift apart.
+        if b.anchor < placement_end(a.anchor, a.vocal_src, plan.vocal_stretch, getattr(a, "warp", None)) - 1e-6:
             violations.append("two vocal placements overlap (R1)")
 
     # R1 across both songs (Slice B contrast): Song 1's own vocal must sit only in the
@@ -91,7 +116,7 @@ def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[s
             violations.append("a Song 1 vocal region is empty")
             continue
         for p in ordered:
-            p_end = placement_end(p.anchor, p.vocal_src, plan.vocal_stretch)
+            p_end = placement_end(p.anchor, p.vocal_src, plan.vocal_stretch, getattr(p, "warp", None))
             if s < p_end - 1e-6 and e > p.anchor + 1e-6:  # spans overlap
                 violations.append("Song 1 and Song 2 vocals overlap (R1)")
                 break

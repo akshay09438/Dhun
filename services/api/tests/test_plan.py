@@ -5,7 +5,7 @@ _ai_arrange — never a real API call.
 
 import pytest
 
-from app.planner import fence, plan as planner
+from app.planner import fence, plan as planner, validate
 from tests.test_fence import make_analysis
 
 
@@ -154,6 +154,51 @@ def test_clustered_ai_arrangement_is_spread_by_the_guard(monkeypatch):
     assert min(anchors) <= track_end / 2
     assert max(anchors) >= track_end * 2 / 3
     assert plan.source == "rules"  # the guard replaced the clustered AI plan
+
+
+def test_placements_get_a_beatlock_warp(monkeypatch):
+    """Every Song-2 placement carries a per-bar warp map that re-locks it to Song 1's beat,
+    and the no-overlap guarantee still holds using the warp-aware length."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0, n_bars=64)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 30.0), (40.0, 70.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    assert all(p.warp for p in plan.placements)  # each placement is beat-locked
+    ordered = sorted(plan.placements, key=lambda p: p.anchor)
+    for a, b in zip(ordered, ordered[1:]):  # no overlap, measured with the REAL warped length
+        assert fence.placement_end(a.anchor, a.vocal_src, plan.vocal_stretch, a.warp) <= b.anchor + 1e-6
+
+
+def test_no_warp_when_grid_is_missing(monkeypatch):
+    """With no downbeats to lock to, placements fall back to the legacy global stretch
+    (empty warp) rather than inventing a lock — never worse than before."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0, n_bars=32)
+    a1.downbeats = []  # analysis too thin to define bars
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 16.0), (20.0, 36.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    assert all(p.warp == [] for p in plan.placements)
+
+
+def test_ai_midbar_starts_still_pass_the_referee(monkeypatch):
+    """F1 regression: an AI arrangement whose vocal slices start mid-bar must NOT be rejected
+    by the referee (R7). The warp map re-locks cleanly instead of shifting off the grid."""
+    from app.models import Placement
+    a1 = make_analysis(bpm=120.0, n_bars=64)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 40.0)])
+    # two placements that SPAN the song (so the arc guard keeps them), each starting mid-bar
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: [
+        Placement(anchor=a1.downbeats[8], vocal_src=(3.1, 23.1)),    # 3.1 is between downbeats
+        Placement(anchor=a1.downbeats[50], vocal_src=(5.1, 25.1)),   # in the final third
+    ])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    validate.assert_plan(plan, a1, a2)  # must NOT raise — the old code raised a R7 ValidationError
 
 
 def test_extract_json_tolerates_prose():
