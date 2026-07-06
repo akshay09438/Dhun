@@ -24,14 +24,13 @@ from app.planner.suggest import suggest_moves
 _REPO = __import__("pathlib").Path(__file__).resolve().parents[4]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
-from workers.live_stems import render_vocal_bus  # noqa: E402
+from workers.live_stems import render_full_vocal  # noqa: E402
 
 router = APIRouter()
 _HEX_ID = re.compile(r"[0-9a-f]{64}")
 
 log = logging.getLogger("promptdj.live")
-_S1_STEMS = ("drums", "bass", "other")
-# mix_id -> (status, message). Absence + a stored .vocalbus.wav means "ready". In-memory
+# mix_id -> (status, message). Absence + a stored .livevocal.wav means "ready". In-memory
 # is fine for single-worker validation (same pattern as mix.py; shared-eviction backlog note).
 _vocal_jobs: dict[str, tuple[str, str | None]] = {}
 
@@ -67,7 +66,9 @@ def live_context(song1_id: str) -> LiveContext:
 
 
 def _vocal_bus_path(mix_id: str):
-    return settings.data_dir / f"{mix_id}.vocalbus.wav"
+    # ".livevocal" (not the old ".vocalbus"): the live Vocals part is now Song 2's CONTINUOUS
+    # vocal (bring-in-anytime), not the sparse arranged bus — the new name invalidates old caches.
+    return settings.data_dir / f"{mix_id}.livevocal.wav"
 
 
 def _mixplan_path(mix_id: str):
@@ -75,17 +76,13 @@ def _mixplan_path(mix_id: str):
 
 
 def _run_vocal_bus(mix_id: str) -> None:
-    """Background worker: load the cached plan, render its vocal layer to a bus WAV."""
+    """Background worker: render Song 2's continuous vocal (tempo-matched) as the live bus."""
     try:
         plan = MixPlan(**json.loads(_mixplan_path(mix_id).read_text()))
-        stems = {s: stem_path(plan.song1_id, s) for s in _S1_STEMS}
-        s1_voc = stem_path(plan.song1_id, "vocals")
-        if s1_voc.exists():
-            stems["vocals"] = s1_voc
-        render_vocal_bus(plan, stems, stem_path(plan.song2_id, "vocals"), _vocal_bus_path(mix_id))
+        render_full_vocal(stem_path(plan.song2_id, "vocals"), plan.vocal_stretch, _vocal_bus_path(mix_id))
         _vocal_jobs.pop(mix_id, None)  # readiness now inferred from the stored file
     except Exception:  # noqa: BLE001 — never leak a trace; log so a systematic bug isn't invisible
-        log.exception("vocal-bus render failed for %s", mix_id)
+        log.exception("live-vocal render failed for %s", mix_id)
         _vocal_bus_path(mix_id).unlink(missing_ok=True)
         _vocal_jobs[mix_id] = ("error", "Couldn't prepare the live vocals.")
 

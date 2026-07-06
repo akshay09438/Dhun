@@ -76,7 +76,7 @@ def test_vocal_bus_without_a_plan_is_409(monkeypatch, tmp_path):
 
 def test_vocal_bus_serves_the_wav_when_present(monkeypatch, tmp_path):
     _use_live_tmp(monkeypatch, tmp_path)
-    (tmp_path / f"{HEX}.vocalbus.wav").write_bytes(b"RIFF....WAVEfake")  # pre-seeded "ready"
+    (tmp_path / f"{HEX}.livevocal.wav").write_bytes(b"RIFF....WAVEfake")  # pre-seeded "ready"
     r = client.get(f"/live/vocal-bus/{HEX}")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("audio/")

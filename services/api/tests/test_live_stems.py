@@ -49,6 +49,18 @@ def _rms(y, a, b):
     return float(np.sqrt(np.mean(seg ** 2))) if len(seg) else 0.0
 
 
+def test_full_vocal_is_continuous(tmp_path):
+    # Song 2's vocal here is an 8s tone; the continuous vocal must be loud across the WHOLE
+    # span (near start AND near end), unlike the sparse arranged bus.
+    _stems_paths, vocal = _stems(tmp_path)
+    out = tmp_path / "fullvocal.wav"
+    live_stems.render_full_vocal(vocal, 1.0, out)
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    assert sr == SR and y.shape[1] == 2
+    assert _rms(y, 0.5, 1.5) > 1e-2 and _rms(y, 6.0, 7.0) > 1e-2  # continuous, not sparse
+    assert float(np.max(np.abs(y))) <= 0.999  # never clipping
+
+
 def test_vocal_bus_is_valid_stereo_wav(tmp_path):
     stems, vocal = _stems(tmp_path)
     out = tmp_path / "bus.wav"
