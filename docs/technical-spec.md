@@ -126,6 +126,20 @@ Slice C spread the vocal across the whole song, which exposed a pre-existing dri
 - **Perf follow-up (logged):** per-bar rendering spawns ~1 FFmpeg process per bar (~60 for a 7-min mix, ~+10 s, invisible behind stem separation at validation scale). Collapse to a single per-placement filtergraph when next in `render.py` — bundle with the mix-WAV eviction work (both share "Regenerate is the multiplier").
 - **AI-path nicety (logged):** `_ai_arrange` doesn't snap a slice start to a Song-2 downbeat, so an AI placement drops up to ~1 bar of lead-in (warp_map starts on the downbeat). Correct and on-beat, just slightly less vocal; snap `s0` when convenient.
 
+## As-built (M5 Slice 1 — live control foundation)
+
+The first "steer the mix with words" slice. The M4 mix is a baked WAV (can't un-mute a part), so live control plays the **separate stems** in the browser and rides one part's gain on the beat. LLM plans (a `LiveOp`); the browser executes; nothing off-grid; the music never stops.
+
+- **Models** (`app/models.py`): `LiveOp` (additive) — `op` ("mute" | "unmute" | "decline"), `target`, `when="next_bar"`, `say` (DJ-language reply), `reason`.
+- **Live driver** (`app/planner/live.py`, not dangerous): `parse_command(text) -> LiveOp` — deterministic keyword parser for the lean set (Slice 1: bass mute/unmute) + an out-of-scope decline. An LLM path will sit in front later with this as the fallback (same pattern as `planner.plan`). Never touches audio.
+- **Routes** (`app/routes/live.py`, not dangerous): `POST /live/command {song1_id, song2_id, text}` → `LiveOp`; `GET /live/context/{song1_id}` → `{bpm, downbeats}` (from the cached analysis — the grid the browser schedules on). Stateless; hex-id guarded.
+- **Web — pure logic** (`apps/web/src/lib/liveSchedule.ts`, unit-tested): `barSeconds`, `nextBarTime(downbeats, songTime, bpm)` (next real downbeat, else next bar on the bpm grid), `applyOp` (bus on/off reducer), `rampTarget`. All the scheduling decisions live here so they're testable without Web Audio.
+- **Web — audio engine** (`apps/web/src/lib/liveAudio.ts`, ear-verified not unit-tested): `LivePlayer` — decodes Song 1's `drums/bass/other` stems, one `GainNode` per bus, starts all sources at the same `AudioContext` time (sample-accurate sync), and `schedule(op, ctx)` ramps the target bus over one bar starting on the next downbeat. `new AudioContext()` is wrapped in try/catch so an unsupported environment degrades to "not ready" rather than crashing.
+- **Web — screen** (`apps/web/src/components/Live/LiveMix.tsx`): play/pause, a command text box, a DJ-language status line, per-bus on/off indicators. Wired **additively** into `Uploader.tsx` alongside the M4 `MixMaker` (same both-songs-ready gate); the M4 finished-mix player is untouched.
+- **Tests:** `test_live.py`, `test_live_route.py` (pytest); `api.test.ts`, `liveSchedule.test.ts`, `LiveMix.test.tsx` (vitest). Raw Web Audio playback is verified by ear (founder acceptance), not in jsdom. 136 backend + 18 web green.
+- **Stack note:** uses the **raw Web Audio API** — Tone.js/wavesurfer named in the stack table are NOT installed and were not needed for this slice.
+- **Danger-surface note:** the web `*.test.ts`/`*.test.tsx` files ARE on the dangerous list (the test-harness guard) — adding new web tests goes through confirm-and-apply. (Python `test_*.py` are not guarded; only `conftest.py`/`pytest.ini`.)
+
 ## Known follow-ups
 
 - CI `verify` job is Node-only today; add a Python (pytest) job when a GitHub remote is set up. Also point the coverage job at `apps/web/coverage/` (or emit to repo-root `coverage/`).
