@@ -122,6 +122,14 @@ def test_mix_declines_far_tempo_with_reason(tmp_path, monkeypatch):
     assert "tempo" in body["message"].lower()
 
 
+def test_regenerate_is_a_distinct_cached_take(tmp_path, monkeypatch):
+    _use_tmp(monkeypatch, tmp_path)
+    _setup_pair(tmp_path)
+    r1 = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2, "take": 1})
+    r2 = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2, "take": 2})
+    assert r1.json()["mix_id"] != r2.json()["mix_id"]  # different take -> different cache slot
+
+
 def test_mix_rejects_bad_song_id(tmp_path, monkeypatch):
     _use_tmp(monkeypatch, tmp_path)
     assert client.post("/mix", json={"song1_id": "nothex", "song2_id": SONG2}).status_code == 404

@@ -47,8 +47,9 @@ _S1_STEMS = ("drums", "bass", "other")
 
 # Bump when the fence rules, the render engine, or the planner prompt change, so a
 # cached mix from an older engine is never silently served after we improve it.
-# m3.2: beat_breath forced off (the ~2s dead-air gap before the vocal).
-ENGINE_VERSION = "m3.2"
+# m3.2: beat_breath forced off (the ~2s dead-air gap). m4a.1: full arrangement +
+# regenerate (multiple placements, real breath duck, take-driven variety).
+ENGINE_VERSION = "m4a.1"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.
@@ -59,10 +60,11 @@ class MixRequest(BaseModel):
     song1_id: str  # the beat / instrumental bed
     song2_id: str  # the vocal source
     prompt: str = ""
+    take: int = 1  # regenerate iteration — a new take is a distinct arrangement + cache slot
 
 
-def mix_id_for(song1_id: str, song2_id: str, prompt: str) -> str:
-    raw = f"{ENGINE_VERSION}:{song1_id}:{song2_id}:{prompt}".encode()
+def mix_id_for(song1_id: str, song2_id: str, prompt: str, take: int = 1) -> str:
+    raw = f"{ENGINE_VERSION}:{song1_id}:{song2_id}:{prompt}:{take}".encode()
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -104,11 +106,11 @@ def _ready(mix_id: str) -> Mix | None:
                plan=plan, message=plan.notes)
 
 
-def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str) -> None:
+def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int) -> None:
     """Background worker: plan -> validate -> render -> validate the audio."""
     try:
         a1, a2 = _load_analysis(song1_id), _load_analysis(song2_id)
-        plan = build_mix_plan(mix_id, a1, a2, prompt)
+        plan = build_mix_plan(mix_id, a1, a2, prompt, take=take)
         validate.assert_plan(plan, a1, a2)
 
         stems = {s: stem_path(song1_id, s) for s in _S1_STEMS}
@@ -135,7 +137,7 @@ def start_mix(req: MixRequest, response: Response) -> Mix:
         if not _HEX_ID.fullmatch(sid):
             raise HTTPException(404, "Song not found.")
 
-    mix_id = mix_id_for(req.song1_id, req.song2_id, req.prompt)
+    mix_id = mix_id_for(req.song1_id, req.song2_id, req.prompt, req.take)
     ready = _ready(mix_id)
     if ready is not None:
         return ready
@@ -147,7 +149,9 @@ def start_mix(req: MixRequest, response: Response) -> Mix:
     if _jobs.get(mix_id, (None,))[0] != "processing":
         _jobs[mix_id] = ("processing", None)
         threading.Thread(
-            target=_run_mix, args=(mix_id, req.song1_id, req.song2_id, req.prompt), daemon=True
+            target=_run_mix,
+            args=(mix_id, req.song1_id, req.song2_id, req.prompt, req.take),
+            daemon=True,
         ).start()
 
     response.status_code = 202

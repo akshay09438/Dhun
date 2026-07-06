@@ -56,7 +56,7 @@ def _guard_duration(y: np.ndarray) -> np.ndarray:
 
 def _decode(src: Path) -> np.ndarray:
     """Decode any audio file to stereo float32 at SR (extension-independent)."""
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         out = Path(td) / "d.wav"
         _run_ffmpeg(["ffmpeg", "-y", "-i", str(src), "-ar", str(SR), "-ac", "2", str(out)])
         y, _ = sf.read(out, dtype="float32", always_2d=True)
@@ -70,7 +70,7 @@ def _vocal_take(src: Path, start: float, dur: float, ratio: float) -> np.ndarray
     time, then `atempo` rescales that clip. Ratios here are ~0.92–1.08 (one atempo
     stage covers 0.5–2.0), so a single filter pass is exact.
     """
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         out = Path(td) / "v.wav"
         cmd = ["ffmpeg", "-y", "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(src),
                "-ar", str(SR), "-ac", "2"]
