@@ -13,11 +13,12 @@ test("nextBarTime falls back to bpm grid when no downbeats", () => {
 });
 
 test("applyOp mutes and unmutes the target bus only", () => {
-  const s = { drums: true, bass: true, other: true };
+  const s = { drums: true, bass: true, other: true, vocals: true };
   expect(applyOp(s, { op: "mute", target: "bass" })).toEqual({
     drums: true,
     bass: false,
     other: true,
+    vocals: true,
   });
   expect(
     applyOp({ ...s, bass: false }, { op: "unmute", target: "bass" }).bass,
@@ -28,4 +29,29 @@ test("applyOp mutes and unmutes the target bus only", () => {
 test("rampTarget is 0 for mute, 1 for unmute", () => {
   expect(rampTarget({ op: "mute" })).toBe(0);
   expect(rampTarget({ op: "unmute" })).toBe(1);
+});
+
+test("applyOp flips every bus named in targets (combo)", () => {
+  const s = { drums: true, bass: true, other: true, vocals: true };
+  const r = applyOp(s, {
+    op: "mute",
+    target: null,
+    targets: ["bass", "other", "vocals"],
+  });
+  expect(r).toEqual({ drums: true, bass: false, other: false, vocals: false });
+});
+
+test("applyOp unmutes all with a full targets list", () => {
+  const s = { drums: false, bass: false, other: false, vocals: false };
+  const r = applyOp(s, {
+    op: "unmute",
+    target: null,
+    targets: ["drums", "bass", "other", "vocals"],
+  });
+  expect(r).toEqual({ drums: true, bass: true, other: true, vocals: true });
+});
+
+test("applyOp still honors a single target when targets is absent", () => {
+  const s = { drums: true, bass: true, other: true, vocals: true };
+  expect(applyOp(s, { op: "mute", target: "vocals" }).vocals).toBe(false);
 });

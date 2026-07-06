@@ -25,6 +25,7 @@ export default function LiveMix({
     drums: true,
     bass: true,
     other: true,
+    vocals: true,
   });
   const [status, setStatus] = useState("");
   const [text, setText] = useState("");
