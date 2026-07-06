@@ -76,9 +76,12 @@ export function App() {
     }
   }
 
+  /** Back to Setup with empty drop zones, ready for a new pair of songs. */
   function startOver() {
     setScreen("setup");
     setError("");
+    setFile1(null);
+    setFile2(null);
     setSongs([]);
     setMix(null);
     setMixId(undefined);
@@ -111,6 +114,7 @@ export function App() {
           regenerating={regenerating}
           onRegenerate={handleRegenerate}
           onExport={() => setScreen("export")}
+          onNextSong={startOver}
         />
       )}
       {screen === "export" && mix && (

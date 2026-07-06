@@ -1,4 +1,4 @@
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import PlayScreen from "./PlayScreen";
 import type { MixDTO, SongDTO } from "../../lib/api";
@@ -54,6 +54,7 @@ test("PlayScreen renders the mix name, four parts and Beat up (no Web Audio in j
       regenerating={false}
       onRegenerate={() => {}}
       onExport={() => {}}
+      onNextSong={() => {}}
     />,
   );
   expect(screen.getAllByText(/tere ocean/i).length).toBeGreaterThan(0);
@@ -61,4 +62,28 @@ test("PlayScreen renders the mix name, four parts and Beat up (no Web Audio in j
   ["drums", "bass", "other", "vocals"].forEach((b) =>
     expect(screen.getByTestId(`bus-${b}`)).toBeTruthy(),
   );
+});
+
+test("PlayScreen's 'Next song' button returns to upload new songs", () => {
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ sections: [] }) }),
+  );
+  const onNextSong = vi.fn();
+  render(
+    <PlayScreen
+      songs={songs}
+      mix={mix}
+      mixId="m"
+      mixName="Tere Ocean"
+      regenerating={false}
+      onRegenerate={() => {}}
+      onExport={() => {}}
+      onNextSong={onNextSong}
+    />,
+  );
+  fireEvent.click(screen.getByTestId("next-song"));
+  expect(onNextSong).toHaveBeenCalledTimes(1);
 });

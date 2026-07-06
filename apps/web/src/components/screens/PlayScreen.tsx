@@ -71,6 +71,7 @@ export default function PlayScreen({
   regenerating,
   onRegenerate,
   onExport,
+  onNextSong,
 }: {
   songs: SongDTO[];
   mix: MixDTO;
@@ -79,6 +80,7 @@ export default function PlayScreen({
   regenerating: boolean;
   onRegenerate: () => void;
   onExport: () => void;
+  onNextSong: () => void;
 }) {
   const song1Id = songs[0].id;
   const song2Id = songs[1].id;
@@ -260,7 +262,18 @@ export default function PlayScreen({
   return (
     <>
       <div className="console">
-        <p className="kicker">Session</p>
+        <div className={styles.consoleHead}>
+          <p className="kicker">Session</p>
+          <button
+            type="button"
+            className={styles.nextSong}
+            data-testid="next-song"
+            onClick={onNextSong}
+            title="Upload a new pair of songs"
+          >
+            ＋ Next song
+          </button>
+        </div>
         <h1 className={`title ${styles.mixTitle}`} title={title}>
           {title}
         </h1>

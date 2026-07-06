@@ -1,3 +1,24 @@
+.consoleHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.nextSong {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--violet);
+  background: transparent;
+  border: 1px solid var(--violet);
+  border-radius: 999px;
+  padding: 4px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.nextSong:hover {
+  background: rgba(143, 0, 255, 0.16);
+}
 .mixTitle {
   margin-bottom: 16px;
   overflow: hidden;
