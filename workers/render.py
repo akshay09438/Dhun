@@ -122,6 +122,22 @@ def _vocal_take_warped(src: Path, warp: list) -> np.ndarray:
     if not segs:
         return np.zeros((0, 2), dtype=np.float32)
 
+    # FFmpeg's seek/atempo rounding (real MP3 frame-boundary rounding, confirmed on the
+    # Father Ocean x With You pair) can hand back a bar's stretched audio a little LONGER
+    # than its ideal hop + crossfade window. The buffer below only reserves one
+    # crossfade's worth of slack at the very end, not per bar, so that overshoot can
+    # compound across bars until a later write runs past the buffer. Clamp every
+    # non-final bar to its exact allotted window (padding if it ever came back short) so
+    # every write always fits, and the crossfade always lands exactly where the next
+    # bar's head begins.
+    for i in range(len(segs) - 1):
+        want = hops[i] + xf
+        seg = segs[i]
+        if len(seg) > want:
+            segs[i] = seg[:want]
+        elif len(seg) < want:
+            segs[i] = np.vstack([seg, np.zeros((want - len(seg), 2), dtype=np.float32)])
+
     total = sum(hops[:-1]) + len(segs[-1])
     out = np.zeros((total + xf, 2), dtype=np.float32)
     t = np.linspace(0.0, 1.0, xf, dtype=np.float32)[:, None] if xf > 0 else None

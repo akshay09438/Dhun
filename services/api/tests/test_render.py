@@ -146,3 +146,36 @@ def test_render_clamps_negative_anchor(tmp_path):
     render.render_mix(_plan(anchor=-5.0), stems, vocal, out)  # must not crash
     y, _ = sf.read(out, dtype="float32", always_2d=True)
     assert len(y) > 0
+
+
+def test_vocal_take_warped_survives_ffmpeg_length_overshoot(monkeypatch):
+    """Reproduces the real "Father Ocean x With You" crash: FFmpeg's seek/atempo
+    rounding (real MP3 frame-boundary rounding, confirmed on the actual pair) hands
+    back each stretched bar a few hundred samples LONGER than its ideal hop +
+    crossfade length. The output buffer only ever reserved one crossfade's worth of
+    slack at the very end, not per bar, so that overshoot compounded across bars
+    until a later write ran past the buffer -> ValueError: could not broadcast.
+    `_vocal_take` is faked so the test is hermetic (no real ffmpeg/audio needed) but
+    reproduces the exact overshoot-per-bar shape that triggered the real crash.
+    """
+    # The exact warp (7 bars + one near-zero trailing partial, the vocal's own tail) and
+    # per-bar overshoot measured on the real Father Ocean x With You pair. The tiny last
+    # bar is what removes the buffer's usual slack: `total` is anchored to the LAST
+    # segment's actual (near-zero) length, so there's almost no cushion left to absorb
+    # the middle bars' overshoot.
+    warp = [(53.73, 55.78, 1.97), (55.78, 57.83, 1.97), (57.83, 59.89, 1.96),
+            (59.89, 61.94, 1.97), (61.94, 63.99, 1.97), (63.99, 66.04, 1.97),
+            (66.04, 68.09, 1.96), (68.09, 68.1, 0.0097)]
+    overshoots = [513, 460, 247, 213, 217, 201, 736]  # measured per bar, one per non-final bar
+    calls = {"i": 0}
+
+    def fake_take(src, start, dur, ratio):
+        i = calls["i"]
+        calls["i"] += 1
+        ideal = int(round(dur * render.SR / ratio))
+        extra = overshoots[i] if i < len(overshoots) else 0
+        return np.zeros((max(ideal + extra, 0), 2), dtype=np.float32)  # ffmpeg overshoot
+
+    monkeypatch.setattr(render, "_vocal_take", fake_take)
+    out = render._vocal_take_warped(Path("unused"), warp)
+    assert len(out) > 0
