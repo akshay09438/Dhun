@@ -1,4 +1,11 @@
-export const API_BASE = "http://localhost:8000";
+// Where the backend lives. In local dev (Vite on :5173) default to the :8000 API.
+// In a production build (served BY the backend, e.g. through a tunnel) default to
+// same-origin ("") so one host serves the UI and the API — no CORS, keys never
+// cross-origin. Override with VITE_API_BASE when the two are hosted separately.
+const _envBase = (import.meta.env as Record<string, string | undefined>)
+  .VITE_API_BASE;
+export const API_BASE =
+  _envBase ?? (import.meta.env.DEV ? "http://localhost:8000" : "");
 
 /** How to wait on a start-then-poll job. Overridable so tests can poll fast. */
 export type PollOpts = { pollMs?: number; maxTries?: number };
