@@ -134,6 +134,41 @@ def test_shaky_song_plays_safe(monkeypatch):
     assert all(p.fx is None and p.beat_breath is False for p in plan.placements)
 
 
+def test_shaky_song_still_spans_the_whole_song(monkeypatch):
+    """Playing safe on a shaky song (<=2 placements) must NOT abandon the whole-song arc.
+    The bug: _apply_flourishes trimmed to the FIRST two placements (early + middle), leaving
+    the final third silent. Playing safe should keep an early AND a late entry."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0, n_bars=128)  # ~256s long song
+    a1.bpm_confidence = 0.3  # shaky -> plays safe with <=2 placements
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 30.0), (40.0, 70.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    track_end = a1.beats[-1]
+    anchors = [p.anchor for p in plan.placements]
+    assert len(plan.placements) <= 2                 # still plays safe
+    assert min(anchors) <= track_end / 2             # an early entry
+    assert max(anchors) >= track_end * 2 / 3         # AND a late entry — the arc is preserved
+
+
+def test_regenerate_varies_vocal_window_from_a_single_region(monkeypatch):
+    """Even with ONE long vocal region (thin analysis, no multiple sections to rotate
+    through), consecutive regenerate takes must play a DIFFERENT part of that region — not
+    the identical excerpt from the same start every time (the 'every mix must be unique'
+    complaint, in its hardest case)."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0, n_bars=48)
+    a2 = make_analysis(bpm=118.0, n_bars=64, vocal_regions=[(0.0, 60.0)])  # one long region
+
+    t1 = planner.build_mix_plan("m" * 64, a1, a2, take=1)
+    t2 = planner.build_mix_plan("m" * 64, a1, a2, take=2)
+
+    starts1 = [p.vocal_src[0] for p in t1.placements]
+    starts2 = [p.vocal_src[0] for p in t2.placements]
+    assert starts1 != starts2  # a different chunk of the region, not the same start every take
+
+
 def test_declines_when_unmixable():
     a1 = make_analysis(bpm=120.0)
     a2 = make_analysis(bpm=150.0, vocal_regions=[(16.0, 40.0)])

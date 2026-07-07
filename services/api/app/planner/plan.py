@@ -19,6 +19,7 @@ from app.planner import fence, llm
 
 _MAX_PLACEMENTS = 3
 _ENTRY_MARGIN = 1.0  # secs of beat-only breathing room between one vocal's end and the next entry
+_WINDOW_STEP = 8.0  # ~a phrase; min spare room in a region worth sliding the vocal window for regenerate variety
 
 _ARRANGE_SYSTEM = (
     "You are a DJ arranging Song 2's vocal over Song 1's beat. From the given legal phrase "
@@ -71,7 +72,10 @@ def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement],
     single filter-sweep into the final (big) entry. On a shaky Song 1, play safe — no
     flourishes and at most two placements — rather than bet fancy moves on bad data."""
     if not _confident(a1):
-        safe = placements[:2]
+        # Play safe (<=2 placements, no flourishes) — but keep the arc's ENDS (first + last),
+        # not the first two, so a long shaky song still gets an early AND a late entry instead
+        # of leaving its whole final stretch silent.
+        safe = [placements[0], placements[-1]] if len(placements) > 2 else placements
         for p in safe:
             p.beat_breath = False
             p.fx = None
@@ -108,7 +112,15 @@ def _default_arrangement(opts: dict, take: int) -> list[Placement]:
         length = min(s1 - s0, fit)
         if length < fence.MIN_VOCAL_SECS:
             continue  # not enough clean room before the next entry — skip this spot
-        placements.append(Placement(anchor=anc, vocal_src=(s0, round(s0 + length, 3)), beat_breath=i > 0))
+        # Slide the window WITHIN the region by `take` when the region is longer than we'll
+        # use, so regenerate plays a different part of the same section — genuine vocal
+        # variety even when there's only one region to draw from (thin analysis). The warp
+        # map re-snaps the start to a Song-2 downbeat, so this stays beat-locked.
+        spare = (s1 - s0) - length
+        if spare >= _WINDOW_STEP:
+            n_pos = min(3, int(spare // _WINDOW_STEP) + 1)  # up to 3 distinct windows
+            s0 = s0 + spare * ((take - 1) % n_pos) / (n_pos - 1)
+        placements.append(Placement(anchor=anc, vocal_src=(round(s0, 3), round(s0 + length, 3)), beat_breath=i > 0))
     if not placements:  # nothing fit — one safe placement at the best anchor
         s0, s1 = slices[0]
         end = s0 + min(s1 - s0, fence.MAX_VOCAL_SECS)
