@@ -127,6 +127,26 @@ def test_vocal_slices_ranked_and_capped():
     assert len(slices) >= 2 and slices[0][0] == 20.0  # longest first, snapped to a downbeat
 
 
+def test_vocal_slices_falls_back_to_sections_when_regions_missing():
+    """Real analyses sometimes detect ZERO vocal_regions even on a song that clearly has
+    sung sections (confirmed on 3 of the 4 real catalog vocal tracks). Without this
+    fallback, `vocal_slices` returned a single slice (`best_vocal_slice`'s one chorus),
+    so every placement AND every regenerate reused the exact same short vocal excerpt —
+    the real "vocals are always short and never unique" complaint."""
+    a2 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[], sections=[
+        Section(start=4.0, end=20.0, label="intro"),   # not sung — must be excluded
+        Section(start=20.0, end=36.0, label="verse"),
+        Section(start=36.0, end=52.0, label="chorus"),
+        Section(start=52.0, end=68.0, label="chorus"),
+        Section(start=68.0, end=84.0, label="bridge"),
+        Section(start=84.0, end=90.0, label="outro"),  # not sung — must be excluded
+    ])
+    slices = fence.vocal_slices(a2)
+    assert len(slices) >= 3  # multiple real candidates, not a single fallback slice
+    starts = {s for s, _ in slices}
+    assert not any(4.0 <= s < 20.0 for s in starts)  # the intro is never offered as vocal
+
+
 def test_arrangement_options_happy():
     energy = [0.3] * 32
     for i in range(8, 16):

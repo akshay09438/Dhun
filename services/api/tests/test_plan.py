@@ -5,6 +5,7 @@ _ai_arrange — never a real API call.
 
 import pytest
 
+from app.models import Section
 from app.planner import fence, llm, plan as planner, validate
 from tests.test_fence import make_analysis
 
@@ -70,6 +71,29 @@ def test_regenerate_yields_a_different_arrangement(monkeypatch):
     t2 = planner.build_mix_plan("m" * 64, a1, a2, take=2)
 
     assert [p.anchor for p in t1.placements] != [p.anchor for p in t2.placements]
+
+
+def test_regenerate_varies_vocal_content_not_just_anchor(monkeypatch):
+    """The real complaint: with only one usable vocal slice (the pre-fix behaviour for a
+    song whose vocal_regions came up empty), every regenerate reused the SAME short vocal
+    excerpt and only the anchor moved. With multiple candidate slices available (the
+    sections fallback), different takes must also pull different vocal content at the
+    same placement position — not just resettle on a different timestamp."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0, n_bars=64)
+    a2 = make_analysis(bpm=118.0, n_bars=64, vocal_regions=[], sections=[
+        Section(start=0.0, end=16.0, label="verse"),
+        Section(start=16.0, end=32.0, label="chorus"),
+        Section(start=32.0, end=48.0, label="chorus"),
+        Section(start=48.0, end=64.0, label="bridge"),
+    ])
+
+    t1 = planner.build_mix_plan("m" * 64, a1, a2, take=1)
+    t2 = planner.build_mix_plan("m" * 64, a1, a2, take=2)
+
+    src1 = [p.vocal_src for p in t1.placements]
+    src2 = [p.vocal_src for p in t2.placements]
+    assert src1 != src2  # genuinely different vocal content, not the same excerpt replayed
 
 
 def test_ai_arrangement_is_used_when_available(monkeypatch):

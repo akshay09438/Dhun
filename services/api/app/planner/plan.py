@@ -97,7 +97,10 @@ def _default_arrangement(opts: dict, take: int) -> list[Placement]:
     chosen = fence.arc_anchors(anchors_ranked, opts["track_end"], count=n, take=take)  # spread, in time order
     placements: list[Placement] = []
     for i, anc in enumerate(chosen):
-        s0, s1 = slices[i % len(slices)]
+        # Rotate WHICH slice fills this placement by `take` too (not just by position), so
+        # regenerate pulls different vocal content at the same spot — not just a new
+        # anchor for the same replayed excerpt (the "every mix must be unique" complaint).
+        s0, s1 = slices[(i + take - 1) % len(slices)]
         gap = (chosen[i + 1] - anc) if i + 1 < len(chosen) else _MAX_PLACEMENTS * 60.0
         # A vocal of SOURCE length d renders to d / stretch output-seconds; we want that
         # to fit the output gap, so the max source length is (gap - margin) * stretch.

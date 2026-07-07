@@ -187,21 +187,38 @@ def legal_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
     }
 
 
+_SUNG_LABELS = {"verse", "chorus", "prechorus", "pre-chorus", "bridge", "solo", "hook"}
+
+
+def _snap_and_cap(a2: TrackAnalysis, s: float, e: float) -> tuple[float, float]:
+    start = min(a2.downbeats, key=lambda d: abs(d - s)) if a2.downbeats else s
+    end = min(e, start + MAX_VOCAL_SECS)
+    return round(start, 3), round(max(end, start + MIN_VOCAL_SECS), 3)
+
+
 def vocal_slices(a2: TrackAnalysis, limit: int = 4) -> list[tuple[float, float]]:
     """Song 2's strongest sung stretches — longest first, snapped to a downbeat, each
-    capped to MAX_VOCAL_SECS. Falls back to a single best slice if regions are unknown."""
+    capped to MAX_VOCAL_SECS.
+
+    Falls back to the song's own labelled sections (verse/chorus/bridge/solo — never
+    an intro/outro/instrumental) when vocal-region detection came up empty, which real
+    analyses do surprisingly often (confirmed on 3 of the 4 real catalog vocal tracks).
+    Without this, every placement — and every regenerate take — reused the exact same
+    single fallback slice, since there was nothing else to choose from. Only when BOTH
+    are unavailable does this fall back to one best-guess slice."""
     regions = sorted(
         ((s, e) for s, e in a2.vocal_regions if e - s >= MIN_VOCAL_SECS),
         key=lambda r: r[1] - r[0], reverse=True,
     )[:limit]
     if not regions:
+        regions = sorted(
+            ((s.start, s.end) for s in a2.sections
+             if s.label.lower() in _SUNG_LABELS and s.end - s.start >= MIN_VOCAL_SECS),
+            key=lambda r: r[1] - r[0], reverse=True,
+        )[:limit]
+    if not regions:
         return [best_vocal_slice(a2)]
-    out: list[tuple[float, float]] = []
-    for s, e in regions:
-        start = min(a2.downbeats, key=lambda d: abs(d - s)) if a2.downbeats else s
-        end = min(e, start + MAX_VOCAL_SECS)
-        out.append((round(start, 3), round(max(end, start + MIN_VOCAL_SECS), 3)))
-    return out
+    return [_snap_and_cap(a2, s, e) for s, e in regions]
 
 
 def section_at(a1: TrackAnalysis, t: float) -> str:
