@@ -106,6 +106,35 @@ def test_live_vocal_render_uses_the_arranged_bus(monkeypatch, tmp_path):
     live_route._run_vocal_bus(HEX)
     assert seen.get("called") is True
     assert (tmp_path / f"{HEX}.livearr.wav").exists()
+
+
+def test_vocal_bus_is_published_atomically(monkeypatch, tmp_path):
+    """Regression: the vocal-bus rendered straight to its SERVED path, so a poll that
+    arrived mid-render served a still-growing file -> 'Too much data for declared
+    Content-Length', the browser's decodeAudioData failed, and the Play button never
+    became ready (hit on a freshly-rendered regenerate take). The render must target a
+    temp path and be published atomically, so the served path only ever appears complete."""
+    _use_live_tmp(monkeypatch, tmp_path)
+    plan = MixPlan(mix_id=HEX, song1_id=HEX, song2_id=HEX, master_bpm=120.0, vocal_stretch=1.0,
+                   vocal_src=(0.0, 2.0), anchor=2.0, placements=[], s1_vocal_regions=[],
+                   take=1, notes="", source="rules")
+    (tmp_path / f"{HEX}.mixplan.json").write_text(plan.model_dump_json())
+    final = tmp_path / f"{HEX}.livearr.wav"
+
+    def fake_bus(plan_arg, song1_stems, song2_vocal, out):
+        # mid-render, the SERVED path must not exist yet — else a poll serves a partial file
+        assert out != final, "render must target a temp path, not the served path"
+        assert not final.exists()
+        # soundfile writes BY EXTENSION, so the temp must still end in .wav or the real
+        # renderer can't write it (the extension bug the fake renderer would otherwise hide)
+        assert out.suffix == ".wav", "temp must keep a .wav extension for soundfile"
+        out.write_bytes(b"RIFFfake-but-complete")
+
+    monkeypatch.setattr(live_route, "render_vocal_bus", fake_bus)
+    live_route._run_vocal_bus(HEX)
+
+    assert final.exists()  # atomically published after the render finished
+    assert not list(tmp_path.glob(f"{HEX}.livearr.tmp*"))  # no leftover temp
 from app.planner import suggest as suggest_mod
 
 

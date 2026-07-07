@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import sys
 import threading
@@ -79,14 +80,23 @@ def _mixplan_path(mix_id: str):
 def _run_vocal_bus(mix_id: str) -> None:
     """Background worker: render the arrangement's vocal layer (Song 2 placed + beat-locked +
     Song 1 contrast) as the live bus — the same vocal as the Download, so Play matches the mix."""
+    final = _vocal_bus_path(mix_id)
+    # Render here, then atomically publish. Keep the .wav extension on the temp so soundfile
+    # can still infer the format from it (it writes by extension) -> {mix}.livearr.tmp.wav.
+    tmp = final.with_name(final.stem + ".tmp" + final.suffix)
     try:
         plan = MixPlan(**json.loads(_mixplan_path(mix_id).read_text()))
         song1_stems = {"vocals": stem_path(plan.song1_id, "vocals")}  # for the contrast answer
-        render_vocal_bus(plan, song1_stems, stem_path(plan.song2_id, "vocals"), _vocal_bus_path(mix_id))
+        render_vocal_bus(plan, song1_stems, stem_path(plan.song2_id, "vocals"), tmp)
+        # Publish atomically: the SERVED path only ever appears fully written, so a poll can
+        # never catch it mid-render (which served a growing file -> Content-Length overflow ->
+        # the browser couldn't decode it -> the Play button never became ready).
+        os.replace(tmp, final)
         _vocal_jobs.pop(mix_id, None)  # readiness now inferred from the stored file
     except Exception:  # noqa: BLE001 — never leak a trace; log so a systematic bug isn't invisible
         log.exception("live-vocal render failed for %s", mix_id)
-        _vocal_bus_path(mix_id).unlink(missing_ok=True)
+        tmp.unlink(missing_ok=True)  # never leave a half-written temp behind
+        final.unlink(missing_ok=True)
         _vocal_jobs[mix_id] = ("error", "Couldn't prepare the live vocals.")
 
 
