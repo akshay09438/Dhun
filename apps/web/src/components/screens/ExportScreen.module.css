@@ -88,3 +88,24 @@
   color: var(--w45);
   margin-top: 10px;
 }
+
+@media (max-width: 900px) {
+  .explain,
+  .linkrow,
+  .note {
+    font-size: 14px;
+  }
+  .linkrow {
+    padding: 15px 2px; /* taller tap rows */
+  }
+  .stageMid {
+    margin: 20px 0 0; /* flow instead of centering in a fixed frame */
+  }
+  .footerLinks {
+    margin-top: 24px;
+  }
+  .textLink {
+    font-size: 13px;
+    padding: 6px 0;
+  }
+}

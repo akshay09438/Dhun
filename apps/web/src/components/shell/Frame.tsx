@@ -46,7 +46,9 @@ export default function Frame({
               ))}
             </nav>
           </header>
-          <div className="body">{children}</div>
+          <div className="body" data-screen={screen}>
+            {children}
+          </div>
         </div>
       </div>
     </div>

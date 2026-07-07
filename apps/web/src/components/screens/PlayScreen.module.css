@@ -306,3 +306,119 @@
   color: var(--w40);
   cursor: default;
 }
+
+/* ---- phone + tablet-portrait ---- */
+@media (max-width: 900px) {
+  /* Console: the stage already shows the title, so hide the duplicate here and reorder
+     so the steering controls lead and the chat log trails (it's feedback, not primary). */
+  .mixTitle {
+    display: none;
+  }
+  .consoleHead {
+    order: 0;
+  }
+  .ctlLabel {
+    order: 1;
+  }
+  .parts {
+    order: 2;
+    gap: 9px;
+  }
+  .moves {
+    order: 3;
+    gap: 9px;
+  }
+  .cmdbar {
+    order: 4;
+    margin-top: 14px;
+    padding: 6px 6px 6px 16px;
+  }
+  .feed {
+    order: 5;
+    flex: none;
+    max-height: 38vh;
+    margin: 16px 0 0;
+  }
+
+  /* Touch targets: >=44px, readable type, 16px input (stops iOS zoom-on-focus). */
+  .part,
+  .partOff,
+  .chip,
+  .chipHot {
+    min-height: 44px;
+    padding: 10px 15px;
+    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .nextSong {
+    min-height: 36px;
+    padding: 8px 14px;
+    font-size: 11px;
+  }
+  .cmdbar input {
+    font-size: 16px;
+  }
+  .send {
+    width: 44px;
+    height: 44px;
+    font-size: 15px;
+  }
+  .feedHint,
+  .userLine,
+  .sysLine {
+    font-size: 14px;
+  }
+
+  /* Stage: inline the LIVE badge, bigger transport, scrubber on its own full-width row. */
+  .live {
+    position: static;
+    margin: 0 0 10px;
+  }
+  .stageTitle {
+    font-size: 28px;
+    max-width: none;
+    white-space: normal;
+  }
+  .lanes {
+    margin: 18px 0;
+    gap: 12px;
+  }
+  .lanebars {
+    height: 44px;
+  }
+  .transport {
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-top: 18px;
+  }
+  .playbtn {
+    width: 54px;
+    height: 54px;
+    font-size: 17px;
+  }
+  .time {
+    order: 2;
+    font-size: 13px;
+  }
+  .regen {
+    order: 3;
+    padding: 10px 0;
+    font-size: 12px;
+  }
+  .exportlink {
+    order: 4;
+    padding: 10px 0;
+    font-size: 12px;
+  }
+  .scrub {
+    order: 5;
+    flex: 1 1 100%; /* full-width seek row — easy to drag on touch */
+    min-height: 44px;
+  }
+  .knob {
+    opacity: 1; /* no hover on touch — always show the handle */
+    width: 15px;
+    height: 15px;
+  }
+}

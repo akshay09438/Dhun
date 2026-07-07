@@ -196,3 +196,99 @@ body {
   outline: 2px solid var(--violet);
   outline-offset: 2px;
 }
+
+/* ============================================================================
+   Responsive: phone + tablet-portrait (< 900px).
+   Above this width the approved 1280x800 framed/scaled desktop design is intact.
+   Below it, we DROP the fixed scaled canvas and become a fluid, stacked,
+   scrollable app that uses real pixels (no shrink-to-fit), with touch-sized
+   controls. The JS still sets --s, but `transform: none` here ignores it.
+   ============================================================================ */
+@media (max-width: 900px) {
+  html,
+  body {
+    overflow: auto; /* the desktop locks scroll; mobile must scroll */
+    height: auto;
+    min-height: 100%;
+  }
+  body {
+    overscroll-behavior-y: contain; /* no accidental pull-to-refresh */
+  }
+  button,
+  a,
+  input {
+    touch-action: manipulation; /* kill the 300ms tap delay */
+  }
+
+  .pageWrap {
+    position: static;
+    overflow: visible;
+  }
+  .scaler {
+    position: static;
+    left: auto;
+    top: auto;
+    width: 100%;
+    height: auto;
+    transform: none; /* real pixels — no more 29% shrink */
+  }
+  .frame {
+    width: 100%;
+    height: auto;
+    min-height: 100dvh; /* dvh, not vh, for mobile browser chrome */
+  }
+
+  .topbar {
+    padding: 14px 16px;
+  }
+  .steps-nav {
+    gap: 1px;
+    padding: 2px;
+  }
+  .steps-nav span {
+    padding: 6px 10px;
+    font-size: 10px;
+  }
+
+  /* stack the console over the stage */
+  .body {
+    flex-direction: column;
+    min-height: 0;
+  }
+  .console {
+    flex: 0 0 auto;
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--b10);
+    padding: 22px 16px;
+    min-height: 0;
+  }
+  .stage {
+    flex: 0 0 auto;
+    width: 100%;
+    padding: 24px 16px 28px;
+    min-height: 0;
+  }
+
+  /* On Play, the title + transport (Stage) should lead; the steering console
+     follows. On the other screens the console (the primary action) stays first. */
+  .body[data-screen="play"] .stage {
+    order: -1;
+    border-bottom: 1px solid var(--b10);
+  }
+
+  .title {
+    font-size: 27px;
+    margin-bottom: 18px;
+  }
+}
+
+/* Narrow phones: hide the passive 4-step nav (no room) and ease type down. */
+@media (max-width: 480px) {
+  .steps-nav {
+    display: none;
+  }
+  .topbar {
+    padding: 14px 16px;
+  }
+}

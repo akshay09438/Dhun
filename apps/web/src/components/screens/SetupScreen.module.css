@@ -141,3 +141,25 @@
   margin: 26px 0 auto;
   color: var(--text);
 }
+
+@media (max-width: 900px) {
+  .songName {
+    max-width: none;
+    font-size: 18px;
+  }
+  /* the stage is stacked below now — flow naturally instead of centering in a fixed frame */
+  .tiles {
+    margin: 4px 0 0;
+    gap: 16px;
+  }
+  .tile {
+    width: 44%;
+    max-width: 150px;
+    height: auto;
+    aspect-ratio: 1 / 1;
+  }
+  .tagline {
+    margin: 20px 0 0;
+    font-size: 20px;
+  }
+}

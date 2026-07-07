@@ -81,6 +81,26 @@
   text-transform: uppercase;
 }
 
+@media (max-width: 900px) {
+  .step {
+    font-size: 14px;
+  }
+  .genStage {
+    min-height: 46vh; /* keep the pulsing ring pleasantly centered in the stacked layout */
+  }
+  .ring {
+    width: 150px;
+    height: 150px;
+  }
+  .core {
+    width: 58px;
+    height: 58px;
+  }
+  .progress {
+    width: 150px;
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .ring {
     animation: pulse 2s ease-in-out infinite;
