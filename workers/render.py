@@ -12,7 +12,8 @@ The M3 arrangement (the brain plans, the engine executes):
   2. Song 2's chosen vocal slice, time-stretched with FFmpeg `atempo` to Song 1's
      tempo (pitch preserved), faded at both edges so its entry and exit never click.
   3. The vocal is laid in at the anchor (a downbeat of Song 1); with beat_breath,
-     Song 1's beat is silenced for one bar right before it, for a punchy re-entry.
+     Song 1's beat is ducked (to _BREATH_DUCK, never silenced) for one bar right
+     before it, for a punchy — but never gappy — re-entry.
   4. Peak-normalize to -1 dBFS with a hard safety ceiling so the master never clips.
 """
 
@@ -156,6 +157,13 @@ def _vocal_take_warped(src: Path, warp: list) -> np.ndarray:
     return out[:total]
 
 
+def _hold(buf: np.ndarray, need: int) -> np.ndarray:
+    """Extend a stereo buffer with silence so it can hold audio out to `need` samples."""
+    if need > len(buf):
+        return np.vstack([buf, np.zeros((need - len(buf), 2), dtype=np.float32)])
+    return buf
+
+
 def _sum_stems(stem_paths: list[Path]) -> np.ndarray:
     """Sum stems into one bed, padding shorter ones with silence."""
     beds = [_decode(p) for p in stem_paths]
@@ -222,11 +230,6 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
         raise RenderError("plan has a non-positive tempo")
     bed = _sum_stems([song1_stems["drums"], song1_stems["bass"], song1_stems["other"]])
     bar = int((60.0 / plan.master_bpm) * 4 * SR)
-
-    def _hold(buf: np.ndarray, need: int) -> np.ndarray:
-        if need > len(buf):  # extend the bed with silence so it can hold this audio
-            return np.vstack([buf, np.zeros((need - len(buf), 2), dtype=np.float32)])
-        return buf
 
     for p in _placements_of(plan):
         warp = getattr(p, "warp", None)

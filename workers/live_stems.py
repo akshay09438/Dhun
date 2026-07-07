@@ -27,38 +27,12 @@ from workers.render import (  # reuse the single source of truth for vocal place
     SR,
     RenderError,
     _CEILING,
-    _decode,
     _edge_fade,
+    _hold,
     _placements_of,
     _vocal_take,
     _vocal_take_warped,
 )
-
-
-def _hold(buf: np.ndarray, need: int) -> np.ndarray:
-    """Extend the buffer with silence so it can hold audio out to `need` samples."""
-    if need > len(buf):
-        return np.vstack([buf, np.zeros((need - len(buf), 2), dtype=np.float32)])
-    return buf
-
-
-def render_full_vocal(song2_vocal: Path, stretch: float, out_path: Path) -> Path:
-    """Song 2's WHOLE vocal, tempo-matched to Song 1 (one global stretch), from t=0 — a
-    CONTINUOUS vocal the live player can bring in/out anywhere, for as long as Song 2 sings.
-
-    This is the live 'Vocals' part: unlike the sparse arranged bus (`render_vocal_bus`, used
-    for the Download's arc), it plays Song 2's vocal continuously so 'bring the vocal in' works
-    at any moment. It's a steerable approximation — a single global atempo (not the per-bar
-    beat-lock), which the founder accepted for live steering; the Download keeps the locked arc.
-    Level is ratio 1.0 (sits with the raw stems, like the arranged bus); only a safety clip.
-    """
-    dur = len(_decode(song2_vocal)) / SR  # the vocal's own length, before stretch
-    voc = _edge_fade(_vocal_take(song2_vocal, 0.0, dur, stretch)) if dur > 0 else np.zeros((0, 2), np.float32)
-    np.clip(voc, -_CEILING, _CEILING, out=voc)
-    if len(voc) == 0:
-        voc = np.zeros((1, 2), dtype=np.float32)
-    sf.write(out_path, voc, SR, subtype="PCM_16")
-    return out_path
 
 
 def render_vocal_bus(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,

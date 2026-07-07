@@ -10,7 +10,7 @@ The rest of what the app does: two chosen songs → **Make my mix** → a "Study
 
 ## The core value, in one sentence
 
-A person who can't DJ uploads two songs, and gets back a mix that sounds like a real DJ made it — then reshapes it with plain words.
+A person who can't DJ picks two songs, and gets back a mix that sounds like a real DJ made it — then reshapes it with plain words.
 
 ## Who it's for
 
@@ -18,19 +18,19 @@ Casual music fans and creators who can't DJ but want to make good-sounding mashu
 
 ## The V1 decisions (frozen)
 
-| Decision                | V1 choice                                                                  |
-| ----------------------- | -------------------------------------------------------------------------- |
-| Who it's for            | Casual creators / fans                                                     |
-| Song source             | **Uploads only** ("search any song" is the V2 north star)                  |
-| Core loop               | Upload 2 songs → DJ-style mix → steer / regenerate → export                |
-| Feature 2               | Lean live commands **+ regenerate**; energy moves only                     |
-| Live tempo (BPM) change | **V2 stretch goal** (energy-up is V1; changing song speed live is later)   |
-| Music                   | Western + Indian (Indian pairs need extra hand-checking — weaker analysis) |
-| Success bar             | ~50 real casual creators clearly feel "I made a real mix by describing it" |
+| Decision                | V1 choice                                                                                                                                             |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Who it's for            | Casual creators / fans                                                                                                                                |
+| Song source             | **Curated catalog (pick, don't upload)** — pivoted 2026-07-07; supersedes the earlier "uploads only". ("Search any song" is still the V2 north star.) |
+| Core loop               | Pick 2 catalog songs → DJ-style mix → steer / regenerate → export                                                                                     |
+| Feature 2               | Lean live commands **+ regenerate**; energy moves only                                                                                                |
+| Live tempo (BPM) change | **V2 stretch goal** (energy-up is V1; changing song speed live is later)                                                                              |
+| Music                   | Western + Indian (Indian pairs need extra hand-checking — weaker analysis)                                                                            |
+| Success bar             | ~50 real casual creators clearly feel "I made a real mix by describing it"                                                                            |
 
 ## The two features (frozen scope)
 
-1. **The Mix (offline):** two uploads — Song 1 (beat) + Song 2 (vocals) — become one finished, continuous track with Song 2's vocals arranged _like a DJ_ over Song 1's instrumental (vocals enter on drops/choruses, the beat sometimes drops out for a breath, Song 1's own vocal sometimes kept for contrast, everything on the beat). Not a flat paste.
+1. **The Mix (offline):** two picked catalog songs — Song 1 (beat) + Song 2 (vocals) — become one finished, continuous track with Song 2's vocals arranged _like a DJ_ over Song 1's instrumental (vocals enter on drops/choruses, the beat sometimes drops out for a breath, Song 1's own vocal sometimes kept for contrast, everything on the beat). Not a flat paste.
 2. **Instant Changes (live) + Regenerate:** while the mix plays, short typed commands land on the next beat; a Regenerate button produces a different valid take.
 
 ---
@@ -66,7 +66,7 @@ Casual music fans and creators who can't DJ but want to make good-sounding mashu
 ## Global
 
 - No real accounts in V1 (a stub at most).
-- Nothing is fetched from outside — only the two uploaded songs' own parts, rearranged on the beat.
+- Nothing is fetched from outside — only the two chosen songs' own parts, rearranged on the beat.
 
 ---
 

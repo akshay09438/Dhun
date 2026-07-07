@@ -34,7 +34,7 @@ def best_stretch(master_bpm: float, source_bpm: float) -> tuple[float, bool]:
 
     Folds octaves (half/double-time) so a source the analyzer read at 2x or 0.5x
     still matches — we take the candidate closest to 1.0 (the least stretch). Safe
-    when within ±8%.
+    when within the SAFE_STRETCH band (±11%; see the constant for the history).
     """
     if source_bpm <= 0 or master_bpm <= 0:
         return 1.0, False
@@ -110,6 +110,15 @@ def arc_anchors(anchors_ranked: list[float], track_end: float,
     return sorted(set(picks))
 
 
+def _snap_and_cap(a2: TrackAnalysis, s: float, e: float) -> tuple[float, float]:
+    """Snap a slice start to the nearest Song-2 downbeat, then cap its length to
+    MAX_VOCAL_SECS (and floor it to MIN). Snap-then-cap is the single ordering used
+    everywhere a slice is finalized, so no two paths produce different lengths."""
+    start = min(a2.downbeats, key=lambda d: abs(d - s)) if a2.downbeats else s
+    end = min(e, start + MAX_VOCAL_SECS)
+    return round(start, 3), round(max(end, start + MIN_VOCAL_SECS), 3)
+
+
 def best_vocal_slice(a2: TrackAnalysis) -> tuple[float, float]:
     """The slice of Song 2's vocal to lay on the drop: its strongest (longest) sung
     stretch, snapped to start on a downbeat ('the one'), capped to a punchy length.
@@ -127,11 +136,7 @@ def best_vocal_slice(a2: TrackAnalysis) -> tuple[float, float]:
             start, end = span / 3, span / 3 + MAX_VOCAL_SECS
         else:
             start, end = 0.0, MAX_VOCAL_SECS
-    end = min(end, start + MAX_VOCAL_SECS)
-    if a2.downbeats:
-        start = min(a2.downbeats, key=lambda d: abs(d - start))
-    end = max(end, start + MIN_VOCAL_SECS)
-    return round(start, 3), round(end, 3)
+    return _snap_and_cap(a2, start, end)  # single source of truth for snap-to-downbeat + cap
 
 
 def _parse_camelot(code: str) -> tuple[int, str]:
@@ -190,12 +195,6 @@ def legal_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
 _SUNG_LABELS = {"verse", "chorus", "prechorus", "pre-chorus", "bridge", "solo", "hook"}
 
 
-def _snap_and_cap(a2: TrackAnalysis, s: float, e: float) -> tuple[float, float]:
-    start = min(a2.downbeats, key=lambda d: abs(d - s)) if a2.downbeats else s
-    end = min(e, start + MAX_VOCAL_SECS)
-    return round(start, 3), round(max(end, start + MIN_VOCAL_SECS), 3)
-
-
 def vocal_slices(a2: TrackAnalysis, limit: int = 4) -> list[tuple[float, float]]:
     """Song 2's strongest sung stretches — longest first, snapped to a downbeat, each
     capped to MAX_VOCAL_SECS.
@@ -219,14 +218,6 @@ def vocal_slices(a2: TrackAnalysis, limit: int = 4) -> list[tuple[float, float]]
     if not regions:
         return [best_vocal_slice(a2)]
     return [_snap_and_cap(a2, s, e) for s, e in regions]
-
-
-def section_at(a1: TrackAnalysis, t: float) -> str:
-    """The Song-1 section label containing time t (or '' if unknown)."""
-    for s in a1.sections:
-        if s.start <= t < s.end:
-            return s.label
-    return ""
 
 
 def arrangement_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
