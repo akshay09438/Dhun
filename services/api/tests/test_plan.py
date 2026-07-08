@@ -352,5 +352,26 @@ def test_both_vocals_trade_when_song1_has_a_real_passage(monkeypatch):
     assert any(60.0 <= s and e <= 92.0 and e - s >= 10.0 for s, e in plan.s1_vocal_regions)  # its real passage
 
 
+def test_throws_echo_on_every_safe_drop(monkeypatch):
+    """Step 2: the vocal rings out with an echo throw on EVERY big drop (not just the climax) —
+    wherever the echo tail is clear of the next lead vocal."""
+    from app.models import Placement
+    placements = [Placement(anchor=10.0, vocal_src=(0.0, 8.0)),
+                  Placement(anchor=100.0, vocal_src=(0.0, 8.0)),
+                  Placement(anchor=200.0, vocal_src=(0.0, 8.0))]  # far apart, tails clear
+    out = planner._produce_drops(placements, [10.0, 100.0, 200.0], [], 1.0, 120.0)
+    assert sum(1 for p in out if p.echo) >= 2  # more than just the climax throws now
+
+
+def test_throw_skipped_when_next_drop_is_within_the_echo_tail(monkeypatch):
+    """R1 safety generalised: don't throw an echo whose tail would ring over the NEXT vocal."""
+    from app.models import Placement
+    p = [Placement(anchor=10.0, vocal_src=(0.0, 8.0)),   # dry end 18
+         Placement(anchor=19.0, vocal_src=(0.0, 8.0))]   # next entry 19 — inside the echo tail
+    out = planner._produce_drops(p, [10.0, 19.0], [], 1.0, 120.0)
+    assert out[0].echo is False   # its echo tail would ring over the next drop's vocal -> suppressed
+    assert out[1].echo is True    # the last one is clear
+
+
 def test_extract_json_tolerates_prose():
     assert llm.extract_json('sure!\n{"placements": []}\nthanks') == {"placements": []}

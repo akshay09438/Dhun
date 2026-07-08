@@ -110,25 +110,31 @@ def _echo_tail_secs(bpm: float) -> float:
 def _produce_drops(placements: list[Placement], drops: list[float],
                    s1_regions: list[tuple[float, float]], stretch: float, bpm: float) -> list[Placement]:
     """Mark the placements that land on a real house DROP as PRODUCED: a multi-bar filter+volume
-    BUILD into the entry (so the drop is felt coming), and an ECHO throw on the climactic (last)
-    drop so it rings out. The engine executes both; here we only decide where. FX-only and
+    BUILD into the entry (so the drop is felt coming), and an ECHO throw so the vocal rings out on
+    EVERY big drop (Step 2). The engine executes both; here we only decide where. FX-only and
     additive — a placement not on a drop is untouched (stays a plain, valid entry)."""
     if not placements or not drops:
         return placements
-    on_drop = [p for p in placements if any(abs(p.anchor - d) <= 0.06 for d in drops)]
-    if not on_drop:
-        return placements
-    for p in on_drop:
-        p.build_bars = _BUILD_BARS
-        p.fx = None  # the multi-bar build supersedes the one-bar sweep on this entry
-    # Echo ONLY the final placement, only if it's a drop, AND only if no Song 1 contrast vocal
-    # rings within the echo tail after it — so the echo tail can never overlap a later lead vocal (R1).
-    last = placements[-1]
-    if any(abs(last.anchor - d) <= 0.06 for d in drops):
-        last_end = fence.placement_end(last.anchor, last.vocal_src, stretch, getattr(last, "warp", None))
-        tail = _echo_tail_secs(bpm)
-        if not any(last_end - 1e-6 <= s < last_end + tail for s, _e in s1_regions):
-            last.echo = True
+    ordered = sorted(placements, key=lambda p: p.anchor)
+    is_drop = lambda p: any(abs(p.anchor - d) <= 0.06 for d in drops)
+    for p in ordered:
+        if is_drop(p):
+            p.build_bars = _BUILD_BARS
+            p.fx = None  # the multi-bar build supersedes the one-bar sweep on this entry
+    # Throw an echo on each drop, BUT only where the echo tail is clear of the next lead vocal —
+    # neither a Song 1 lead/lick nor the next Song 2 placement may start inside it (R1: the echo
+    # tail must never ring over a later lead, a breach the referee can't see — placement_end has
+    # no echo term). This generalises the old climax-only guard to every drop.
+    tail = _echo_tail_secs(bpm)
+    for i, p in enumerate(ordered):
+        if not is_drop(p):
+            continue
+        p_end = fence.placement_end(p.anchor, p.vocal_src, stretch, getattr(p, "warp", None))
+        next_anchor = ordered[i + 1].anchor if i + 1 < len(ordered) else float("inf")
+        s1_in_tail = any(p_end - 1e-6 <= s < p_end + tail for s, _e in s1_regions)
+        s2_in_tail = next_anchor < p_end + tail - 1e-6
+        if not s1_in_tail and not s2_in_tail:
+            p.echo = True
     return placements
 
 

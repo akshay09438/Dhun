@@ -69,7 +69,9 @@ _S1_STEMS = ("drums", "bass", "other")
 # m5f.1: natural hand-off — Song 1's vocal runs a SHORT bound past a drop so its OWN natural
 #        phrase-end decay blends into Song 2 (no imposed fade); Song 2 enters full. R1 allows it.
 # m5f.2: let the outgoing vocal RING longer (0.3s -> 1.2s) so "…alone…" decays fully under Song 2.
-ENGINE_VERSION = "m5f.2"
+# m5g.1: Step 2 throws — echo the vocal on EVERY safe drop (not just the climax), where the echo
+#        tail is clear of the next lead vocal (plan._produce_drops; reuses the render echo engine).
+ENGINE_VERSION = "m5g.1"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.
