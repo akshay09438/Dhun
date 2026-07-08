@@ -82,6 +82,23 @@ Every transition — vocal in, vocal out, accent in — lands on the house track
 
 ---
 
+## 2.6 What the FIRST real render taught us (founder ear-test, 2026-07-08)
+
+The first energy-synced render (Father Ocean × Der Lagi Lekin) proved the app can FIND and HIT the house drops — the vocal landed on all three. But the founder's ears surfaced three things the recipe must now make explicit. These reprioritise the build and **correct the base architecture**:
+
+1. **Clean vocal in/out — land in the GAPS between phrases, NEVER mid-word.** Today a slice starts/ends on a downbeat (and, when vocal-regions are missing — as they were for Der Lagi — on a crude section edge), so it cuts between words: "dirty." Slices must begin and end where the singer is actually silent (phrase boundaries), with fades that hide the seam. This is an "ears" upgrade (real vocal-phrase detection) + edge craft.
+
+2. **USE BOTH vocals — do NOT strip Father Ocean's own vocal, especially into its drop.** ⚠️ **This corrects the base architecture.** Father Ocean is an EDM track WITH a vocal that builds into its drop ("some vocal comes, then the drop comes"). Stripping it and laying only the Bollywood vocal over an instrumental **loses the song**. The right model: the **house track plays largely AS ITSELF** (its own vocal + build + drop), and the **Bollywood vocal is WOVEN IN and TRADES with it** (one lead at a time — iron rule 2). At Father Ocean's own drop, keep Father Ocean's vocal; bring the Bollywood vocal in at OTHER moments (or as a chop). So Song 1's vocal is a **real, central part**, not stripped — the engine's current "instrumental bed + one guest vocal" is wrong for this genre.
+
+3. **Real ENERGY DYNAMICS — builds, risers, ups and downs — not a flat beat with 3 vocal drops.** The mix must climb: filter opens, energy rises into the drop, breakdown, slam back. A constant beat with three placements reads as "simple." This is the build/filter craft.
+
+**What was fair to judge in the Phase-A render, and what was not:**
+
+- ✅ FAIR: did the vocal hit the drop? (yes) — and the honest gut check "does this feel like a real mix?" (not yet — fairly).
+- ⏳ NOT YET BUILT (not failures — the next steps): clean word-boundary edits, both-vocals weaving, energy dynamics/builds, vocal chops, and Tere Bina.
+
+---
+
 ## 3. What "the app listens to the music" actually means
 
 The founder's push — _"the app has to listen to the music"_ — resolves like this: **the app's own perception is the listening.** It already hears the beat, the key, and the loudness of every bar. What it can't yet do is name the **builds, the drops, and the vocal's peak moments** — and that naming is exactly what powers energy-sync (R1). So "listening" is a buildable feature (energy detection), not magic. Claude plans over what the app hears; the founder's ears are the final judge.
