@@ -164,6 +164,28 @@ def test_build_bed_climbs_muffled_to_open():
     assert hf((0, q)) < hf((len(out) - q, len(out)))
 
 
+def test_echo_throws_only_the_last_segment_not_the_whole_vocal():
+    """A real throw echoes only the LAST word(s) so it rings out AFTER the line ends — it must NOT
+    stack echoes across the whole vocal (which smears repeats throughout the lyrics)."""
+    sr = render.SR
+    voc = np.ones((3 * sr, 2), dtype=np.float32) * 0.3  # a 3s vocal at a steady level
+    out = render._echo(voc, 120.0)
+    # the FIRST part of the line is only the dry vocal — no stacked echoes making it louder
+    assert float(np.max(np.abs(out[: int(1.5 * sr)]))) < 0.3 + 0.02
+    # ...but the echo rings out AFTER the vocal ends (past 3s)
+    assert float(np.max(np.abs(out[3 * sr:]))) > 1e-3
+
+
+def test_echo_tail_length_stays_bounded():
+    """SAFETY: the throw must not ring LONGER than _ECHO_TAPS delays past the vocal — the R1
+    echo-tail guard (in plan.py) depends on this bound."""
+    sr = render.SR
+    voc = np.ones((2 * sr, 2), dtype=np.float32) * 0.3
+    out = render._echo(voc, 120.0)
+    delay = int((60.0 / 120.0) * render._ECHO_BEATS * sr)
+    assert len(out) <= 2 * sr + delay * render._ECHO_TAPS + 2  # bounded to taps*delay past the vocal
+
+
 def test_echo_adds_a_decaying_tail():
     """The vocal ECHO throw: the vocal rings out with decaying repeats into the drop."""
     sr = render.SR

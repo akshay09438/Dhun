@@ -44,6 +44,7 @@ _BUILD_GAIN_LO = 0.55  # a produced-drop BUILD starts at this volume and rises t
 _ECHO_BEATS = 0.75  # produced-drop ECHO delay, in beats (a dotted-eighth — the classic vocal throw)
 _ECHO_FEEDBACK = 0.42  # each echo repeat is this fraction of the previous (decaying tail)
 _ECHO_TAPS = 4  # how many decaying repeats the echo throws
+_ECHO_SEG_SECS = 1.2  # only the LAST ~1.2s (the last word or two) is thrown, not the whole vocal
 _FFMPEG_TIMEOUT = 180
 # Bound decoded audio so a tiny-but-hours-long low-bitrate file can't balloon in
 # memory (the upload cap is on bytes, not duration). A decoded stereo minute is
@@ -225,20 +226,24 @@ def _build_bed(seg: np.ndarray, sr: int) -> np.ndarray:
 
 
 def _echo(voc: np.ndarray, bpm: float) -> np.ndarray:
-    """Ring the vocal out with a decaying ECHO throw (delay ~a dotted-eighth of the beat) so it
-    dissolves into the drop instead of stopping dead — the classic produced-vocal sound. The dry
-    vocal is already edge-faded before this, so every delayed copy is faded too (no clicks); the
-    added tail lengthens the buffer. Peaks fold into the downstream normalize + clip guard."""
+    """Throw a decaying ECHO of only the LAST word or two of the vocal (delay ~a dotted-eighth of
+    the beat), so the repeats ring out AFTER the line ends — the classic vocal throw — rather than
+    smearing echoes across the whole lyric. The dry vocal plays through untouched; only its tail
+    segment is repeated, decaying, past the end. The dry vocal is already edge-faded, so the
+    repeated segment is faded too (no clicks). Peaks fold into the downstream normalize + clip
+    guard; the total tail past the vocal stays delay*_ECHO_TAPS (the R1 echo-tail guard bound)."""
     n = len(voc)
     if bpm <= 0 or n == 0:
         return voc
     delay = max(1, int((60.0 / bpm) * _ECHO_BEATS * SR))
+    seg_len = min(int(_ECHO_SEG_SECS * SR), n)  # the last word(s) — the only part that echoes
+    seg = voc[n - seg_len:]
     out = np.zeros((n + delay * _ECHO_TAPS, 2), dtype=np.float32)
-    out[:n] += voc
+    out[:n] += voc  # the dry vocal, unchanged — no echo THROUGHOUT the line
     g = _ECHO_FEEDBACK
     for k in range(1, _ECHO_TAPS + 1):
-        off = delay * k
-        out[off:off + n] += voc * g
+        off = (n - seg_len) + delay * k  # each repeat of the last word, a beat further out, decaying
+        out[off:off + seg_len] += seg * g
         g *= _ECHO_FEEDBACK
     return _guard_duration(out)  # a tiny/octave-halved bpm can't balloon the tail buffer
 

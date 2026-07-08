@@ -71,7 +71,9 @@ _S1_STEMS = ("drums", "bass", "other")
 # m5f.2: let the outgoing vocal RING longer (0.3s -> 1.2s) so "…alone…" decays fully under Song 2.
 # m5g.1: Step 2 throws — echo the vocal on EVERY safe drop (not just the climax), where the echo
 #        tail is clear of the next lead vocal (plan._produce_drops; reuses the render echo engine).
-ENGINE_VERSION = "m5g.1"
+# m5g.2: proper throw — echo only the LAST word or two (render._echo), so it rings out AFTER the
+#        line ends instead of smearing echoes across the whole lyric. Echo tail length unchanged.
+ENGINE_VERSION = "m5g.2"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.
