@@ -92,6 +92,20 @@ The first energy-synced render (Father Ocean × Der Lagi Lekin) proved the app c
 
 3. **Real ENERGY DYNAMICS — builds, risers, ups and downs — not a flat beat with 3 vocal drops.** The mix must climb: filter opens, energy rises into the drop, breakdown, slam back. A constant beat with three placements reads as "simple." This is the build/filter craft.
 
+4. **PRODUCE, don't assemble — perform the mix with all four stems + FX.** ⭐ The biggest note: the app must _make mood music_, not lay a vocal on a beat. It should **play with all four stems** (drums/bass/melody/vocals) against each other over the song — drop to just the beat, pull the bass, bring the melody up — **throw FX** (echo/delay throwbacks on a vocal tail into the drop, reverb, filter sweeps), and **ride the levels** (louden a hook line or a beat for impact). This is exactly the moves the LIVE player already lets a human do by hand (mute/solo/duck/beat-up/fade) — now the arrangement must do them AUTOMATICALLY, plus FX, across the whole song. The brain decides the moves (JSON), the deterministic engine executes the DSP (architecture unchanged; the LLM never touches audio). Without this the mix is "just very plain."
+
+### The moves palette (what "producing" means, concretely)
+
+Each is a discrete, buildable engine capability (all FFmpeg/numpy — no new libraries), decided by the brain and executed deterministically:
+
+- **Both-vocals weave** — Song 1 and Song 2 vocals trade the lead (one at a time), Father Ocean's vocal kept into its own drop.
+- **Clean vocal edits** — enter/leave in the phrase gaps, fades hide the seam.
+- **Vocal FX** — echo/delay throwbacks (esp. the last word before a drop), reverb tails.
+- **Filter builds & sweeps** — lowpass opening up into a drop, risers, the climb.
+- **Stem dynamics (auto-performed)** — drop-to-just-the-beat, pull/return the bass, melody up/down, beat-up — the live moves, automated at musical moments.
+- **Level rides / emphasis** — louden a hook line or a beat for impact.
+- **Vocal chops / hums on the drop** — hook fragments placed rhythmically ("dum da ra dum").
+
 **What was fair to judge in the Phase-A render, and what was not:**
 
 - ✅ FAIR: did the vocal hit the drop? (yes) — and the honest gut check "does this feel like a real mix?" (not yet — fairly).
