@@ -34,14 +34,17 @@ When `bed_stretch ≠ 1.0`, build a **retimed copy** of Song 1's `TrackAnalysis`
 
 ## The engine (`workers/render.py`, **dangerous surface**) — pre-stretch Song 1's stems
 
-The whole change is one gated step at the top of `render_mix`: when `bed_stretch ≠ 1.0`, `atempo`-stretch each Song-1 stem (drums, bass, other, and Song 1's vocals) by `bed_stretch` into temp files, and run the **existing render logic verbatim** on those stretched stems. After stretching, the stems sit at tempo `T` on the retimed grid — exactly the timeline the plan's anchors, warp and `s1_vocal_regions` are already expressed in — so every downstream slice, warp and placement is unchanged. `bar` already derives from `plan.master_bpm` (= `T`). Reuses the existing `atempo` path (a small `ratio` on the decode step); no duplicated DSP, no new imports. `bed_stretch == 1.0` skips the step entirely → identical to today.
+The whole change is one gated step at the top of `render_mix`: when `bed_stretch` differs from 1.0, `atempo`-stretch each Song-1 stem (drums, bass, other, and Song 1's vocals) by `bed_stretch` into temp files, and run the **existing render logic verbatim** on those stretched stems. After stretching, the stems sit at tempo `T` on the retimed grid — exactly the timeline the plan's anchors, warp and `s1_vocal_regions` are already expressed in — so every downstream slice, warp and placement is unchanged. `bar` already derives from `plan.master_bpm` (= `T`). Reuses the existing `atempo` path; no duplicated DSP, no new imports. `bed_stretch == 1.0` skips the step entirely → identical to today.
+
+**The engine engages on the SAME threshold the planner and referee use** — `abs(bed_stretch − 1.0) >= 1e-6` (an adversarial-review finding, 2026-07-08: a looser engine gate than the planner/referee would leave the bed un-stretched while the plan and referee assumed the retimed grid, shipping an off-beat mix the referee couldn't see). `bed_stretch` is 4-dp rounded, so any real move is ≥ 1e-4 and exactly 1.0 is byte-identical to today.
 
 ## The referee (`app/planner/validate.py`, **dangerous surface**) — additive checks
 
 The referee still runs against the **original** `a1` (native grid), so it rescales to the plan's timeline using the plan's own `bed_stretch` — a single source of truth the engine and referee share (the `placement_end` pattern):
 
 - **B3 (safe stretch):** `vocal_stretch` in `[SAFE_STRETCH_LO, SAFE_STRETCH_HI]` (unchanged) **and** `bed_stretch` within the house bounds `[1 − HOUSE_SLOW_MAX, 1 + HOUSE_SPEED_MAX]` (new — the house's stretch must be inside its protected range, a _tighter_ bound than the vocal's).
-- **R3 (on-beat) / R7 (warp locks to grid):** compare against `a1`'s downbeats **rescaled by `1/bed_stretch`** (= `1.0`, a no-op, for every existing plan). So an entry/boundary is "on the beat" relative to the stretched grid the audio actually plays at.
+- **B3 (tempo self-consistency, new — restores referee independence):** the referee re-times off `plan.master_bpm`, so it independently checks that `plan.master_bpm ≈ a1.bpm × bed_stretch` (tol 0.1 BPM) — otherwise it would merely trust the plan field it is judging (adversarial-review finding F2). A tampered/incoherent tempo is flagged.
+- **R3 (on-beat) / R7 (warp locks to grid):** compare against `a1`'s downbeats **rescaled to `plan.master_bpm`** via `retimed_analysis(a1, plan.master_bpm)` (a no-op for every existing plan, where `master_bpm == a1.bpm`). So an entry/boundary is "on the beat" relative to the stretched grid the audio actually plays at. The referee engages this rescale on the **same `1e-6` threshold** the engine uses, so the two can never disagree about whether the grid moved.
 - **R1 (one vocal), R6 (no clip / not silent):** unchanged; R6 on the real audio is the ultimate backstop regardless of tempo.
 
 ## Data model (`app/models.py` — additive) & route
