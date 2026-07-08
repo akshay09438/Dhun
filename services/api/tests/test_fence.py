@@ -300,3 +300,77 @@ def test_warp_map_glitch_bar_falls_back_to_legacy():
     del d2[5]  # missing downbeat -> a double-length bar in the middle of the slice
     segs = fence.warp_map(d1[0], (d2[0], d2[12]), d1, d2, fence.best_stretch(122.0, 125.0)[0])
     assert segs == []  # legacy fallback, not a broken lock
+
+
+# ---------------------------------------------------------------- energy detection (Step 2)
+# Builds/drops/peaks are DERIVED from the already-cached per-bar energy curve — no re-analysis,
+# no analysis.py change. Pure arithmetic, so fast and exact.
+
+
+def test_energy_drops_finds_the_low_to_high_jump():
+    # low for 8 bars, then the beat DROPS in (high + sustained) at bar 8, back to low at 16.
+    energy = [0.25] * 8 + [0.9] * 8 + [0.25] * 8
+    downbeats = [round(i * 2.0, 3) for i in range(len(energy))]
+    drops = fence.energy_drops(energy, downbeats)
+    assert drops == [downbeats[8]]  # the onset of the drop, not every high bar
+
+
+def test_energy_drops_finds_two_drops_across_a_breakdown():
+    # drop, breakdown (low), drop again — two separate onsets.
+    energy = [0.25] * 4 + [0.9] * 6 + [0.2] * 6 + [0.95] * 6
+    downbeats = [round(i * 2.0, 3) for i in range(len(energy))]
+    drops = fence.energy_drops(energy, downbeats)
+    assert drops == [downbeats[4], downbeats[16]]
+
+
+def test_energy_drops_ignores_an_energetic_intro_with_no_rise():
+    # a track that just opens loud and stays loud has no DROP (no low->high transition).
+    energy = [0.9] * 24
+    downbeats = [round(i * 2.0, 3) for i in range(len(energy))]
+    assert fence.energy_drops(energy, downbeats) == []
+
+
+def test_energy_drops_empty_on_no_data():
+    assert fence.energy_drops([], []) == []
+
+
+def test_vocal_peaks_ranks_regions_by_loudness():
+    # Song 2's LOUDEST sung stretch should come first — that's what lands on the house drop.
+    # bars: region A (8..12) is quiet, region B (16..24) is loud.
+    energy = [0.2] * 8 + [0.3, 0.3, 0.3, 0.3] + [0.2] * 4 + [0.9] * 8 + [0.2] * 8
+    a2 = make_analysis(bpm=120.0, n_bars=32, energy=energy,
+                       vocal_regions=[(16.0, 24.0), (32.0, 48.0)])
+    peaks = fence.vocal_peaks(a2)
+    assert peaks[0][0] == 32.0  # the louder region (bars 16..23 -> 32..48s) ranks first
+
+
+def test_vocal_peaks_falls_back_to_sections_when_no_regions():
+    a2 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[], sections=[
+        Section(start=20.0, end=36.0, label="chorus"),
+        Section(start=4.0, end=20.0, label="intro"),  # never a vocal peak
+    ])
+    peaks = fence.vocal_peaks(a2)
+    assert peaks and all(s >= 20.0 for s, _ in peaks)  # the sung section, not the intro
+
+
+def test_synced_anchors_prefers_a_drop_over_a_louder_plateau_in_the_same_band():
+    # The middle third holds a real DROP (120s) AND a louder non-drop plateau anchor (100s).
+    # Energy-sync lands the vocal on the DROP, not the loud plateau (recipe R1).
+    anchors_ranked = [100.0, 40.0, 200.0]  # energy-desc; 100 is the loudest anchor
+    picks = fence.synced_anchors(anchors_ranked, drops=[120.0], track_end=240.0, count=3)
+    assert 120.0 in picks and 100.0 not in picks
+    assert len(picks) == 3 and picks[0] < 80.0 and picks[2] >= 160.0  # still spans the thirds
+
+
+def test_synced_anchors_falls_back_to_loud_anchor_when_a_band_has_no_drop():
+    # No drops at all -> behave exactly like the energy arc (one loud anchor per third).
+    picks = fence.synced_anchors([10.0, 90.0, 200.0], drops=[], track_end=240.0, count=3)
+    assert picks == [10.0, 90.0, 200.0]
+
+
+def test_synced_anchors_spans_even_when_the_only_drop_is_in_the_middle():
+    # A song whose only drop is dead-center must STILL span (fall back to loud anchors in the
+    # empty thirds), never collapse to one middle entry.
+    anchors_ranked = [16.0, 120.0, 224.0]
+    picks = fence.synced_anchors(anchors_ranked, drops=[120.0], track_end=240.0, count=3)
+    assert min(picks) < 80.0 and max(picks) >= 160.0 and 120.0 in picks

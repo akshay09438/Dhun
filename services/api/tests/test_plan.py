@@ -262,5 +262,30 @@ def test_ai_midbar_starts_still_pass_the_referee(monkeypatch):
     validate.assert_plan(plan, a1, a2)  # must NOT raise — the old code raised a R7 ValidationError
 
 
+def test_loudest_vocal_peak_lands_on_the_biggest_drop(monkeypatch):
+    """The house × Bollywood recipe's core move (R1): Song 2's most POWERFUL vocal stretch
+    should land on Song 1's biggest DROP — not wherever the rotation happens to put it."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    # Song 1: one clear, biggest drop in the final third (breakdown at bars 36-39, drop at 40).
+    energy = [0.3] * 48
+    for i in range(36, 40):
+        energy[i] = 0.2
+    for i in range(40, 48):
+        energy[i] = 0.95  # bar 40 -> 80.0s is the biggest drop
+    a1 = make_analysis(bpm=120.0, n_bars=48, energy=energy)
+    # Song 2: a LOUD vocal peak early (0-16s) and a quiet region later.
+    a2e = [0.2] * 32
+    for i in range(0, 8):
+        a2e[i] = 0.95
+    a2 = make_analysis(bpm=118.0, n_bars=32, energy=a2e,
+                       vocal_regions=[(0.0, 16.0), (40.0, 56.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
+
+    drop_place = min(plan.placements, key=lambda p: abs(p.anchor - 80.0))
+    assert abs(drop_place.anchor - 80.0) < 2.0   # a placement lands on the biggest drop
+    assert drop_place.vocal_src[0] == 0.0        # ...and it carries Song 2's loudest peak (starts at 0.0)
+
+
 def test_extract_json_tolerates_prose():
     assert llm.extract_json('sure!\n{"placements": []}\nthanks') == {"placements": []}

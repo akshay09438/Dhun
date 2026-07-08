@@ -220,6 +220,88 @@ def vocal_slices(a2: TrackAnalysis, limit: int = 4) -> list[tuple[float, float]]
     return [_snap_and_cap(a2, s, e) for s, e in regions]
 
 
+# ---------------------------------------------------------------- energy detection (Step 2)
+# The house × Bollywood recipe hinges on ENERGY SYNC: land the vocal's most powerful moment on
+# the house track's DROP. These derive builds/drops/peaks straight from the already-cached
+# per-bar energy curve — no re-analysis, no analysis.py change, works on the existing catalog.
+
+
+def energy_drops(energy_curve: list[float], downbeats: list[float],
+                 high: float = 0.6, min_rise: float = 0.15, look_back: int = 4) -> list[float]:
+    """The house track's DROP moments: downbeat times where energy jumps up (a rise of at least
+    `min_rise` over the preceding `look_back` bars) into a sustained-high stretch, after a quieter
+    run. Consecutive high bars collapse to the single onset. A track that merely opens loud and
+    stays loud has no drop (no low→high transition). Empty energy/grid → no drops."""
+    drops: list[float] = []
+    n = min(len(energy_curve), len(downbeats))
+    in_drop = False
+    for i in range(n):
+        e = energy_curve[i]
+        if e < high:
+            in_drop = False
+            continue
+        window = energy_curve[max(0, i - look_back):i]
+        rose = bool(window) and (e - sum(window) / len(window)) >= min_rise
+        if rose and not in_drop:
+            drops.append(downbeats[i])
+        in_drop = True
+    return drops
+
+
+def synced_anchors(anchors_ranked: list[float], drops: list[float], track_end: float,
+                   count: int = 3, take: int = 1) -> list[float]:
+    """Energy-synced arc: one vocal entry per third, PREFERRING a real drop in that third (so the
+    vocal lands on the house drop — recipe R1), and falling back to the loudest phrase-anchor in
+    that third when the third has no detected drop. Same whole-song span guarantee as `arc_anchors`
+    (every band gets an entry, backfilled if sparse), just drop-aware. `take` rotates the pick
+    within a band for Regenerate variety. Returns anchors in time order."""
+    if not anchors_ranked or track_end <= 0:
+        return sorted(anchors_ranked)
+    if len(anchors_ranked) <= count and not drops:
+        return sorted(anchors_ranked)
+    picks: list[float] = []
+    for i in range(count):
+        lo, hi = track_end * i / count, track_end * (i + 1) / count
+        band_drops = [d for d in drops if lo <= d < hi]  # a real drop in this third wins
+        if band_drops:
+            picks.append(band_drops[(take - 1) % len(band_drops)])
+            continue
+        band_anchors = [a for a in anchors_ranked if lo <= a < hi]  # energy-desc within the band
+        if band_anchors:
+            picks.append(band_anchors[(take - 1) % len(band_anchors)])
+    if len(picks) < count:  # sparse -> backfill the loudest unused anchor (like arc_anchors)
+        for a in anchors_ranked:
+            if a not in picks:
+                picks.append(a)
+            if len(picks) >= count:
+                break
+    return sorted(set(picks))
+
+
+def _region_energy(a2: TrackAnalysis, s: float, e: float) -> float:
+    """Mean per-bar energy of the bars inside [s, e) — how POWERFUL a sung stretch is."""
+    if not (a2.downbeats and a2.energy_curve):
+        return 0.0
+    vals = [a2.energy_curve[i] for i, d in enumerate(a2.downbeats)
+            if i < len(a2.energy_curve) and s - 1e-6 <= d < e - 1e-6]
+    return sum(vals) / len(vals) if vals else 0.0
+
+
+def vocal_peaks(a2: TrackAnalysis, limit: int = 4) -> list[tuple[float, float]]:
+    """Song 2's most POWERFUL sung stretches — loudest first, snapped to a downbeat and capped.
+    This is what lands on the house drop (recipe R1). Same fallback ladder as `vocal_slices`
+    (labelled sung sections, then a single best-guess slice) when vocal regions are missing —
+    but ranked by loudness (power), not length."""
+    regions = [(s, e) for s, e in a2.vocal_regions if e - s >= MIN_VOCAL_SECS]
+    if not regions:
+        regions = [(sec.start, sec.end) for sec in a2.sections
+                   if sec.label.lower() in _SUNG_LABELS and sec.end - sec.start >= MIN_VOCAL_SECS]
+    if not regions:
+        return [best_vocal_slice(a2)]
+    ranked = sorted(regions, key=lambda r: _region_energy(a2, r[0], r[1]), reverse=True)[:limit]
+    return [_snap_and_cap(a2, s, e) for s, e in ranked]
+
+
 def arrangement_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
     """The legal menu for a full arrangement: the M3 legal set plus ranked phrase
     anchors and the available vocal slices. Declines pass through unchanged."""
@@ -237,6 +319,8 @@ def arrangement_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
         **base,
         "anchors_ranked": anchors_ranked,
         "vocal_slices": slices,
+        "vocal_peaks": vocal_peaks(a2),  # Song 2's strongest slices, loudest first (recipe R1)
+        "drops": energy_drops(a1.energy_curve, a1.downbeats),  # the house track's real drops
         "track_end": track_end,  # the whole song's length, so the arrangement can span it
         "sections": [(s.start, s.label) for s in a1.sections],  # Song 1's shape, for the AI
     }

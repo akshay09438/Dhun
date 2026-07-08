@@ -22,17 +22,18 @@ _ENTRY_MARGIN = 1.0  # secs of beat-only breathing room between one vocal's end 
 _WINDOW_STEP = 8.0  # ~a phrase; min spare room in a region worth sliding the vocal window for regenerate variety
 
 _ARRANGE_SYSTEM = (
-    "You are a DJ arranging Song 2's vocal over Song 1's beat. From the given legal phrase "
-    "anchors (seconds) and vocal slices, choose 2-3 non-overlapping placements that shape an "
-    "arc across the WHOLE song, using track_length_seconds as your canvas. Spread the "
-    "placements over the song's thirds — one early (after an instrumental intro, not the very "
-    "first anchor), one around the middle, and one in the FINAL THIRD as the strongest entry. "
-    "Do NOT cluster them all in the middle or leave the first half or the ending empty. Leave "
-    "a stretch of just beat between entries. Set beat_breath=true before a big re-entry (a one-"
-    "bar tension dip, not silence). recommended_spread_anchors shows one good arc; you may use "
-    "or improve it. If take_number>1, choose a genuinely different arrangement. STRICT JSON "
-    'only, nothing else: '
-    '{"placements":[{"anchor":<sec>,"vocal_slice":[<start>,<end>],"beat_breath":<bool>}]}'
+    "You are a DJ arranging Song 2's vocal over Song 1's (house) beat. ENERGY SYNC is the goal: "
+    "land the vocal's most POWERFUL part on the house track's DROP (see house_drops_seconds), and "
+    "let softer parts ride the quieter build-ups. From the given legal phrase anchors (seconds) and "
+    "vocal slices, choose 2-3 non-overlapping placements that shape an arc across the WHOLE song, "
+    "using track_length_seconds as your canvas. Prefer anchoring entries ON a house drop. Spread the "
+    "placements over the song's thirds — one early (after an instrumental intro, not the very first "
+    "anchor), one around the middle, and one in the FINAL THIRD as the strongest entry. Do NOT "
+    "cluster them all in the middle or leave the first half or the ending empty. Leave a stretch of "
+    "just beat between entries. Set beat_breath=true before a big re-entry (a one-bar tension dip, "
+    "not silence). recommended_spread_anchors shows one good energy-synced arc; you may use or "
+    "improve it. If take_number>1, choose a genuinely different arrangement. STRICT JSON only, "
+    'nothing else: {"placements":[{"anchor":<sec>,"vocal_slice":[<start>,<end>],"beat_breath":<bool>}]}'
 )
 
 
@@ -87,24 +88,36 @@ def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement],
 
 
 def _default_arrangement(opts: dict, take: int) -> list[Placement]:
-    """Deterministic arrangement: 2-3 anchors spread across the song's thirds (an energy
-    ARC, not a cluster — Handbook H1/H2), each given a vocal slice trimmed to fit before
-    the next entry, rotated by `take` for regenerate variety. The first placement never
-    breathes; later ones do."""
+    """Deterministic ENERGY-SYNCED arrangement: 2-3 anchors spread across the song's thirds
+    (an energy ARC, not a cluster — Handbook H1/H2), PREFERRING the house track's real drops
+    (recipe R1), with Song 2's most powerful vocal peak paired onto the biggest drop. Each
+    slice is trimmed to fit before the next entry and rotated by `take` for regenerate variety.
+    The first placement never breathes; later ones do."""
     anchors_ranked = opts["anchors_ranked"]
-    slices = opts["vocal_slices"]
+    peaks = opts.get("vocal_peaks") or opts["vocal_slices"]  # loudest-first; slices is the fallback
+    drops = opts.get("drops", [])
     stretch = opts["vocal_stretch"]
     if len(anchors_ranked) < 2:
-        return [Placement(anchor=anchors_ranked[0] if anchors_ranked else 0.0, vocal_src=slices[0])]
+        return [Placement(anchor=anchors_ranked[0] if anchors_ranked else 0.0, vocal_src=peaks[0])]
 
     n = min(_MAX_PLACEMENTS, len(anchors_ranked))
-    chosen = fence.arc_anchors(anchors_ranked, opts["track_end"], count=n, take=take)  # spread, in time order
+    chosen = fence.synced_anchors(anchors_ranked, drops, opts["track_end"], count=n, take=take)  # drop-aware arc
+    # Pair Song 2's loudest peak onto the strongest anchor (a real drop beats a mere loud phrase),
+    # rotating the pairing by `take` so regenerate pulls different vocal content (R1 + variety).
+    drops_set = set(drops)
+    def _strength(t: float) -> tuple[int, int]:
+        if t in drops_set:
+            return (1, 0)  # a real drop is the strongest place to land the peak
+        try:
+            return (0, -anchors_ranked.index(t))  # else louder = earlier in the energy-ranked list
+        except ValueError:
+            return (0, -10_000)
+    by_strength = sorted(range(len(chosen)), key=lambda i: _strength(chosen[i]), reverse=True)
+    slice_for = {idx: peaks[(rank + take - 1) % len(peaks)] for rank, idx in enumerate(by_strength)}
+
     placements: list[Placement] = []
     for i, anc in enumerate(chosen):
-        # Rotate WHICH slice fills this placement by `take` too (not just by position), so
-        # regenerate pulls different vocal content at the same spot — not just a new
-        # anchor for the same replayed excerpt (the "every mix must be unique" complaint).
-        s0, s1 = slices[(i + take - 1) % len(slices)]
+        s0, s1 = slice_for[i]
         gap = (chosen[i + 1] - anc) if i + 1 < len(chosen) else _MAX_PLACEMENTS * 60.0
         # A vocal of SOURCE length d renders to d / stretch output-seconds; we want that
         # to fit the output gap, so the max source length is (gap - margin) * stretch.
@@ -122,7 +135,7 @@ def _default_arrangement(opts: dict, take: int) -> list[Placement]:
             s0 = s0 + spare * ((take - 1) % n_pos) / (n_pos - 1)
         placements.append(Placement(anchor=anc, vocal_src=(round(s0, 3), round(s0 + length, 3)), beat_breath=i > 0))
     if not placements:  # nothing fit — one safe placement at the best anchor
-        s0, s1 = slices[0]
+        s0, s1 = peaks[0]
         end = s0 + min(s1 - s0, fence.MAX_VOCAL_SECS)
         placements = [Placement(anchor=chosen[0] if chosen else anchors_ranked[0], vocal_src=(s0, round(end, 3)))]
     return placements
@@ -144,11 +157,14 @@ def _ai_arrange(opts: dict, prompt: str, take: int) -> list[Placement] | None:
             "shared_tempo_bpm": opts["master_bpm"],
             "track_length_seconds": round(track_end, 1),  # the whole canvas, so it can span it
             "phrase_anchors_seconds": [round(a, 1) for a in legal[:12]],
+            "house_drops_seconds": [round(d, 1) for d in opts.get("drops", [])],  # land the peak here (R1)
             "recommended_spread_anchors": [
-                round(a, 1) for a in fence.arc_anchors(legal, track_end, count=_MAX_PLACEMENTS, take=take)
+                round(a, 1) for a in fence.synced_anchors(
+                    legal, opts.get("drops", []), track_end, count=_MAX_PLACEMENTS, take=take)
             ],
             "song1_sections": [[round(s0, 1), lbl] for s0, lbl in opts.get("sections", [])][:12],
             "vocal_slices_seconds": [[round(s, 1), round(e, 1)] for s, e in opts["vocal_slices"]],
+            "vocal_peaks_seconds": [[round(s, 1), round(e, 1)] for s, e in opts.get("vocal_peaks", [])],
             "keys_compatible": opts["key_fit"],
             "user_request": prompt or "",
             "take_number": take,
