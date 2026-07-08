@@ -398,8 +398,10 @@ def test_extract_json_tolerates_prose():
 
 def test_produced_drop_gets_a_bass_pull(monkeypatch):
     """Step 3: on a confident pair, a produced drop (build) also gets the tension arc — a `bass`
-    StemMove held silent (not a fading ramp) across the cut+build, slamming back at the anchor, and
-    (with runway) an `other` StemMove cutting the melody for the stretch before the build."""
+    StemMove that RAMPS DOWN (a genuine decline, not a flat hold) across the cut+build, slamming back
+    at the anchor, and (with runway) an `other` StemMove ramping the melody down for the stretch
+    before the build. Founder correction: a continuous element must LOWER, never CUT — both moves
+    start at gain_from=1.0 so the decline is audible, not reached via an instant declick."""
     monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
     energy = [0.3] * 48
     for i in range(36, 40):
@@ -412,7 +414,7 @@ def test_produced_drop_gets_a_bass_pull(monkeypatch):
     plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
 
     assert plan.stem_moves, "a produced drop should carry the tension-arc stem moves"
-    assert all(m.gain_from == 0.0 and m.gain_to == 0.0 for m in plan.stem_moves)  # held, not fading
+    assert all(m.gain_from == 1.0 and m.gain_to == 0.0 for m in plan.stem_moves)  # a real decline
     assert all(m.stem in ("bass", "other") for m in plan.stem_moves)
     produced = [p.anchor for p in plan.placements if getattr(p, "build_bars", 0) > 0]
     # the bass move slams back on a produced placement's anchor (end == that anchor)

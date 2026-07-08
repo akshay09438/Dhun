@@ -510,24 +510,27 @@ def test_synced_anchors_spans_even_when_the_only_drop_is_in_the_middle():
 
 # ---------------------------------------------------------------- stem dynamics (Step 3)
 # fence.stem_moves_for_drops emits the auto-performed tension arc for every produced drop: an
-# `other` cut (melody muted, drums alone) for _CUT_BARS bars, then `bass` held silent (0->0, not a
-# fading ramp) across the WHOLE cut+build span so it SLAMS back only at the anchor. Both ends land
-# on Song 1's real downbeat grid (make_analysis: downbeats every 2.0s).
+# `other` ramp-down (melody LOWERS, drums alone by the end) for _CUT_BARS bars, then `bass` ramps
+# down (1.0->0.0, a genuine decline, not a flat hold) across the WHOLE cut+build span so it SLAMS
+# back only at the anchor. Both ends land on Song 1's real downbeat grid (make_analysis: downbeats
+# every 2.0s). Founder correction (2026-07-08): a continuous element must be LOWERED, never CUT — an
+# earlier draft held gain flat at 0 (reached via the engine's ~8ms declick), which read as a stem
+# cutting out mid-song; both moves now ramp from gain_from=1.0 so the decline is audible.
 
 
-def test_stem_moves_cut_then_bass_held_silent_on_a_produced_drop():
+def test_stem_moves_cut_then_bass_ramps_down_on_a_produced_drop():
     a1 = make_analysis(bpm=120.0, n_bars=32)  # downbeats 0,2,4,...; anchor 16.0 = downbeats[8]
     p = Placement(anchor=16.0, vocal_src=(0.0, 8.0), build_bars=3)
     moves = fence.stem_moves_for_drops([p], a1.downbeats)
     assert len(moves) == 2  # one bass (cut+build), one other (cut only)
     bass = next(m for m in moves if m.stem == "bass")
     other = next(m for m in moves if m.stem == "other")
-    assert bass.gain_from == 0.0 and bass.gain_to == 0.0  # held silent, not a fading ramp
-    assert other.gain_from == 0.0 and other.gain_to == 0.0
+    assert bass.gain_from == 1.0 and bass.gain_to == 0.0  # a real decline, not a flat hold
+    assert other.gain_from == 1.0 and other.gain_to == 0.0
     build_start = a1.downbeats[8 - 3]           # 3 bars before the anchor (10.0) — build starts here
     cut_start = a1.downbeats[8 - 3 - fence._CUT_BARS]  # 2 MORE bars back (6.0) — the cut starts here
-    assert bass.start == cut_start and bass.end == 16.0        # bass silent for the WHOLE cut+build
-    assert other.start == cut_start and other.end == build_start  # melody cut only for the cut stretch
+    assert bass.start == cut_start and bass.end == 16.0        # bass ramps down across the WHOLE cut+build
+    assert other.start == cut_start and other.end == build_start  # melody ramps down only across the cut
     # every edge lands exactly on a real downbeat (on-beat by construction -> referee R3)
     for m in moves:
         assert m.start in a1.downbeats and m.end in a1.downbeats

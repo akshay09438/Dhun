@@ -563,30 +563,47 @@ def lead_sections(a1: TrackAnalysis, placements, stretch: float,
 # The "mixing board": auto-perform Song 1's bed stems so the beat MOVES like a DJ set instead of
 # sitting flat under the vocal (recipe §2.6 "PRODUCE, don't assemble"). Every produced drop is a
 # 3-stage tension arc, all via the one StemMove primitive:
-#   1. CUT (Wave 2) — bass + melody ("other") held fully muted for _CUT_BARS bars: just the drums
-#      driving alone, a stripped-back breather before the build (the "drop to just the beat" move).
+#   1. LOWER (Wave 2) — bass + melody ("other") RAMP DOWN across `_CUT_BARS` bars into near-silence
+#      (a genuine gradual decline, not an instant mute — see below), leaving just the drums driving
+#      alone by the time the build begins: a stripped-back breather before it (the "drop to just the
+#      beat" move).
 #   2. BUILD (unchanged, render.py) — drums + melody filter/volume-climb across the drop's BUILD
-#      window; bass stays held muted through this too (one continuous mute, not a fading ramp — a
-#      guaranteed silence regardless of how loud the source bass happens to be beforehand).
+#      window; bass keeps declining across this stretch too, reaching silence only at the very end —
+#      a guaranteed near-silence right before the drop, regardless of how loud the source bass happens
+#      to be beforehand.
 #   3. SLAM — right at the anchor, the ~8ms declick snaps bass back to full with the vocal, and the
 #      melody is already back up from the build — so everything lands together on the beat.
 # Everything is on-beat by construction (windows are real Song-1 downbeats) and additive: no
 # produced drops => no moves => today's flat bed.
+#
+# THE RULE (founder correction, 2026-07-08): something playing continuously must never be CUT — it
+# can be LOWERED, gradually, so the ear tracks it declining, and it can only reach a hard stop at a
+# genuine transition point the song itself earns (here: the anchor, where the whole arrangement turns
+# over). So every move's descent is a real ramp across its full window (gain_from=1.0), never a flat
+# hold reached via the engine's ~8ms declick (which reads as a stem cutting out, not music fading).
+# The RETURN at the anchor stays the engine's hard declick on purpose — that abruptness IS the hit.
 
 _CUT_BARS = 2  # bars of "just the beat" (bass+melody muted, drums alone) right before the build
 
 
 def stem_moves_for_drops(placements, a1_downbeats: list[float], stretch: float = 1.0,
                          s1_regions: list[tuple[float, float]] | None = None) -> list[StemMove]:
-    """Auto-perform every produced drop's beat: a `bass` StemMove held silent (gain 0->0, not a
-    fading ramp) across [the cut start, the anchor] so it SLAMS to full only at the anchor, and — when
-    there's real runway — an `other` StemMove muted across [the cut start, the build start] so the
-    melody drops out too, leaving just the drums for `_CUT_BARS` bars (the "drop to just the beat"
-    breather) before the build climbs. Both windows are taken from Song 1's REAL downbeat grid (not
-    bpm arithmetic), so every edge is on-beat by construction (referee R3), and the cut is clamped to
-    never reach back over the PREVIOUS placement's real vocal end (`fence.placement_end`) — the same
-    guard the engine's own build window uses, so a close prior vocal simply shortens or skips the cut
-    rather than talking over it.
+    """Auto-perform every produced drop's beat: a `bass` StemMove RAMPS DOWN (gain 1.0->0.0, a real
+    decline, not a flat hold) across [the cut start, the anchor], reaching silence only right at the
+    anchor where it SLAMS back to full, and — when there's real runway — an `other` StemMove ramps
+    down the same way across [the cut start, the build start] so the melody audibly recedes too,
+    leaving just the drums driving by the time the build climbs (the "drop to just the beat" breather).
+    Both windows are taken from Song 1's REAL downbeat grid (not bpm arithmetic), so every edge is
+    on-beat by construction (referee R3), and the cut is clamped to never reach back over the PREVIOUS
+    placement's real vocal end (`fence.placement_end`) — the same guard the engine's own build window
+    uses, so a close prior vocal simply shortens or skips the cut rather than talking over it.
+
+    Both ramps start at `gain_from=1.0` (not 0.0) so the decline is a genuine, audible LOWERING across
+    the whole window — not an instant mute reached via the engine's ~8ms declick, which a founder
+    ear-test caught reading as a stem cutting out mid-song, not music fading (measured: real melody
+    energy fell from full to near-silent in ~0.5s at the cut boundary). Something playing continuously
+    is only ever lowered; the one hard stop-then-restart in this arc is the SLAM at the anchor, which
+    is a deliberate transition the drop itself earns, not an arbitrary mid-phrase cut.
 
     A produced drop is SKIPPED ENTIRELY (no bass or other move at all) if its cut+build span would
     overlap any of Song 1's OWN vocal moments (`s1_regions` — the "both vocals trade" leads and the
@@ -596,11 +613,11 @@ def stem_moves_for_drops(placements, a1_downbeats: list[float], stretch: float =
     is already leading into the drop, that IS the produced moment; the beat plays under it exactly as
     before Step 3.
 
-    One `bass` move per drop, held silent for its whole cut+build span (rather than one move per
-    stage), so there is no seam where the two would otherwise touch: two independent moves on the
-    same stem, each computing its own ramp, would leave bass jump to 1.0 for an instant at the join —
-    an audible pop right in the middle of the build. Holding it as one continuous mute keeps the
-    envelope's decline-into-silence exact and click-free (the engine's existing declick logic).
+    One `bass` move per drop, ramping across its whole cut+build span (rather than one move per
+    stage), so there is no seam where two would otherwise touch: two independent moves on the same
+    stem, each computing its own ramp, would leave bass jump partway back up for an instant at the
+    join — an audible pop right in the middle of the build. One continuous ramp keeps the decline
+    exact and click-free (the engine's existing declick logic only fires at the true edges).
 
     Returns [] when there are no produced drops or no grid — the bed then stays flat (today's mix).
     The caller gates this on a confident grid; a produced drop only exists on one anyway.
@@ -631,12 +648,12 @@ def stem_moves_for_drops(placements, a1_downbeats: list[float], stretch: float =
         # if any s1 region overlaps the span this drop would touch, skip the whole move for this drop.
         if any(s < anchor - 1e-6 and e > cut_start + 1e-6 for s, e in s1_regions):
             continue
-        # the bass stays silent across the WHOLE cut+build span (one move, no seam) — it slams to
-        # full only at the anchor. If there's no cut room (a close prior vocal), the bass move still
-        # covers the build window alone, exactly as Wave 1 did.
+        # the bass RAMPS DOWN (a real decline, not a flat hold) across the WHOLE cut+build span (one
+        # move, no seam) — it slams to full only at the anchor. If there's no cut room (a close prior
+        # vocal), the bass move still covers the build window alone, exactly as Wave 1 did.
         moves.append(StemMove(stem="bass", start=round(cut_start, 3), end=round(anchor, 3),
-                              gain_from=0.0, gain_to=0.0))
-        if cut_start_i < build_start_i:  # real cut room -> mute the melody too, just for the cut stretch
+                              gain_from=1.0, gain_to=0.0))
+        if cut_start_i < build_start_i:  # real cut room -> ramp the melody down too, just for the cut stretch
             moves.append(StemMove(stem="other", start=round(cut_start, 3), end=round(build_start, 3),
-                                  gain_from=0.0, gain_to=0.0))
+                                  gain_from=1.0, gain_to=0.0))
     return moves
