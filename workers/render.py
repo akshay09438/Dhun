@@ -40,6 +40,10 @@ _XFADE_MS = 8.0  # equal-power crossfade at each bar join in a beat-locked (warp
 _ATEMPO_MIN, _ATEMPO_MAX = 0.5, 2.0
 _BREATH_DUCK = 0.35  # the bed dips to this for one bar before a flagged entry (tension, not silence)
 _SWEEP_LO_HZ = 300.0  # filter-sweep floor: the bed muffles to this cutoff, then opens up
+_BUILD_GAIN_LO = 0.55  # a produced-drop BUILD starts at this volume and rises to 1.0 (energy climbing)
+_ECHO_BEATS = 0.75  # produced-drop ECHO delay, in beats (a dotted-eighth — the classic vocal throw)
+_ECHO_FEEDBACK = 0.42  # each echo repeat is this fraction of the previous (decaying tail)
+_ECHO_TAPS = 4  # how many decaying repeats the echo throws
 _FFMPEG_TIMEOUT = 180
 # Bound decoded audio so a tiny-but-hours-long low-bitrate file can't balloon in
 # memory (the upload cap is on bytes, not duration). A decoded stereo minute is
@@ -207,6 +211,38 @@ def _sweep_bed(seg: np.ndarray, sr: int) -> np.ndarray:
     return swept
 
 
+def _build_bed(seg: np.ndarray, sr: int) -> np.ndarray:
+    """A produced-drop BUILD: across this (multi-bar) segment the bed goes muffled+quiet ->
+    open+loud, so the drop is felt coming (real energy dynamics, not a flat beat). Reuses the
+    low-pass sweep for the 'opening up' and adds a rising volume ramp. Any level overshoot folds
+    into the downstream peak-normalize + clip guard, so the master never clips."""
+    n = len(seg)
+    if n < 64:
+        return seg
+    swept = _sweep_bed(seg, sr)  # muffled -> open across the span
+    ramp = np.linspace(_BUILD_GAIN_LO, 1.0, n, dtype=np.float32)[:, None]  # quiet -> loud into the drop
+    return (swept * ramp).astype(np.float32)
+
+
+def _echo(voc: np.ndarray, bpm: float) -> np.ndarray:
+    """Ring the vocal out with a decaying ECHO throw (delay ~a dotted-eighth of the beat) so it
+    dissolves into the drop instead of stopping dead — the classic produced-vocal sound. The dry
+    vocal is already edge-faded before this, so every delayed copy is faded too (no clicks); the
+    added tail lengthens the buffer. Peaks fold into the downstream normalize + clip guard."""
+    n = len(voc)
+    if bpm <= 0 or n == 0:
+        return voc
+    delay = max(1, int((60.0 / bpm) * _ECHO_BEATS * SR))
+    out = np.zeros((n + delay * _ECHO_TAPS, 2), dtype=np.float32)
+    out[:n] += voc
+    g = _ECHO_FEEDBACK
+    for k in range(1, _ECHO_TAPS + 1):
+        off = delay * k
+        out[off:off + n] += voc * g
+        g *= _ECHO_FEEDBACK
+    return _guard_duration(out)  # a tiny/octave-halved bpm can't balloon the tail buffer
+
+
 def _placements_of(plan):
     """The plan's vocal placements — or the scalar anchor/vocal_src as a one-element
     arrangement, so a legacy (M3) single-placement plan still renders."""
@@ -231,6 +267,7 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
     bed = _sum_stems([song1_stems["drums"], song1_stems["bass"], song1_stems["other"]])
     bar = int((60.0 / plan.master_bpm) * 4 * SR)
 
+    prev_voc_end = 0  # sample where the last placed vocal ended — a build never reaches back over it
     for p in _placements_of(plan):
         warp = getattr(p, "warp", None)
         if warp:  # M4d: per-bar beat-lock — each bar re-locked to Song 1's grid (no drift)
@@ -238,15 +275,24 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
         else:  # legacy single global stretch (M3/M4a–c cached plans, or a thin-grid fallback)
             start, end = p.vocal_src
             voc = _edge_fade(_vocal_take(song2_vocal, start, max(end - start, 0.0), plan.vocal_stretch))
+        if getattr(p, "echo", False):  # ring the (already edge-faded) vocal out into the drop
+            voc = _echo(voc, plan.master_bpm)
         anchor = max(0, int(p.anchor * SR))  # never place before the start
         b0 = max(0, anchor - bar)
-        if getattr(p, "beat_breath", False):  # DUCK the bed for one bar (tension), never silence it
-            bed[b0:anchor] *= _BREATH_DUCK
-        if getattr(p, "fx", None) == "sweep_in":  # muffled -> open across the bar before the entry
-            bed[b0:anchor] = _sweep_bed(bed[b0:anchor], SR)
+        build_bars = getattr(p, "build_bars", 0)
+        if build_bars > 0:  # produced drop: a multi-bar filter+volume BUILD into the entry
+            bstart = max(0, prev_voc_end, anchor - build_bars * bar)  # never reach back over a prior vocal
+            if bstart < anchor:
+                bed[bstart:anchor] = _build_bed(bed[bstart:anchor], SR)
+        else:  # the plain-entry moves (unchanged): one-bar breath duck and/or one-bar sweep
+            if getattr(p, "beat_breath", False):  # DUCK the bed for one bar (tension), never silence it
+                bed[b0:anchor] *= _BREATH_DUCK
+            if getattr(p, "fx", None) == "sweep_in":  # muffled -> open across the bar before the entry
+                bed[b0:anchor] = _sweep_bed(bed[b0:anchor], SR)
         need = anchor + len(voc)
         bed = _hold(bed, need)
         bed[anchor:need] += voc
+        prev_voc_end = need
 
     # Slice B contrast: Song 1's OWN vocal answers in the beat-only gaps (never overlapping
     # Song 2's vocal — the referee guarantees it). No stretch — it is already Song 1's tempo.

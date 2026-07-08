@@ -87,6 +87,46 @@ def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement],
     return placements, s1_regions
 
 
+_BUILD_BARS = 3  # bars of rising filter+volume build the engine lays before a produced drop
+# The engine's echo rings for render._ECHO_BEATS * render._ECHO_TAPS = 0.75 * 4 = 3 beats. Keep
+# this in sync with those constants. We derive the tail from the ACTUAL tempo (airtight at any
+# bpm, incl. an octave/quarter-tempo misread), plus a small margin, so the echo is suppressed
+# whenever Song 1's own contrast vocal would fall inside it (R1 — a breach the referee can't see,
+# since placement_end has no echo term), and fires freely at house tempos where it's provably safe.
+_ECHO_TAIL_BEATS = 3.0
+_ECHO_TAIL_MARGIN_SECS = 0.3
+
+
+def _echo_tail_secs(bpm: float) -> float:
+    """How long the engine's echo tail rings, at this tempo (with a small safety margin)."""
+    return (60.0 / bpm) * _ECHO_TAIL_BEATS + _ECHO_TAIL_MARGIN_SECS if bpm > 0 else 1e9
+
+
+def _produce_drops(placements: list[Placement], drops: list[float],
+                   s1_regions: list[tuple[float, float]], stretch: float, bpm: float) -> list[Placement]:
+    """Mark the placements that land on a real house DROP as PRODUCED: a multi-bar filter+volume
+    BUILD into the entry (so the drop is felt coming), and an ECHO throw on the climactic (last)
+    drop so it rings out. The engine executes both; here we only decide where. FX-only and
+    additive — a placement not on a drop is untouched (stays a plain, valid entry)."""
+    if not placements or not drops:
+        return placements
+    on_drop = [p for p in placements if any(abs(p.anchor - d) <= 0.06 for d in drops)]
+    if not on_drop:
+        return placements
+    for p in on_drop:
+        p.build_bars = _BUILD_BARS
+        p.fx = None  # the multi-bar build supersedes the one-bar sweep on this entry
+    # Echo ONLY the final placement, only if it's a drop, AND only if no Song 1 contrast vocal
+    # rings within the echo tail after it — so the echo tail can never overlap a later lead vocal (R1).
+    last = placements[-1]
+    if any(abs(last.anchor - d) <= 0.06 for d in drops):
+        last_end = fence.placement_end(last.anchor, last.vocal_src, stretch, getattr(last, "warp", None))
+        tail = _echo_tail_secs(bpm)
+        if not any(last_end - 1e-6 <= s < last_end + tail for s, _e in s1_regions):
+            last.echo = True
+    return placements
+
+
 def _default_arrangement(opts: dict, take: int) -> list[Placement]:
     """Deterministic ENERGY-SYNCED arrangement: 2-3 anchors spread across the song's thirds
     (an energy ARC, not a cluster — Handbook H1/H2), PREFERRING the house track's real drops
@@ -245,6 +285,9 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         placements = _dedupe_nonoverlapping(rebuilt, opts["vocal_stretch"])
         source = "rules"
     placements, s1_regions = _apply_flourishes(a1, placements, opts["vocal_stretch"])
+    if _confident(a1):  # only produce (build/echo) on a trustworthy grid — shaky songs stay safe
+        placements = _produce_drops(placements, opts.get("drops", []), s1_regions,
+                                    opts["vocal_stretch"], opts["master_bpm"])
     first = placements[0]
     return MixPlan(
         mix_id=mix_id, song1_id=a1.song_id, song2_id=a2.song_id,

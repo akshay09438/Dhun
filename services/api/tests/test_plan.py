@@ -287,5 +287,52 @@ def test_loudest_vocal_peak_lands_on_the_biggest_drop(monkeypatch):
     assert drop_place.vocal_src[0] == 0.0        # ...and it carries Song 2's loudest peak (starts at 0.0)
 
 
+def test_placement_produce_fields_default_off():
+    """The produced-drop fields are additive: old cached plans (no build_bars/echo) still parse."""
+    from app.models import Placement
+    p = Placement(anchor=1.0, vocal_src=(0.0, 2.0))
+    assert p.build_bars == 0 and p.echo is False
+
+
+def test_drop_placements_are_produced(monkeypatch):
+    """A placement that lands on a real house drop is PRODUCED: it gets a filter build into it,
+    and the climax gets an echo throw — so the drop feels made, not plain."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    energy = [0.3] * 48
+    for i in range(36, 40):
+        energy[i] = 0.2
+    for i in range(40, 48):
+        energy[i] = 0.95  # a big drop at bar 40 -> 80.0s
+    a1 = make_analysis(bpm=120.0, n_bars=48, energy=energy)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 16.0), (40.0, 56.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
+
+    assert any(getattr(p, "build_bars", 0) > 0 for p in plan.placements)  # a build into a drop
+    assert any(getattr(p, "echo", False) for p in plan.placements)        # an echo on the climax
+
+
+def test_produce_drops_suppresses_echo_when_a_song1_vocal_follows():
+    """R1 guard (found by adversarial review): the echo tail rings PAST the vocal's dry end, so
+    it must never fire when Song 1's own contrast vocal lands in that tail — that would be two
+    lead voices, and the referee can't see the echo tail. Suppress the echo in that case."""
+    from app.models import Placement
+    placements = [Placement(anchor=10.0, vocal_src=(0.0, 8.0)),
+                  Placement(anchor=80.0, vocal_src=(0.0, 8.0))]  # dry end 88.0 at stretch 1.0
+    s1_regions = [(89.0, 95.0)]  # Song 1 answers 1s after the final vocal — inside the echo tail
+    out = planner._produce_drops(placements, [10.0, 80.0], s1_regions, 1.0, 120.0)
+    assert out[-1].echo is False       # echo suppressed -> no echo-over-contrast R1 breach
+    assert out[-1].build_bars > 0      # ...but it's still a produced (built) drop
+
+
+def test_produce_drops_echoes_when_nothing_follows():
+    """When the final drop is the end of the mix (no Song 1 vocal after it), the echo fires."""
+    from app.models import Placement
+    placements = [Placement(anchor=10.0, vocal_src=(0.0, 8.0)),
+                  Placement(anchor=80.0, vocal_src=(0.0, 8.0))]
+    out = planner._produce_drops(placements, [10.0, 80.0], [], 1.0, 120.0)
+    assert out[-1].echo is True
+
+
 def test_extract_json_tolerates_prose():
     assert llm.extract_json('sure!\n{"placements": []}\nthanks') == {"placements": []}

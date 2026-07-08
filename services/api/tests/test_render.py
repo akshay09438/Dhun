@@ -148,6 +148,67 @@ def test_render_clamps_negative_anchor(tmp_path):
     assert len(y) > 0
 
 
+def test_build_bed_climbs_muffled_to_open():
+    """The produced-drop BUILD: a bed segment goes muffled+quiet -> open+loud across its span,
+    so the listener feels the drop coming (recipe: real energy dynamics)."""
+    sr = render.SR
+    t = np.linspace(0, 1.0, sr, endpoint=False)  # 1s
+    mono = (0.4 * np.sin(2 * np.pi * 220 * t)).astype("float32")
+    seg = np.stack([mono, mono], axis=1)
+    out = render._build_bed(seg, sr)
+    assert out.shape == seg.shape
+    q = len(out) // 4
+    assert float(np.sqrt(np.mean(out[:q] ** 2))) < float(np.sqrt(np.mean(out[-q:] ** 2)))  # louder into the drop
+    # and brighter into the drop (the low-pass opens up): more high-freq motion at the end
+    hf = lambda a: float(np.mean(np.abs(np.diff(out[a[0]:a[1]], axis=0))))
+    assert hf((0, q)) < hf((len(out) - q, len(out)))
+
+
+def test_echo_adds_a_decaying_tail():
+    """The vocal ECHO throw: the vocal rings out with decaying repeats into the drop."""
+    sr = render.SR
+    voc = np.zeros((int(0.2 * sr), 2), dtype=np.float32)
+    voc[: int(0.05 * sr)] = 0.5  # a short burst
+    out = render._echo(voc, 120.0)
+    assert len(out) > len(voc)  # the echo tail extends the vocal
+    tail = out[len(voc):]
+    assert float(np.max(np.abs(tail))) > 1e-3  # audible echoes after the dry vocal
+    assert float(np.max(np.abs(tail))) < float(np.max(np.abs(voc)))  # ...but quieter (decayed)
+
+
+def test_render_applies_build_and_echo(tmp_path):
+    """Integration: a placement flagged build_bars + echo renders a valid, non-clipping mix
+    whose energy climbs into the entry."""
+    stems, vocal = _stems(tmp_path)
+    out = tmp_path / "mix.wav"
+    plan = _arr_plan([(4.0, (0.0, 1.5), False)])
+    plan.placements[0].build_bars = 2  # 120bpm bar=2s -> a 4s build into 4.0s
+    plan.placements[0].echo = True
+    render.render_mix(plan, stems, vocal, out)
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    assert 0.0 < float(np.max(np.abs(y))) <= render._CEILING  # valid, never clipping
+    e = lambda a, b: float(np.mean(np.abs(y[int(a * sr):int(b * sr)])))
+    assert e(0.3, 1.0) < e(3.0, 3.9)  # the build climbs into the drop
+
+
+def test_build_does_not_muffle_a_close_previous_vocal(tmp_path):
+    """Adversarial-review finding: a 3-bar build must not reach back over a PREVIOUS vocal's tail
+    and low-pass/duck it. The build start is clamped to where the previous vocal ended."""
+    stems, vocal = _stems(tmp_path)  # 8s tones; the vocal is a 440Hz tone (above the sweep floor)
+    out = tmp_path / "mix.wav"
+    # placement 1 at 1.0s (vocal 0-2 -> plays 1.0-3.0); placement 2 at 5.0s with a 3-bar build
+    # (120bpm bar=2s -> an un-clamped build would start at 0 and swallow placement 1's vocal).
+    plan = _arr_plan([(1.0, (0.0, 2.0), False), (5.0, (0.0, 1.0), False)])
+    plan.placements[1].build_bars = 3
+    render.render_mix(plan, stems, vocal, out)
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    e = lambda a, b: float(np.mean(np.abs(y[int(a * sr):int(b * sr)])))
+    # placement 1's vocal tail (2.0-2.9s) stays full & bright; the built beat-only region after it
+    # (3.2-4.0s) is muffled+ramped-quiet. Un-clamped, the vocal would sit inside the build and this
+    # flips (the later build region would be louder than the muffled vocal).
+    assert e(2.0, 2.9) > e(3.2, 4.0)
+
+
 def test_vocal_take_warped_survives_ffmpeg_length_overshoot(monkeypatch):
     """Reproduces the real "Father Ocean x With You" crash: FFmpeg's seek/atempo
     rounding (real MP3 frame-boundary rounding, confirmed on the actual pair) hands

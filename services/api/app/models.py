@@ -69,6 +69,8 @@ class Placement(BaseModel):
     vocal_src: tuple[float, float]  # [start, end] secs of Song 2's vocal
     beat_breath: bool = False  # one-bar tension dip in the bed right before this entry
     fx: str | None = None  # optional entry effect; Slice B supports "sweep_in" (filter sweep)
+    build_bars: int = 0  # produced-drop: bars of rising filter+volume BUILD before this entry (0=none)
+    echo: bool = False  # produced-drop: ring the vocal out with a decaying echo throw into the drop
     # Per-bar phase-lock (M4d): (src_start, src_end, out_secs) per bar — stretch each bar of
     # the vocal to the matching Song 1 bar length so it re-locks to the beat and can't drift.
     # Empty => the legacy single global-atempo stretch (M3/M4a–c cached plans still parse).

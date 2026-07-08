@@ -57,7 +57,9 @@ _S1_STEMS = ("drums", "bass", "other")
 #        referee gains R7 (per-bar ratios in band + bars lock to the grid).
 # m5a.1: energy-sync (Phase A) — the arrangement lands Song 2's loudest vocal peak on Song 1's
 #        real DROP (fence.energy_drops/vocal_peaks/synced_anchors); no engine/referee change.
-ENGINE_VERSION = "m5a.1"
+# m5b.1: the produced drop — a multi-bar filter+volume BUILD into each drop and a decaying vocal
+#        ECHO throw on the climax (render._build_bed/_echo; additive plan fields, referee unchanged).
+ENGINE_VERSION = "m5b.1"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.
