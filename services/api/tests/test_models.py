@@ -31,6 +31,19 @@ def test_old_single_placement_json_still_parses():
     assert plan.s1_vocal_regions == []  # Slice B fields default empty on old plans
 
 
+def test_bed_stretch_is_additive_and_defaults_to_one():
+    plan = MixPlan(
+        mix_id="m" * 64, song1_id="a" * 64, song2_id="b" * 64,
+        master_bpm=128.16, vocal_stretch=0.89, vocal_src=(16.0, 40.0), anchor=16.0,
+        bed_stretch=1.05,
+    )
+    assert MixPlan.model_validate_json(plan.model_dump_json()).bed_stretch == 1.05
+    # an old plan with no bed_stretch still parses -> defaults to 1.0
+    old = ('{"mix_id":"m","song1_id":"a","song2_id":"b","master_bpm":120.0,'
+           '"vocal_stretch":1.0,"vocal_src":[16.0,40.0],"anchor":16.0}')
+    assert MixPlan.model_validate_json(old).bed_stretch == 1.0
+
+
 def test_slice_b_contrast_and_fx_roundtrip():
     plan = MixPlan(
         mix_id="m" * 64, song1_id="a" * 64, song2_id="b" * 64,
