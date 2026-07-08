@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import soundfile as sf
+from scipy.signal import butter, sosfilt
 
 _REPO = Path(__file__).resolve().parents[3]  # tests -> api -> services -> repo
 if str(_REPO) not in sys.path:
@@ -368,3 +369,143 @@ def test_render_tiny_bed_stretch_still_engages(tmp_path):
     n = len(sf.read(native, dtype="float32", always_2d=True)[0])
     t = len(sf.read(tiny, dtype="float32", always_2d=True)[0])
     assert n - t > 50, f"tiny bed_stretch did not engage: native {n} vs stretched {t} samples"
+
+
+# ---------------------------------------------------------------- Step 3: stem dynamics (the mixing board)
+# The engine gains per-stem gain envelopes so the arrangement can RIDE one of Song 1's bed stems'
+# volume across an on-beat window (Wave 1 = the bass pull-and-slam: bass ramps 1.0 -> 0.0 into the
+# drop, then slams back to 1.0 on the downbeat). Contract agreed with the implementer:
+#   - render_mix reads plan.stem_moves (default [] when the attr is absent — duck-typed plans render).
+#   - each StemMove has .stem / .start / .end / .gain_from / .gain_to.
+#   - a short declick ramp (render._STEM_SLAM_MS ~8ms) keeps the 0->1 slam click-free.
+# A no-move plan must render exactly today's mix (the "old mixes still work" invariant).
+
+
+def _stem_move(stem, start, end, gain_from=1.0, gain_to=0.0):
+    """A duck-typed StemMove for a duck-typed plan (matches the real StemMove field names)."""
+    return types.SimpleNamespace(stem=stem, start=start, end=end,
+                                 gain_from=gain_from, gain_to=gain_to)
+
+
+def _lowband(y, sr, hz=70.0):
+    """Isolate the 55Hz bass stem: an 8th-order low-pass at 70Hz leaves 110Hz drums ~-30dB down and
+    kills 330/440/660Hz entirely, so low-band RMS tracks the bass envelope alone."""
+    sos = butter(8, hz / (sr / 2), btype="low", output="sos")
+    return sosfilt(sos, y, axis=0)
+
+
+def test_bass_pull_and_slam_dips_then_returns(tmp_path):
+    """AC1: with a bass StemMove 1.0->0.0 over a window into the drop, the BASS-BAND energy FALLS
+    across the window and RETURNS after the anchor (the slam). Fails today: the engine ignores
+    stem_moves, so the bass plays flat throughout and the band never dips."""
+    stems, vocal = _stems(tmp_path)  # 8s tones; bass = 55Hz
+    out = tmp_path / "mix.wav"
+    plan = _arr_plan([(1.0, (0.0, 0.5), False)])  # a short vocal early, clear of the bass window
+    plan.stem_moves = [_stem_move("bass", start=4.0, end=6.0, gain_from=1.0, gain_to=0.0)]
+    render.render_mix(plan, stems, vocal, out)
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    low = _lowband(y, sr)
+    lf = lambda a, b: float(np.sqrt(np.mean(low[int(a * sr):int(b * sr)] ** 2)))
+    early = lf(4.05, 4.55)  # bass near full at the window start
+    late = lf(5.40, 5.90)   # bass ramped ~to 0 just before the drop
+    after = lf(6.10, 6.60)  # slam: bass back to full
+    assert late < 0.5 * early, f"bass did not fall across the build: early={early:.4f} late={late:.4f}"
+    assert after > 2.0 * late, f"bass did not slam back after the drop: late={late:.4f} after={after:.4f}"
+    peak = float(np.max(np.abs(y)))
+    assert 0.0 < peak <= render._CEILING  # audible, never clipping
+
+
+def test_bass_slam_is_click_free(tmp_path):
+    """AC2: the 0->1 slam does not click — the largest sample step across the slam boundary is not a
+    spike vs the signal's typical step. It first asserts the slam actually happened (low-band energy
+    jumps up on the downbeat), so this FAILS today for the right reason (no slam at all), and after
+    the feature lands it fails ONLY if the declick ramp is missing."""
+    stems, vocal = _stems(tmp_path)
+    out = tmp_path / "mix.wav"
+    plan = _arr_plan([(1.0, (0.0, 0.5), False)])
+    plan.stem_moves = [_stem_move("bass", 4.0, 6.0, 1.0, 0.0)]
+    render.render_mix(plan, stems, vocal, out)
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    low = _lowband(y, sr)
+    lf = lambda a, b: float(np.sqrt(np.mean(low[int(a * sr):int(b * sr)] ** 2)))
+    assert lf(6.02, 6.30) > 2.0 * lf(5.60, 5.95), "no slam: bass did not jump back on the downbeat"
+    d = np.abs(np.diff(y, axis=0))
+    w = int(0.005 * sr)  # +-5ms around the slam
+    slam = int(6.0 * sr)
+    near = float(np.max(d[slam - w:slam + w]))
+    typical = float(np.max(d[int(6.5 * sr):int(7.5 * sr)]))  # a steady full-bed stretch after the slam
+    assert near <= 2.0 * typical, f"click at the slam: step {near:.4f} vs typical {typical:.4f}"
+
+
+# --- Old-mix invariant (the "old mixes still work" proof) ---
+# Proven two ways below: (1) a no-move plan is a no-op vs a plan with no stem_moves field at all, and
+# (2) the bed treatments are LINEAR, so applying them per-stem and summing last is identical to
+# filtering the summed bed. (During the build a no-move render was ALSO confirmed byte-identical to
+# the pre-change engine; that one-time check needs no committed audio — the repo keeps no *.wav in
+# git — so it lives in the change's review notes, not as a fixture here. The whole existing no-move
+# render suite above is the ongoing behavioural regression guard.)
+
+
+def test_no_stem_moves_is_a_noop_vs_absent_field(tmp_path):
+    """AC4: stem_moves == [] renders IDENTICALLY to a plan with no stem_moves attribute at all — proving
+    the engine's default-[] duck-typing is a true no-op. Passes now (engine ignores the field) and must
+    STAY green after the change (guards the `getattr(plan, 'stem_moves', [])` contract)."""
+    stems, vocal = _stems(tmp_path)
+    a, b = tmp_path / "a.wav", tmp_path / "b.wav"
+    p_absent = _arr_plan([(1.0, (0.0, 1.5), False)])  # no stem_moves attribute set
+    render.render_mix(p_absent, stems, vocal, a)
+    p_empty = _arr_plan([(1.0, (0.0, 1.5), False)])
+    p_empty.stem_moves = []
+    render.render_mix(p_empty, stems, vocal, b)
+    ya, _ = sf.read(a, dtype="float32", always_2d=True)
+    yb, _ = sf.read(b, dtype="float32", always_2d=True)
+    assert ya.shape == yb.shape
+    assert float(np.max(np.abs(ya - yb))) <= 1e-6
+
+
+def test_build_bed_is_linear_sum_then_filter_equals_filter_then_sum():
+    """AC3 (the WHY): the old-mix invariant holds by construction because the bed treatments are LINEAR
+    — summing the stems then filtering == filtering each stem then summing. Proven directly on the
+    build helper: _build_bed(a) + _build_bed(b) ~= _build_bed(a + b). (Exercises existing behaviour, so
+    it passes today; it is the math the per-stem refactor relies on and must keep true.)"""
+    rng = np.random.default_rng(0)
+    n = render.SR // 8
+    a = (0.3 * rng.standard_normal((n, 2))).astype("float32")
+    b = (0.3 * rng.standard_normal((n, 2))).astype("float32")
+    lhs = render._build_bed(a, render.SR) + render._build_bed(b, render.SR)
+    rhs = render._build_bed((a + b).astype("float32"), render.SR)
+    assert float(np.max(np.abs(lhs - rhs))) <= 1e-3
+
+
+def test_sweep_bed_is_linear_sum_then_filter_equals_filter_then_sum():
+    """AC3 (the WHY, cont.): same linearity for the filter sweep — _sweep_bed(a) + _sweep_bed(b) ~=
+    _sweep_bed(a + b). Together with the build linearity, this is why moving the treatments onto the
+    separate stems cannot change a no-move mix."""
+    rng = np.random.default_rng(1)
+    n = render.SR // 8
+    a = (0.3 * rng.standard_normal((n, 2))).astype("float32")
+    b = (0.3 * rng.standard_normal((n, 2))).astype("float32")
+    lhs = render._sweep_bed(a, render.SR) + render._sweep_bed(b, render.SR)
+    rhs = render._sweep_bed((a + b).astype("float32"), render.SR)
+    assert float(np.max(np.abs(lhs - rhs))) <= 1e-3
+
+
+def test_prior_vocal_tail_is_ducked_by_a_later_breath(tmp_path):
+    """OLD-MIX IDENTITY (adversarial-review regression, Reviewer 1): a later beat_breath ducks the BED
+    for its bar — and, exactly as the pre-Step-3 engine did, that duck also lands on a PRIOR vocal's
+    tail sitting in that bar. An earlier Step-3 draft deferred all vocal placement until AFTER the bed
+    treatments, so the tail escaped the duck and old mixes rendered differently. This asserts the tail
+    IS still ducked, so that identity regression can't come back."""
+    stems, vocal = _stems(tmp_path)  # vocal tone = 440Hz; bed = 110/55/330Hz
+    out = tmp_path / "mix.wav"
+    # placement 1 sings 1.0-5.0 (a 4s vocal); placement 2 enters at 6.0 with a breath bar [4.0,6.0]
+    # (120bpm bar=2s), so placement 1's tail (4.0-5.0) sits inside placement 2's breath duck.
+    plan = _arr_plan([(1.0, (0.0, 4.0), False), (6.0, (0.0, 1.0), True)])
+    render.render_mix(plan, stems, vocal, out)
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    sos = butter(4, [400 / (sr / 2), 490 / (sr / 2)], btype="band", output="sos")  # isolate the 440Hz vocal
+    voc = sosfilt(sos, y, axis=0)
+    vf = lambda a, b: float(np.sqrt(np.mean(voc[int(a * sr):int(b * sr)] ** 2)))
+    ducked = vf(4.2, 4.8)   # vocal tail INSIDE the breath bar -> must be pulled down
+    full = vf(2.2, 2.8)     # the same vocal, before the breath bar -> full level
+    assert ducked < 0.6 * full, f"prior vocal tail not ducked by the breath: {ducked:.4f} vs full {full:.4f}"

@@ -10,7 +10,7 @@ and needs no AI — it is pure, testable arithmetic over the analysis.
 
 from __future__ import annotations
 
-from app.models import TrackAnalysis
+from app.models import StemMove, TrackAnalysis
 
 # Small stretches sound clean; big ones warble. Song 2's vocal is kept within this band
 # of Song 1's tempo (atempo stays acceptable here); outside it we decline rather than ship
@@ -557,3 +557,40 @@ def lead_sections(a1: TrackAnalysis, placements, stretch: float,
                 out.append((round(s, 3), round(e, 3)))
     out.sort(key=lambda r: r[1] - r[0], reverse=True)  # the biggest lead moments first
     return out[:max_leads]
+
+
+# ---------------------------------------------------------------- stem dynamics (Step 3)
+# The "mixing board": auto-perform Song 1's bed stems so the beat MOVES like a DJ set instead of
+# sitting flat under the vocal (recipe §2.6 "PRODUCE, don't assemble"). Wave 1 is one move — the
+# bass pull-and-slam — placed on every produced drop. Everything here is on-beat by construction
+# (windows are real Song-1 downbeats) and additive: no produced drops => no moves => today's bed.
+
+
+def stem_moves_for_drops(placements, a1_downbeats: list[float]) -> list[StemMove]:
+    """Auto-perform the BASS on every produced drop: pull it from full to silent across the drop's
+    BUILD window so it SLAMS back on the downbeat with the vocal (the punch that makes a drop hit).
+
+    One `bass` StemMove per placement that already carries `build_bars` (i.e. one the planner marked
+    as a produced drop). The pull window is [the downbeat `build_bars` bars before the anchor, the
+    anchor] — both taken from Song 1's REAL downbeat grid (not bpm arithmetic), so start and end land
+    exactly on downbeats and the move is on-beat by construction (referee R3). The window matches the
+    engine's build window, so the bass sucks out precisely as the filter+volume build rises.
+
+    Returns [] when there are no produced drops or no grid — the bed then stays flat (today's mix).
+    The caller gates this on a confident grid; a produced drop only exists on one anyway.
+    """
+    if not a1_downbeats:
+        return []
+    moves: list[StemMove] = []
+    for p in sorted(placements, key=lambda pl: pl.anchor):
+        build_bars = getattr(p, "build_bars", 0)
+        if build_bars <= 0:  # only produced drops get a bass pull; a plain entry stays untouched
+            continue
+        i = min(range(len(a1_downbeats)), key=lambda k: abs(a1_downbeats[k] - p.anchor))  # the anchor's downbeat
+        start = a1_downbeats[max(0, i - build_bars)]  # step back build_bars WHOLE bars along the real grid
+        end = a1_downbeats[i]
+        if end - start <= 0:  # anchor at/near the very start — no runway for a build; skip
+            continue
+        moves.append(StemMove(stem="bass", start=round(start, 3), end=round(end, 3),
+                              gain_from=1.0, gain_to=0.0))
+    return moves

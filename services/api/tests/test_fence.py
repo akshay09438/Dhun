@@ -506,3 +506,52 @@ def test_synced_anchors_spans_even_when_the_only_drop_is_in_the_middle():
     anchors_ranked = [16.0, 120.0, 224.0]
     picks = fence.synced_anchors(anchors_ranked, drops=[120.0], track_end=240.0, count=3)
     assert min(picks) < 80.0 and max(picks) >= 160.0 and 120.0 in picks
+
+
+# ---------------------------------------------------------------- stem dynamics (Step 3)
+# fence.stem_moves_for_drops emits the auto-performed BASS pull-and-slam: one bass StemMove per
+# placement that carries build_bars (a produced drop), pulling bass 1.0 -> 0.0 across the build
+# window, both ends on Song 1's real downbeat grid (make_analysis: downbeats every 2.0s).
+
+
+def test_stem_moves_bass_pull_on_a_produced_drop():
+    a1 = make_analysis(bpm=120.0, n_bars=32)  # downbeats 0,2,4,...; anchor 16.0 = downbeats[8]
+    p = Placement(anchor=16.0, vocal_src=(0.0, 8.0), build_bars=3)
+    moves = fence.stem_moves_for_drops([p], a1.downbeats)
+    assert len(moves) == 1
+    m = moves[0]
+    assert m.stem == "bass" and m.gain_from == 1.0 and m.gain_to == 0.0
+    assert m.end == 16.0                       # slams back on the anchor downbeat
+    assert m.start == a1.downbeats[8 - 3]      # 3 whole bars earlier, on the grid (10.0)
+    # both ends land exactly on real downbeats (on-beat by construction -> referee R3)
+    assert m.start in a1.downbeats and m.end in a1.downbeats
+
+
+def test_no_stem_move_for_a_plain_entry():
+    a1 = make_analysis(bpm=120.0, n_bars=32)
+    p = Placement(anchor=16.0, vocal_src=(0.0, 8.0))  # build_bars defaults 0 -> not a produced drop
+    assert fence.stem_moves_for_drops([p], a1.downbeats) == []
+
+
+def test_stem_moves_one_per_produced_drop():
+    a1 = make_analysis(bpm=120.0, n_bars=64)
+    ps = [Placement(anchor=16.0, vocal_src=(0.0, 8.0), build_bars=3),
+          Placement(anchor=64.0, vocal_src=(0.0, 8.0), build_bars=3),
+          Placement(anchor=100.0, vocal_src=(0.0, 8.0))]  # plain -> no move
+    moves = fence.stem_moves_for_drops(ps, a1.downbeats)
+    assert len(moves) == 2 and all(m.stem == "bass" for m in moves)
+
+
+def test_stem_moves_empty_without_a_grid():
+    p = Placement(anchor=16.0, vocal_src=(0.0, 8.0), build_bars=3)
+    assert fence.stem_moves_for_drops([p], []) == []
+
+
+def test_stem_move_clamps_to_the_grid_start():
+    # A produced drop near the very start has no room for a full build-bars step-back; the pull
+    # clamps to the first downbeat and never goes negative (and stays a valid start < end).
+    a1 = make_analysis(bpm=120.0, n_bars=32)
+    p = Placement(anchor=4.0, vocal_src=(0.0, 8.0), build_bars=3)  # only 2 bars of runway
+    moves = fence.stem_moves_for_drops([p], a1.downbeats)
+    assert len(moves) == 1 and moves[0].start == a1.downbeats[0] and moves[0].end == 4.0
+    assert moves[0].start < moves[0].end

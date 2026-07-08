@@ -77,6 +77,25 @@ class Placement(BaseModel):
     warp: list[tuple[float, float, float]] = []
 
 
+class StemMove(BaseModel):
+    """One auto-performed 'mixing board' move (Step 3): ride ONE of Song 1's bed stems'
+    volume from gain_from to gain_to across an on-beat window [start, end], then it
+    returns to 1.0 everywhere outside the window. A beat move isn't tied to a vocal
+    entry, so it lives at the MixPlan top level.
+
+    One primitive expresses every DJ move in this step: bass pull (1.0→0.0), hold-muted
+    (0.0→0.0), duck (1.0→0.4), rebuild (0.0→1.0). Boosting a stem above 1.0 is out of
+    scope in v1 — moves only duck/mute and return, which keeps clip-safety trivial (the
+    master can never be pushed into clipping by a move). Wave 1 uses only the bass pull.
+    """
+
+    stem: str  # which Song-1 bed stem: "drums" | "bass" | "other"
+    start: float  # secs into Song 1, on a downbeat
+    end: float  # secs into Song 1, on a downbeat; start < end
+    gain_from: float = 1.0  # linear gain at start …
+    gain_to: float = 0.0  # … ramping to this at end (the stem is at 1.0 outside the window)
+
+
 class MixPlan(BaseModel):
     """The recipe for one mix — what the brain decided, for the engine to run.
 
@@ -99,6 +118,7 @@ class MixPlan(BaseModel):
     beat_breath: bool = False  # drop Song 1's beat for one bar just before the vocal
     placements: list[Placement] = []  # the full arrangement; [] => single-placement (M3)
     s1_vocal_regions: list[tuple[float, float]] = []  # spans where Song 1's OWN vocal answers (contrast)
+    stem_moves: list[StemMove] = []  # Step 3: auto-performed beat moves (bass pull, etc.); [] => today's flat bed
     take: int = 1  # which regenerate iteration produced this (1-based)
     notes: str = ""  # DJ-language explanation of the move
     confidence: float = 0.0

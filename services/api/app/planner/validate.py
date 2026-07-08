@@ -43,6 +43,16 @@ MIN_AUDIBLE_FRACTION = 0.02
 # "sweep-in") would silently render no effect — for a product whose worst outcome is a
 # worse-sounding mix, we fail it loudly instead of shipping it quietly.
 _KNOWN_FX = {"sweep_in"}
+# The Song-1 bed stems a Step-3 beat move may ride. An unknown stem would silently do nothing
+# in the engine (like an unknown fx), so we fail it loudly.
+_BED_STEMS = {"drums", "bass", "other"}
+# The audible floor for the never-all-muted guard: at least one bed stem must stay above this at
+# every instant, or the plan is rejected. This PLAN-level guard is the primary defense against a
+# localized silent hole — validate_render's not-silent check is global (it can't see a brief mid-mix
+# hole), so the guard must be sound on its own. It is: same-stem moves can't overlap (rejected in
+# _stem_move_violations), so each stem's modelled gain equals the engine's exactly and the muted-span
+# math below is exact — no coarse sampling, nothing to slip through.
+_ALL_MUTED_EPS = 0.05
 
 
 class ValidationError(Exception):
@@ -89,6 +99,85 @@ def _warp_violations(p, downbeats: list[float]) -> list[str]:
             if msg not in out:
                 out.append(msg)
     return out
+
+
+def _muted_spans(moves: list, stem: str) -> list[tuple[float, float]]:
+    """The time spans where one bed stem is AT/UNDER the audible floor (_ALL_MUTED_EPS). Its gain is
+    1.0 (audible) outside its moves; within a move's linear ramp gain_from→gain_to over [start,end] we
+    solve the single point where the ramp crosses the floor. Same-stem moves are guaranteed NOT to
+    overlap (the referee rejects overlaps — see _stem_move_violations), so at any instant a stem is
+    covered by at most one move: its exact gain IS that move's ramp, and the union of per-move sub-
+    spans is the exact muted set. Exact math (no sampling), so a hole between samples can't slip
+    through — and, crucially, the guard can never MISS a real hole (only over-flag a measure-zero
+    touch)."""
+    eps = _ALL_MUTED_EPS
+    spans: list[tuple[float, float]] = []
+    for m in moves:
+        if m.stem != stem or m.end <= m.start:
+            continue
+        gf, gt = m.gain_from, m.gain_to
+        if gf <= eps and gt <= eps:
+            spans.append((m.start, m.end))              # muted across the whole ramp
+        elif gf > eps and gt > eps:
+            continue                                    # this ramp never reaches the floor
+        else:                                           # crosses the floor once along the ramp
+            t = m.start + (eps - gf) / (gt - gf) * (m.end - m.start)
+            spans.append((t, m.end) if gf > eps else (m.start, t))
+    return spans
+
+
+def _all_stems_muted_somewhere(moves: list) -> bool:
+    """True if some instant lies in the muted span of ALL THREE bed stems at once (a silent hole).
+    Intersects the three stems' exact muted-span unions; touching at a single instant still counts
+    (conservative — the guard may false-flag a measure-zero touch but can never MISS a real hole)."""
+    d, b, o = (_muted_spans(moves, s) for s in _BED_STEMS)
+    for s1, e1 in d:
+        for s2, e2 in b:
+            lo, hi = max(s1, s2), min(e1, e2)
+            if lo <= hi and any(max(lo, s3) <= min(hi, e3) for s3, e3 in o):
+                return True
+    return False
+
+
+def _stem_move_violations(moves: list, downbeats: list[float]) -> list[str]:
+    """Step 3: every StemMove must ride a real bed stem, land on Song 1's downbeats (R3), have a
+    forward window, only duck/return within [0,1] (no boosts → the master can't be pushed to clip),
+    and never leave all three bed stems muted at once (no silent hole). Empty moves => no checks =>
+    today's behaviour."""
+    out: list[str] = []
+    if moves and not downbeats:  # a beat move fundamentally needs a grid to lock to; without one the
+        out.append("a beat move needs Song 1's downbeat grid to lock to (R3)")  # R3 check is vacuous
+    for m in moves:
+        if m.stem not in _BED_STEMS:
+            out.append(f"a beat move targets an unknown stem '{m.stem}'")
+            continue  # nothing else about an unknown stem is meaningful to check
+        if m.end <= m.start:
+            out.append("a beat move has an empty or backwards window")
+        if not (0.0 <= m.gain_from <= 1.0 and 0.0 <= m.gain_to <= 1.0):
+            out.append("a beat move gain is outside 0..1 (no boosts in v1)")
+        if not _on_a_downbeat(m.start, downbeats) or not _on_a_downbeat(m.end, downbeats):
+            out.append("a beat move is not on a downbeat of Song 1 (R3)")
+    valid = [m for m in moves if m.stem in _BED_STEMS and m.end > m.start]
+    # Two moves on the SAME stem whose windows overlap would MULTIPLY in the engine (its envelope does
+    # env *= each ramp), so their combined duck can dip below the floor even when neither alone does —
+    # a hole the exact-per-move muted-span math below could not see. Reject overlaps: at most one move
+    # per stem at any instant keeps that math exact and the never-all-muted guard sound. Wave 1 never
+    # emits overlaps (one bass pull per drop, drops far apart); a plan that does is malformed (two
+    # gestures on one stem at once). Runs on ANY plan's moves, so a future/AI plan can't slip past it.
+    by_stem: dict[str, list] = {}
+    for m in valid:
+        by_stem.setdefault(m.stem, []).append(m)
+    for stem, ms in by_stem.items():
+        ms.sort(key=lambda x: x.start)
+        if any(a.end > b.start + 1e-9 for a, b in zip(ms, ms[1:])):
+            out.append(f"two beat moves on the same stem ('{stem}') overlap")
+    # Never-all-muted (defense-in-depth, exact): if the three bed stems' muted spans share any
+    # instant, the bed goes silent there — reject it. Runs on any plan's moves, not just Wave 1's.
+    if valid and _all_stems_muted_somewhere(valid):
+        out.append("a beat move would mute all of Song 1's bed at once (R6)")
+    # de-dupe so N off-beat moves don't repeat the same line N times
+    seen: set[str] = set()
+    return [v for v in out if not (v in seen or seen.add(v))]
 
 
 def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[str]:
@@ -143,6 +232,11 @@ def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[s
                 if not is_crossfade:  # a fade-out tail into the entry is fine; anything else is two leads
                     violations.append("Song 1 and Song 2 vocals overlap beyond a crossfade (R1)")
                     break
+
+    # Step 3: the auto-performed beat moves (bass pull-and-slam, etc.). Checked against the SAME
+    # (possibly retimed) a1.downbeats the placements above used, so a move on a movable-master grid
+    # is judged on the beats the audio actually plays. Empty stem_moves => no checks => as before.
+    violations.extend(_stem_move_violations(getattr(plan, "stem_moves", []), a1.downbeats))
     return violations
 
 

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from app.models import MixPlan, Placement
+from app.models import MixPlan, Placement, StemMove
 from app.planner import validate
 from tests.test_fence import make_analysis
 
@@ -322,3 +322,157 @@ def test_r7_warp_boundary_off_grid_still_flagged():
     v = validate.validate_plan(make_arrangement_plan([p]), a1, a2)
     assert any("drifted off Song 1's grid (R7)" in m for m in v), v
     assert not any("outside the safe stretch band (R7)" in m for m in v), v  # ratio is in-band; only drift fires
+
+
+# ---------------------------------------------------------------- Step 3: stem-move referee checks
+# validate_plan gains additive checks over every StemMove (the "mixing board" moves). Agreed
+# violation-message keywords (each check appends a string CONTAINING the keyword):
+#   stem not in {drums,bass,other}        -> "unknown stem"
+#   start/end not on a Song-1 downbeat    -> "R3"
+#   start >= end (empty/backwards window) -> "empty"
+#   gain_from/gain_to outside [0.0, 1.0]  -> "gain"
+#   all three bed stems muted at once     -> "mute"
+# A valid move adds NO violation. On a movable-master plan (bed_stretch != 1.0) these run against
+# the RETIMED grid (fence.retimed_analysis), mirroring the existing R7 warp tests. make_analysis()
+# puts Song-1 downbeats every 2.0s, so 16.0/18.0/20.0 are on-grid and 17.1 is off-grid.
+
+
+def _sm(stem="bass", start=16.0, end=18.0, gain_from=1.0, gain_to=0.0):
+    return StemMove(stem=stem, start=start, end=end, gain_from=gain_from, gain_to=gain_to)
+
+
+def _plan_with_moves(moves, anchor=16.0, bed_stretch=1.0, master_bpm=120.0):
+    """A clean single-placement plan (anchor on the 2.0s grid) carrying the given stem moves, so any
+    violation the referee raises comes from a stem move — not the base plan."""
+    plan = make_plan(anchor=anchor)
+    plan.bed_stretch = bed_stretch
+    plan.master_bpm = master_bpm
+    plan.stem_moves = moves
+    return plan
+
+
+def test_validate_accepts_valid_stem_move():
+    # A valid bass pull-and-slam window (both edges on downbeats, gains in [0,1]) adds no violation.
+    a1, a2 = make_analysis(), make_analysis()
+    assert validate.validate_plan(_plan_with_moves([_sm("bass", 16.0, 18.0, 1.0, 0.0)]), a1, a2) == []
+
+
+def test_validate_flags_offbeat_stem_move():
+    # AC5: a stem move whose edge is off Song 1's downbeat grid (17.1 between the 2.0s downbeats) -> R3.
+    a1, a2 = make_analysis(), make_analysis()
+    v = validate.validate_plan(_plan_with_moves([_sm("bass", 16.0, 17.1, 1.0, 0.0)]), a1, a2)
+    assert any("R3" in m for m in v), v
+
+
+def test_validate_flags_unknown_stem():
+    # AC5: an unknown stem name would silently do nothing in the engine -> fail it loudly ("unknown stem").
+    a1, a2 = make_analysis(), make_analysis()
+    v = validate.validate_plan(_plan_with_moves([_sm("synth", 16.0, 18.0, 1.0, 0.0)]), a1, a2)
+    assert any("unknown stem" in m.lower() for m in v), v
+
+
+def test_validate_flags_stem_move_gain_out_of_range():
+    # AC5: v1 allows only duck/mute (gains in [0,1]); a boost (>1.0) or negative gain -> "gain".
+    a1, a2 = make_analysis(), make_analysis()
+    v = validate.validate_plan(_plan_with_moves([_sm("bass", 16.0, 18.0, 1.5, 0.0)]), a1, a2)
+    assert any("gain" in m.lower() for m in v), v
+
+
+def test_validate_flags_empty_stem_move_window():
+    # AC5: start >= end is an empty/backwards window (both edges on-grid so ONLY "empty" can fire) -> "empty".
+    a1, a2 = make_analysis(), make_analysis()
+    v = validate.validate_plan(_plan_with_moves([_sm("bass", 18.0, 18.0, 1.0, 0.0)]), a1, a2)
+    assert any("empty" in m.lower() for m in v), v
+
+
+def test_validate_flags_all_three_bed_stems_muted():
+    # AC5: defense-in-depth — no instant may have all three bed stems ramped to ~0 (a silent hole).
+    # Three hold-muted (0->0) moves over the same on-grid window => at every instant all three are 0.
+    a1, a2 = make_analysis(), make_analysis()
+    moves = [_sm("drums", 16.0, 18.0, 0.0, 0.0),
+             _sm("bass", 16.0, 18.0, 0.0, 0.0),
+             _sm("other", 16.0, 18.0, 0.0, 0.0)]
+    v = validate.validate_plan(_plan_with_moves(moves), a1, a2)
+    assert any("mute" in m.lower() for m in v), v
+
+
+def test_validate_accepts_two_bed_stems_muted_if_one_stays_audible():
+    # The mirror of the guard: muting two bed stems while the third stays up is a legit "just the drums"
+    # move and must NOT be flagged (at least one stem audible at every instant).
+    a1, a2 = make_analysis(), make_analysis()
+    moves = [_sm("bass", 16.0, 18.0, 0.0, 0.0),
+             _sm("other", 16.0, 18.0, 0.0, 0.0)]  # drums untouched (stays 1.0)
+    v = validate.validate_plan(_plan_with_moves(moves), a1, a2)
+    assert not any("mute" in m.lower() for m in v), v
+
+
+def test_validate_flags_crossing_ramp_silent_hole():
+    """Adversarial-review regression (Reviewer 2): the never-all-muted guard must catch a silent hole
+    formed by CROSSING ramps, not just constant-0 moves. The exact breach: a bass fade-out, a drums
+    fade-in, and a held-0 'other' all sit under the audible floor together for ~74ms — a window a
+    coarse 50ms time-sampler could step over. The exact interval-intersection guard catches it. Tested
+    on the guard directly with the precise (off-grid) breach geometry, asserting the MUTE flag."""
+    moves = [_sm("bass", 6.4, 8.045, 1.0, 0.0),    # fades to 0 by ~8.04
+             _sm("drums", 7.955, 9.6, 0.0, 1.0),   # fades up from 0 at ~7.96 — overlaps the bass tail
+             _sm("other", 6.4, 9.6, 0.0, 0.0)]      # held silent throughout
+    v = validate._stem_move_violations(moves, [round(1.6 * i, 4) for i in range(12)])
+    assert any("mute" in m.lower() for m in v), v
+
+
+def test_validate_flags_stem_move_without_a_grid():
+    """Adversarial-review regression (Reviewer 3): a beat move needs a downbeat grid to be on-beat;
+    with no grid the R3 check passes vacuously, so the referee flags a moves-without-grid plan. Only
+    reachable via a hand-built/corrupt cached plan — the planner only emits moves on a confident grid."""
+    v = validate._stem_move_violations([_sm("bass", 2.0, 4.0, 1.0, 0.0)], [])
+    assert any("grid" in m.lower() for m in v), v
+
+
+def test_validate_flags_overlapping_same_stem_moves():
+    """Adversarial RE-review regression: the engine MULTIPLIES two overlapping moves on ONE stem, so
+    two partial ducks each ABOVE the floor (0.08 > 0.05) can combine into a genuine silent hole the
+    min-model muted-span math can't see. The exact breach the re-reviewer rendered: two overlapping
+    0.08 ducks on every bed stem => a ~silent window that both the plan guard and the global render
+    check passed. Rejecting overlapping same-stem moves closes it (and keeps the guard exact)."""
+    a1, a2 = make_analysis(), make_analysis()  # downbeats every 2s
+    moves = [_sm("bass", 16.0, 20.0, 0.08, 0.08), _sm("bass", 18.0, 22.0, 0.08, 0.08),      # overlap 18-20
+             _sm("drums", 16.0, 20.0, 0.08, 0.08), _sm("drums", 18.0, 22.0, 0.08, 0.08),
+             _sm("other", 16.0, 20.0, 0.08, 0.08), _sm("other", 18.0, 22.0, 0.08, 0.08)]
+    v = validate.validate_plan(_plan_with_moves(moves), a1, a2)
+    assert any("overlap" in m.lower() for m in v), v
+
+
+def test_validate_accepts_nonoverlapping_same_stem_moves():
+    """The normal multi-drop case: two BASS pulls at different drops (windows far apart) is exactly
+    what the Wave-1 planner emits — it must NOT be flagged as an overlap."""
+    a1, a2 = make_analysis(n_bars=32), make_analysis()  # downbeats 0..62 every 2s
+    moves = [_sm("bass", 16.0, 18.0, 1.0, 0.0), _sm("bass", 40.0, 42.0, 1.0, 0.0)]
+    v = validate.validate_plan(_plan_with_moves(moves), a1, a2)
+    assert not any("overlap" in m.lower() for m in v), v
+
+
+def test_validate_stem_move_on_retimed_grid_passes():
+    # AC6: a movable-master plan (bed_stretch 1.05, master 126) with a stem move on RETIMED downbeats
+    # must validate clean — the referee runs the stem-move checks against fence.retimed_analysis, not
+    # the native grid. Mirrors test_validate_movable_master_on_retimed_grid_passes.
+    a1, a2 = make_analysis(), make_analysis()
+    master_bpm = 126.0
+    a1r = fence.retimed_analysis(a1, master_bpm)
+    anchor, start, end = a1r.downbeats[8], a1r.downbeats[8], a1r.downbeats[10]
+    plan = _plan_with_moves([_sm("bass", start, end, 1.0, 0.0)],
+                            anchor=anchor, bed_stretch=1.05, master_bpm=master_bpm)
+    assert validate.validate_plan(plan, a1, a2) == []
+
+
+def test_validate_stem_move_off_retimed_grid_flagged():
+    # AC6: the same movable-master plan with a stem move on NATIVE downbeats (16.0/18.0) — which are
+    # OFF the retimed grid — must be flagged R3. The plan's anchor sits on the RETIMED grid so the ONLY
+    # off-grid thing is the stem move. Fails today (no R3) precisely because the retimed stem-move check
+    # is unbuilt. Mirrors test_validate_movable_master_still_catches_offbeat_entry.
+    a1, a2 = make_analysis(), make_analysis()
+    master_bpm = 126.0
+    a1r = fence.retimed_analysis(a1, master_bpm)
+    assert min(abs(16.0 - d) for d in a1r.downbeats) > validate.BEAT_TOLERANCE_SECS  # 16.0 off the retimed grid
+    plan = _plan_with_moves([_sm("bass", 16.0, 18.0, 1.0, 0.0)],
+                            anchor=a1r.downbeats[8], bed_stretch=1.05, master_bpm=master_bpm)
+    v = validate.validate_plan(plan, a1, a2)
+    assert any("R3" in m for m in v), v

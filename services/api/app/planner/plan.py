@@ -300,16 +300,20 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         placements = _dedupe_nonoverlapping(rebuilt, opts["vocal_stretch"])
         source = "rules"
     placements, s1_regions = _apply_flourishes(a1g, placements, opts["vocal_stretch"])
-    if _confident(a1g):  # only produce (build/echo) on a trustworthy grid — shaky songs stay safe
+    stem_moves: list = []
+    if _confident(a1g):  # only produce (build/echo/stem-moves) on a trustworthy grid — shaky songs stay safe
         placements = _produce_drops(placements, opts.get("drops", []), s1_regions,
                                     opts["vocal_stretch"], opts["master_bpm"])
+        # Step 3: auto-perform the bass on each produced drop (pull-and-slam), on the retimed grid the
+        # audio plays at. Keys off build_bars, so it only fires where a real drop got a build.
+        stem_moves = fence.stem_moves_for_drops(placements, a1g.downbeats)
     first = placements[0]
     return MixPlan(
         mix_id=mix_id, song1_id=a1.song_id, song2_id=a2.song_id,
         master_bpm=opts["master_bpm"], vocal_stretch=opts["vocal_stretch"],
         bed_stretch=opts.get("bed_stretch", 1.0),  # movable master: how much Song 1's bed is stretched
         vocal_src=first.vocal_src, anchor=first.anchor,  # scalar mirrors first (M3 back-compat)
-        placements=placements, s1_vocal_regions=s1_regions, take=take,
+        placements=placements, s1_vocal_regions=s1_regions, stem_moves=stem_moves, take=take,
         notes=_describe_arrangement(placements, s1_regions),
         confidence=0.75 if source == "ai" else 0.6, source=source,
     )

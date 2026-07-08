@@ -39,6 +39,8 @@ _XFADE_MS = 8.0  # equal-power crossfade at each bar join in a beat-locked (warp
 # the engine honors each bar's target length exactly, which is what keeps the beat locked.
 _ATEMPO_MIN, _ATEMPO_MAX = 0.5, 2.0
 _BREATH_DUCK = 0.35  # the bed dips to this for one bar before a flagged entry (tension, not silence)
+_BED_STEMS = ("drums", "bass", "other")  # Song 1's bed, kept SEPARATE so a StemMove can ride one
+_STEM_SLAM_MS = 8.0  # declick ramp at a stem move's edges so a 0->1 slam is crisp but never clicks
 _SWEEP_LO_HZ = 300.0  # filter-sweep floor: the bed muffles to this cutoff, then opens up
 _BUILD_GAIN_LO = 0.55  # a produced-drop BUILD starts at this volume and rises to 1.0 (energy climbing)
 _ECHO_BEATS = 0.75  # produced-drop ECHO delay, in beats (a dotted-eighth — the classic vocal throw)
@@ -195,6 +197,36 @@ def _sum_stems(stem_paths: list[Path]) -> np.ndarray:
     return acc
 
 
+def _stem_envelope(length: int, moves, stem: str, sr: int) -> np.ndarray:
+    """The per-sample gain curve for one bed stem (Step 3): 1.0 everywhere, except inside each
+    StemMove on THIS stem, where it linearly ramps gain_from -> gain_to across [start, end]. A
+    short declick ramp returns it to 1.0 at the trailing edge (so a 0->1 slam is crisp but never
+    clicks), and eases it down from 1.0 at the leading edge if the move starts already ducked. The
+    curve is continuous by construction, so multiplying a stem by it never introduces a click.
+
+    Multiplied in (not assigned), so overlapping moves compose sensibly; moves not on this stem, or
+    with a non-positive window, contribute nothing. No moves => all ones => the stem is untouched.
+    """
+    env = np.ones(length, dtype=np.float32)
+    slam = max(1, int(sr * _STEM_SLAM_MS / 1000))
+    for m in moves:
+        if getattr(m, "stem", None) != stem:
+            continue
+        s = max(0, int(m.start * sr))
+        e = min(length, int(m.end * sr))
+        if e <= s:
+            continue
+        gf, gt = float(m.gain_from), float(m.gain_to)
+        env[s:e] *= np.linspace(gf, gt, e - s, dtype=np.float32)  # the ramp
+        e2 = min(e + slam, length)
+        if e2 > e:  # trailing declick: gain_to -> 1.0 (the slam), so the return never clicks
+            env[e:e2] *= np.linspace(gt, 1.0, e2 - e, dtype=np.float32)
+        s0 = max(0, s - slam)
+        if s > s0 and gf < 1.0:  # leading declick: 1.0 -> gain_from (only if the move starts ducked)
+            env[s0:s] *= np.linspace(1.0, gf, s - s0, dtype=np.float32)
+    return env
+
+
 def _edge_fade(y: np.ndarray) -> np.ndarray:
     k = min(int(SR * _FADE_MS / 1000), len(y) // 2)
     if k > 0:
@@ -315,6 +347,10 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
     `placements` (each with anchor / vocal_src / beat_breath) or the scalar anchor /
     vocal_src fallback. Song 1's beat runs continuously; each placement lays the vocal
     on top; beat_breath ducks the bed for one bar before that entry (never silence).
+
+    Step 3: `plan.stem_moves` (optional) auto-performs the bed — each move rides one stem
+    (drums/bass/other) by a gain envelope over an on-beat window (e.g. the bass pull-and-
+    slam into a drop). No stem_moves => the bed plays flat, exactly as before.
     """
     if plan.master_bpm <= 0:
         raise RenderError("plan has a non-positive tempo")
@@ -331,8 +367,22 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
                 raise RenderError(f"bed stretch {bed_stretch:.4f} outside atempo range")
             song1_stems = {name: _atempo_file(sp, bed_stretch, Path(_td) / f"{name}.wav")
                            for name, sp in song1_stems.items()}
-        bed = _sum_stems([song1_stems["drums"], song1_stems["bass"], song1_stems["other"]])
         bar = int((60.0 / plan.master_bpm) * 4 * SR)
+        # Step 3: ride each bed stem by its own gain envelope (1.0 outside its moves), then SUM the
+        # three into one bed — the bass pull-and-slam is baked in HERE (the bass is enveloped down
+        # across its window, and slams back at the anchor). With NO stem_moves every envelope is
+        # all-ones, so this is exactly `_sum_stems([drums,bass,other])` (same stems, same order) —
+        # and everything below is the ORIGINAL pipeline verbatim, so a no-move plan renders byte-for-
+        # byte the same mix as before, by construction (the "old mixes still work" invariant). Doing
+        # the sum first (rather than carrying the stems through the arrangement) is what keeps that
+        # invariant exact: the treatments and vocal placement below operate on the bed identically to
+        # the pre-Step-3 engine.
+        moves = getattr(plan, "stem_moves", []) or []
+        decoded = {name: _decode(song1_stems[name]) for name in _BED_STEMS}
+        length = max(len(s) for s in decoded.values())
+        bed = np.zeros((length, 2), dtype=np.float32)
+        for name in _BED_STEMS:
+            bed += _hold(decoded[name], length) * _stem_envelope(length, moves, name, SR)[:, None]
 
         prev_voc_end = 0  # sample where the last placed vocal ended — a build never reaches back over it
         for p in _placements_of(plan):

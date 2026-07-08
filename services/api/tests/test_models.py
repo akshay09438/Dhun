@@ -2,7 +2,7 @@
 M3-era single-placement plans cached on disk.
 """
 
-from app.models import MixPlan, Placement
+from app.models import MixPlan, Placement, StemMove
 
 
 def test_placement_and_arrangement_roundtrip():
@@ -54,3 +54,25 @@ def test_slice_b_contrast_and_fx_roundtrip():
     reloaded = MixPlan.model_validate_json(plan.model_dump_json())
     assert reloaded.placements[0].fx == "sweep_in"
     assert reloaded.s1_vocal_regions == [(40.0, 52.0)]
+
+
+def test_stem_move_roundtrip_and_defaults():
+    # Step 3: a StemMove has sensible pull defaults (full -> silent) and survives a round-trip
+    mv = StemMove(stem="bass", start=64.0, end=70.0)
+    assert mv.gain_from == 1.0 and mv.gain_to == 0.0  # the bass-pull default
+    reloaded = StemMove.model_validate_json(mv.model_dump_json())
+    assert (reloaded.stem, reloaded.start, reloaded.end) == ("bass", 64.0, 70.0)
+
+
+def test_stem_moves_are_additive_and_default_empty():
+    plan = MixPlan(
+        mix_id="m" * 64, song1_id="a" * 64, song2_id="b" * 64,
+        master_bpm=120.0, vocal_stretch=1.0, vocal_src=(16.0, 40.0), anchor=16.0,
+        stem_moves=[StemMove(stem="bass", start=10.0, end=16.0, gain_from=1.0, gain_to=0.0)],
+    )
+    reloaded = MixPlan.model_validate_json(plan.model_dump_json())
+    assert reloaded.stem_moves[0].stem == "bass" and reloaded.stem_moves[0].gain_to == 0.0
+    # an old plan with no stem_moves still parses -> defaults to [] (today's flat bed)
+    old = ('{"mix_id":"m","song1_id":"a","song2_id":"b","master_bpm":120.0,'
+           '"vocal_stretch":1.0,"vocal_src":[16.0,40.0],"anchor":16.0}')
+    assert MixPlan.model_validate_json(old).stem_moves == []

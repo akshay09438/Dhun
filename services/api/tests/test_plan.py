@@ -394,3 +394,59 @@ def test_throw_skipped_when_next_drop_is_within_the_echo_tail(monkeypatch):
 
 def test_extract_json_tolerates_prose():
     assert llm.extract_json('sure!\n{"placements": []}\nthanks') == {"placements": []}
+
+
+def test_produced_drop_gets_a_bass_pull(monkeypatch):
+    """Step 3: on a confident pair, a produced drop (build) also gets a BASS pull-and-slam —
+    one bass stem_move whose window is the build into that drop, landing the slam on the anchor."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    energy = [0.3] * 48
+    for i in range(36, 40):
+        energy[i] = 0.2
+    for i in range(40, 48):
+        energy[i] = 0.95  # a big drop at bar 40 -> 80.0s
+    a1 = make_analysis(bpm=120.0, n_bars=48, energy=energy)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 16.0), (40.0, 56.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
+
+    assert plan.stem_moves, "a produced drop should carry a bass pull-and-slam"
+    assert all(m.stem == "bass" and m.gain_from == 1.0 and m.gain_to == 0.0 for m in plan.stem_moves)
+    # each pull slams back on a produced placement's anchor (end == that anchor), and pulls before it
+    produced = [p.anchor for p in plan.placements if getattr(p, "build_bars", 0) > 0]
+    for m in plan.stem_moves:
+        assert m.end in produced and m.start < m.end
+
+
+def test_shaky_song_has_no_stem_moves(monkeypatch):
+    """A shaky grid plays a plain, safe beat — no auto-performed stem moves (same gate as build/echo)."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    energy = [0.3] * 48
+    for i in range(40, 48):
+        energy[i] = 0.95
+    a1 = make_analysis(bpm=120.0, n_bars=48, energy=energy)
+    a1.bpm_confidence = 0.3  # shaky -> no fancy moves
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 16.0), (40.0, 56.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    assert plan.stem_moves == []
+
+
+def test_stem_move_window_matches_the_build(monkeypatch):
+    """The bass pull window equals the build into the drop: it steps back planner._BUILD_BARS whole
+    bars from the anchor along the real grid, so the bass sucks out exactly as the build rises."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    energy = [0.3] * 48
+    for i in range(36, 40):
+        energy[i] = 0.2
+    for i in range(40, 48):
+        energy[i] = 0.95
+    a1 = make_analysis(bpm=120.0, n_bars=48, energy=energy)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 16.0), (40.0, 56.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
+
+    for m in plan.stem_moves:
+        i = min(range(len(a1.downbeats)), key=lambda k: abs(a1.downbeats[k] - m.end))
+        assert m.start == a1.downbeats[max(0, i - planner._BUILD_BARS)]
