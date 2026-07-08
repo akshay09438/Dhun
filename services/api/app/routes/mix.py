@@ -59,7 +59,10 @@ _S1_STEMS = ("drums", "bass", "other")
 #        real DROP (fence.energy_drops/vocal_peaks/synced_anchors); no engine/referee change.
 # m5b.1: the produced drop — a multi-bar filter+volume BUILD into each drop and a decaying vocal
 #        ECHO throw on the climax (render._build_bed/_echo; additive plan fields, referee unchanged).
-ENGINE_VERSION = "m5b.1"
+# m5c.1: catalog vocal detection repaired — 3 vocals were analyzed BEFORE their stem was split
+#        (empty vocal_regions -> crude, short, mid-word section chunks); recomputed from the stems
+#        (Der Lagi 0->15 regions), so vocals now enter cleanly and last their real sung length.
+ENGINE_VERSION = "m5c.1"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.
