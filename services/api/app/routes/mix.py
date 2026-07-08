@@ -78,7 +78,10 @@ _S1_STEMS = ("drums", "bass", "other")
 # m5h.1: movable-master tempo — house-protective shared tempo unblocks far-apart pairs (e.g. Tere
 #        Bina). MixPlan.bed_stretch time-stretches Song 1's whole bed to the target; the planner and
 #        referee rescale Song 1's grid by the same factor (fence.retimed_analysis). Additive.
-ENGINE_VERSION = "m5h.1"
+# m5i.1: wider per-bar beat-lock grip band (fence.WARP_LO/HI, referee R7) so a vocal whose overall
+#        stretch sits near a SAFE_STRETCH edge (Tere Bina, Der Lagi) stays LOCKED to the beat instead
+#        of drifting (warp_map was bailing to a single global stretch). Changes the rendered vocal.
+ENGINE_VERSION = "m5i.1"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.

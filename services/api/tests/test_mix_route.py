@@ -146,6 +146,6 @@ def test_mix_rejects_bad_song_id(tmp_path, monkeypatch):
     assert client.get("/mix/" + "a" * 64 + "/audio").status_code == 404
 
 
-def test_engine_version_is_movable_master():
-    # bumped so a pair now mixed at a shared tempo never serves a stale native-tempo cache
-    assert mix_route.ENGINE_VERSION == "m5h.1"
+def test_engine_version_is_current():
+    # bumped when the engine/plan changes so a stale cached mix is never served
+    assert mix_route.ENGINE_VERSION == "m5i.1"
