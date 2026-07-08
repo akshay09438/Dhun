@@ -509,3 +509,145 @@ def test_prior_vocal_tail_is_ducked_by_a_later_breath(tmp_path):
     ducked = vf(4.2, 4.8)   # vocal tail INSIDE the breath bar -> must be pulled down
     full = vf(2.2, 2.8)     # the same vocal, before the breath bar -> full level
     assert ducked < 0.6 * full, f"prior vocal tail not ducked by the breath: {ducked:.4f} vs full {full:.4f}"
+
+
+# ---------------------------------------------------------------- Step 4: vocal chop (chop on the drop)
+# _chop_pattern(voc, out_len, bpm) fills out_len samples with the vocal's first _CHOP_SECS onset,
+# edge-faded, re-fired every _CHOP_INTERVAL_BEATS (an 8th note) on Song 1's grid -- "dum-da-ra-dum".
+# The call site replaces only the placement's FIRST BAR: k = min(bar, len(voc)); voc[:k] =
+# _chop_pattern(voc[:k], k, master_bpm). So len(voc) -- and thus placement_end and the referee's R1
+# overlap math -- must be UNCHANGED. These tests were written independently of the implementation,
+# from the acceptance criteria, to catch a length change, a clip, or a lost rhythmic pattern.
+
+
+def _voc_tone(n, freq=440.0, amp=0.4):
+    """A stereo float32 tone of n samples (for direct _chop_pattern unit tests, no ffmpeg)."""
+    t = np.linspace(0, n / render.SR, n, endpoint=False)
+    m = (amp * np.sin(2 * np.pi * freq * t)).astype("float32")
+    return np.stack([m, m], axis=1)
+
+
+def _onsets(y, thresh_frac=0.3):
+    """Count rhythmic onsets: rising edges of a smoothed abs-envelope through thresh_frac of its peak.
+    A continuous tone gives 1 (one rise); a re-fired chop gives one per hit (bursts split by silence)."""
+    mono = np.abs(y).mean(axis=1) if y.ndim == 2 else np.abs(y)
+    win = max(1, int(0.005 * render.SR))
+    env = np.convolve(mono, np.ones(win, dtype="float32") / win, mode="same")
+    peak = float(env.max()) if env.size else 0.0
+    if peak <= 0:
+        return 0
+    voiced = env > thresh_frac * peak
+    return int(np.sum((~voiced[:-1]) & voiced[1:])) + (1 if voiced[0] else 0)
+
+
+def test_chop_pattern_returns_exactly_out_len_across_range():
+    """AC1 (load-bearing): _chop_pattern must return EXACTLY out_len samples for any out_len/bpm, so
+    replacing bar 1 never changes the vocal's length -> placement_end and the referee's overlap math
+    are untouched. Would fail the instant the helper returned a different length. Vocal is always at
+    least out_len long here, exactly as the call site guarantees (out_len == len(voc[:k]) == k)."""
+    for out_len in (1, 500, 44100, 88200, 132300):
+        v = _voc_tone(max(out_len, 90000))  # voc >= out_len, the call-site shape
+        for bpm in (60.0, 90.0, 120.0, 174.0):
+            r = render._chop_pattern(v, out_len, bpm)
+            assert r.shape == (out_len, 2), f"out_len={out_len} bpm={bpm} -> {r.shape}, want ({out_len}, 2)"
+
+
+def test_render_chop_does_not_change_placement_length(tmp_path):
+    """AC1 at the render level: a plan WITH a chop placement renders to the EXACT same total length as
+    the same plan WITHOUT the chop. If the chop ever grew/shrank the vocal, placement_end would move
+    and the referee's overlap math would be wrong -- this catches that regression."""
+    stems, vocal = _stems(tmp_path)
+    a, b = tmp_path / "nochop.wav", tmp_path / "chop.wav"
+    p_plain = _arr_plan([(1.0, (0.0, 2.0), False)])  # 120bpm bar = 2.0s; the 2.0s vocal fills bar 1
+    render.render_mix(p_plain, stems, vocal, a)
+    p_chop = _arr_plan([(1.0, (0.0, 2.0), False)])
+    p_chop.placements[0].chop = True
+    render.render_mix(p_chop, stems, vocal, b)
+    ya, _ = sf.read(a, dtype="float32", always_2d=True)
+    yb, _ = sf.read(b, dtype="float32", always_2d=True)
+    assert len(ya) == len(yb), f"chop changed the render length: {len(ya)} vs {len(yb)} samples"
+
+
+def test_chop_absent_field_is_byte_identical_to_chop_false(tmp_path):
+    """AC2 (old mixes still work): a plan with no `chop` attribute renders byte-for-byte identically to
+    a plan with chop=False -- proving `getattr(p, 'chop', False)` is a true no-op and existing mixes are
+    untouched. Same shape, max sample diff exactly 0.0."""
+    stems, vocal = _stems(tmp_path)
+    a, b = tmp_path / "absent.wav", tmp_path / "false.wav"
+    p_absent = _arr_plan([(1.0, (0.0, 2.0), False)])  # no chop attribute at all
+    render.render_mix(p_absent, stems, vocal, a)
+    p_false = _arr_plan([(1.0, (0.0, 2.0), False)])
+    p_false.placements[0].chop = False
+    render.render_mix(p_false, stems, vocal, b)
+    ya, _ = sf.read(a, dtype="float32", always_2d=True)
+    yb, _ = sf.read(b, dtype="float32", always_2d=True)
+    assert ya.shape == yb.shape
+    assert float(np.max(np.abs(ya - yb))) == 0.0, "chop=False / absent must be byte-identical"
+
+
+def test_chop_pattern_fires_multiple_rhythmic_onsets():
+    """AC3: the chopped bar carries the rhythmic 're-fire' -- multiple distinct onsets ('dum-da-ra-dum'),
+    strictly more than the un-chopped (continuous) bar. Detected by counting rising envelope edges. The
+    fragment (0.22s) is shorter than the 8th-note step (0.25s @120bpm), so hits are split by silence and
+    are individually detectable."""
+    bar = int((60.0 / 120.0) * 4 * render.SR)          # one bar @120bpm
+    step = max(1, int((60.0 / 120.0) * render._CHOP_INTERVAL_BEATS * render.SR))
+    expected_hits = len(range(0, bar, step))            # 8 eighth-notes in a 4/4 bar
+    v = _voc_tone(bar)
+    chopped = render._chop_pattern(v, bar, 120.0)
+    n_chop = _onsets(chopped)
+    n_plain = _onsets(v[:bar])
+    assert n_chop >= 2, f"chopped bar is not rhythmic: only {n_chop} onset(s)"
+    assert n_chop > n_plain, f"chop added no rhythm: chopped={n_chop} vs un-chopped={n_plain}"
+    assert n_chop >= expected_hits - 1, f"chop lost hits: {n_chop} onsets, expected ~{expected_hits}"
+
+
+def test_render_chop_does_not_clip(tmp_path):
+    """AC4: the full render with a chop placement stays inside [-1, 1] -- the downstream peak-normalize +
+    clip guard holds even with the re-fired onset stacking. Audible and never clipping."""
+    stems, vocal = _stems(tmp_path)
+    out = tmp_path / "mix.wav"
+    p = _arr_plan([(1.0, (0.0, 2.0), False)])
+    p.placements[0].chop = True
+    render.render_mix(p, stems, vocal, out)
+    y, _ = sf.read(out, dtype="float32", always_2d=True)
+    peak = float(np.max(np.abs(y)))
+    assert 0.0 < peak <= render._CEILING, f"chop render clipped or went silent: peak={peak:.4f}"
+
+
+def test_chop_pattern_edge_cases_are_graceful_and_keep_length():
+    """AC5: _chop_pattern must never crash and must keep the length invariant on degenerate inputs. Each
+    case mirrors the call site, where out_len == len(voc[:k]) (out_len never exceeds the vocal), so the
+    'exactly out_len' invariant is the one the engine actually relies on. See the separate shortfall test
+    for the one input shape where the no-op branch returns fewer than out_len."""
+    cases = [
+        ("empty vocal", np.zeros((0, 2), dtype="float32"), 100, 120.0),      # len(voc)=0 -> zeros(out_len)
+        ("1-sample vocal", _voc_tone(1), 1, 120.0),                          # call-site k=1
+        ("1-sample, longer bar", _voc_tone(1), 100, 120.0),                  # fires the 1-sample frag
+        ("bpm = 0", _voc_tone(200), 200, 0.0),                               # no tempo -> no-op, voc>=out_len
+        ("bpm < 0", _voc_tone(200), 200, -120.0),                            # negative tempo -> no-op
+        ("out_len = 0", _voc_tone(200), 0, 120.0),                           # empty bar -> zeros(0)
+        ("voc shorter than one hit", _voc_tone(1000), 1000, 120.0),          # frag < _CHOP_SECS*SR
+        ("voc shorter than one bar", _voc_tone(500), 500, 120.0),            # k = len(voc) < bar
+    ]
+    for name, v, out_len, bpm in cases:
+        r = render._chop_pattern(v, out_len, bpm)
+        assert r.ndim == 2 and r.shape[1] == 2, f"{name}: not stereo -> {r.shape}"
+        assert len(r) == out_len, f"{name}: length {len(r)} != out_len {out_len}"
+        assert np.isfinite(r).all(), f"{name}: produced non-finite samples"
+
+
+def test_chop_pattern_noop_shortfall_when_out_len_exceeds_voc():
+    """AC5 (documented discrepancy, flagged): the docstring promises 'Returns exactly out_len samples',
+    but the graceful no-op branch returns `voc[:out_len]`, which is SHORTER than out_len when the vocal
+    is shorter than out_len AND there's no tempo (bpm <= 0). This pins that current behaviour so it is
+    visible, not silent. It is not reachable through render_mix today (render rejects bpm <= 0 up front,
+    and the call site always passes out_len == len(voc)), but a future caller that passes out_len >
+    len(voc) with bpm <= 0 would get a short buffer and silently move placement_end. Reported as a gap."""
+    v = _voc_tone(50)          # 50 samples of vocal
+    out_len = 100              # ask for more than the vocal has
+    r = render._chop_pattern(v, out_len, 0.0)  # bpm <= 0 -> the no-op branch
+    # Current (buggy) behaviour: returns len(voc), NOT out_len. If a fix ever makes this return out_len,
+    # this assertion flips red on purpose -- delete it and remove the shortfall note from the docstring.
+    assert len(r) == len(v) < out_len, (
+        f"no-op branch length changed: got {len(r)} (was {len(v)}, out_len {out_len})")
