@@ -79,6 +79,18 @@ def _decode(src: Path) -> np.ndarray:
     return _guard_duration(y)
 
 
+def _atempo_file(src: Path, ratio: float, out: Path) -> Path:
+    """Time-stretch a whole audio file by `ratio` (pitch-preserved atempo) to a WAV at `out`.
+
+    Used by the movable master to retime Song 1's whole bed to the shared tempo before the
+    arrangement is laid down — so the stretched stems sit on the same retimed grid the plan's
+    anchors/warp already assume. `ratio` is the house bed_stretch (~0.96–1.08 in practice; the
+    caller checks it is inside atempo's range)."""
+    _run_ffmpeg(["ffmpeg", "-y", "-i", str(src), "-ar", str(SR), "-ac", "2",
+                 "-filter:a", f"atempo={ratio:.6f}", str(out)])
+    return out
+
+
 def _vocal_take(src: Path, start: float, dur: float, ratio: float) -> np.ndarray:
     """Extract [start, start+dur] of the vocal and stretch it to the master tempo.
 
@@ -306,53 +318,66 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
     """
     if plan.master_bpm <= 0:
         raise RenderError("plan has a non-positive tempo")
-    bed = _sum_stems([song1_stems["drums"], song1_stems["bass"], song1_stems["other"]])
-    bar = int((60.0 / plan.master_bpm) * 4 * SR)
+    # Movable master: retime Song 1's WHOLE bed to the shared tempo before the arrangement is laid
+    # down, so the stretched stems sit on the same retimed grid the plan's anchors/warp assume. We
+    # engage on the SAME 1e-6 threshold the planner and referee use, so the bed can never be left
+    # un-stretched while they assume the retimed grid (that gap would ship an off-beat mix the
+    # referee couldn't see). bed_stretch is 4-dp rounded, so any real move is >= 1e-4; exactly 1.0
+    # skips the stretch and renders byte-identical to today.
+    bed_stretch = float(getattr(plan, "bed_stretch", 1.0) or 1.0)
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as _td:
+        if abs(bed_stretch - 1.0) >= 1e-6:
+            if not (_ATEMPO_MIN <= bed_stretch <= _ATEMPO_MAX):
+                raise RenderError(f"bed stretch {bed_stretch:.4f} outside atempo range")
+            song1_stems = {name: _atempo_file(sp, bed_stretch, Path(_td) / f"{name}.wav")
+                           for name, sp in song1_stems.items()}
+        bed = _sum_stems([song1_stems["drums"], song1_stems["bass"], song1_stems["other"]])
+        bar = int((60.0 / plan.master_bpm) * 4 * SR)
 
-    prev_voc_end = 0  # sample where the last placed vocal ended — a build never reaches back over it
-    for p in _placements_of(plan):
-        warp = getattr(p, "warp", None)
-        if warp:  # M4d: per-bar beat-lock — each bar re-locked to Song 1's grid (no drift)
-            voc = _edge_fade(_vocal_take_warped(song2_vocal, warp))
-        else:  # legacy single global stretch (M3/M4a–c cached plans, or a thin-grid fallback)
-            start, end = p.vocal_src
-            voc = _edge_fade(_vocal_take(song2_vocal, start, max(end - start, 0.0), plan.vocal_stretch))
-        if getattr(p, "echo", False):  # ring the (already edge-faded) vocal out into the drop
-            voc = _echo(voc, plan.master_bpm)
-        anchor = max(0, int(p.anchor * SR))  # never place before the start
-        b0 = max(0, anchor - bar)
-        build_bars = getattr(p, "build_bars", 0)
-        if build_bars > 0:  # produced drop: a multi-bar filter+volume BUILD into the entry
-            bstart = max(0, prev_voc_end, anchor - build_bars * bar)  # never reach back over a prior vocal
-            if bstart < anchor:
-                bed[bstart:anchor] = _build_bed(bed[bstart:anchor], SR)
-        else:  # the plain-entry moves (unchanged): one-bar breath duck and/or one-bar sweep
-            if getattr(p, "beat_breath", False):  # DUCK the bed for one bar (tension), never silence it
-                bed[b0:anchor] *= _BREATH_DUCK
-            if getattr(p, "fx", None) == "sweep_in":  # muffled -> open across the bar before the entry
-                bed[b0:anchor] = _sweep_bed(bed[b0:anchor], SR)
-        need = anchor + len(voc)
-        bed = _hold(bed, need)
-        bed[anchor:need] += voc
-        prev_voc_end = need
+        prev_voc_end = 0  # sample where the last placed vocal ended — a build never reaches back over it
+        for p in _placements_of(plan):
+            warp = getattr(p, "warp", None)
+            if warp:  # M4d: per-bar beat-lock — each bar re-locked to Song 1's grid (no drift)
+                voc = _edge_fade(_vocal_take_warped(song2_vocal, warp))
+            else:  # legacy single global stretch (M3/M4a–c cached plans, or a thin-grid fallback)
+                start, end = p.vocal_src
+                voc = _edge_fade(_vocal_take(song2_vocal, start, max(end - start, 0.0), plan.vocal_stretch))
+            if getattr(p, "echo", False):  # ring the (already edge-faded) vocal out into the drop
+                voc = _echo(voc, plan.master_bpm)
+            anchor = max(0, int(p.anchor * SR))  # never place before the start
+            b0 = max(0, anchor - bar)
+            build_bars = getattr(p, "build_bars", 0)
+            if build_bars > 0:  # produced drop: a multi-bar filter+volume BUILD into the entry
+                bstart = max(0, prev_voc_end, anchor - build_bars * bar)  # never reach back over a prior vocal
+                if bstart < anchor:
+                    bed[bstart:anchor] = _build_bed(bed[bstart:anchor], SR)
+            else:  # the plain-entry moves (unchanged): one-bar breath duck and/or one-bar sweep
+                if getattr(p, "beat_breath", False):  # DUCK the bed for one bar (tension), never silence it
+                    bed[b0:anchor] *= _BREATH_DUCK
+                if getattr(p, "fx", None) == "sweep_in":  # muffled -> open across the bar before the entry
+                    bed[b0:anchor] = _sweep_bed(bed[b0:anchor], SR)
+            need = anchor + len(voc)
+            bed = _hold(bed, need)
+            bed[anchor:need] += voc
+            prev_voc_end = need
 
-    # Slice B contrast: Song 1's OWN vocal answers in the beat-only gaps (never overlapping
-    # Song 2's vocal — the referee guarantees it). No stretch — it is already Song 1's tempo.
-    s1_vocals = song1_stems.get("vocals")
-    for s, e in getattr(plan, "s1_vocal_regions", []):
-        if s1_vocals is None:
-            break
-        # Song 1 leads its own vocal here, played as recorded (its natural phrase-end decay is the
-        # blend into Song 2 — we don't impose a fade); only an edge fade guards against a click.
-        take = _edge_fade(_vocal_take(s1_vocals, s, max(e - s, 0.0), 1.0))
-        a0 = max(0, int(s * SR))
-        bed = _hold(bed, a0 + len(take))
-        bed[a0:a0 + len(take)] += take
+        # Slice B contrast: Song 1's OWN vocal answers in the beat-only gaps (never overlapping
+        # Song 2's vocal — the referee guarantees it). No stretch — it is already Song 1's tempo.
+        s1_vocals = song1_stems.get("vocals")
+        for s, e in getattr(plan, "s1_vocal_regions", []):
+            if s1_vocals is None:
+                break
+            # Song 1 leads its own vocal here, played as recorded (its natural phrase-end decay is the
+            # blend into Song 2 — we don't impose a fade); only an edge fade guards against a click.
+            take = _edge_fade(_vocal_take(s1_vocals, s, max(e - s, 0.0), 1.0))
+            a0 = max(0, int(s * SR))
+            bed = _hold(bed, a0 + len(take))
+            bed[a0:a0 + len(take)] += take
 
-    peak = float(np.max(np.abs(bed))) if bed.size else 0.0
-    if peak > 0.0:
-        bed *= _TARGET_PEAK / peak
-    np.clip(bed, -_CEILING, _CEILING, out=bed)
+        peak = float(np.max(np.abs(bed))) if bed.size else 0.0
+        if peak > 0.0:
+            bed *= _TARGET_PEAK / peak
+        np.clip(bed, -_CEILING, _CEILING, out=bed)
 
-    sf.write(out_path, bed, SR, subtype="PCM_16")
-    return out_path
+        sf.write(out_path, bed, SR, subtype="PCM_16")
+        return out_path

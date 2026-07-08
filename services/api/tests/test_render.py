@@ -283,3 +283,88 @@ def test_vocal_take_warped_survives_ffmpeg_length_overshoot(monkeypatch):
     monkeypatch.setattr(render, "_vocal_take", fake_take)
     out = render._vocal_take_warped(Path("unused"), warp)
     assert len(out) > 0
+
+
+# ---------------------------------------------------------------- movable master (bed_stretch)
+# When bed_stretch != 1.0 the engine must pre-stretch Song 1's stems (drums, bass, other, and
+# Song 1's own vocal) by bed_stretch, so the whole bed lands at the retimed tempo. bed_stretch
+# == 1.0 must skip that step entirely and render byte-for-byte as today (the old-mixes proof).
+
+
+def test_render_bed_stretch_unity_is_byte_identical(tmp_path):
+    # B1 (regression guard): bed_stretch == 1.0 must render IDENTICALLY to a plan WITHOUT the field
+    # — the "every existing mix renders identically" guarantee. Same shape, within 1e-6. Green now
+    # (the engine ignores the field today) and must STAY green after the gated step is added.
+    stems, vocal = _stems(tmp_path)
+    out_a, out_b = tmp_path / "a.wav", tmp_path / "b.wav"
+    render.render_mix(_plan(anchor=1.0, vocal_src=(0.0, 2.0)), stems, vocal, out_a)
+    p = _plan(anchor=1.0, vocal_src=(0.0, 2.0))
+    p.bed_stretch = 1.0
+    render.render_mix(p, stems, vocal, out_b)
+    ya, _ = sf.read(out_a, dtype="float32", always_2d=True)
+    yb, _ = sf.read(out_b, dtype="float32", always_2d=True)
+    assert ya.shape == yb.shape
+    assert float(np.max(np.abs(ya - yb))) <= 1e-6
+
+
+def test_render_bed_stretch_speeds_up_and_shortens_the_bed(tmp_path):
+    # B2: a bed_stretch > 1.0 plan must (a) not clip and not be silent, and (b) yield a mix whose
+    # length reflects the SHORTER, sped-up bed — Song 1's 8s stems stretched by 1.05 become ~7.62s
+    # (atempo duration = input / ratio). Today the engine ignores bed_stretch, so the bed stays 8s
+    # and this fails: the duration comes out ~8.0s, outside the ~7.62s window.
+    stems, vocal = _stems(tmp_path)  # 8s stems; the placed vocal ends ~3s, so the bed sets the length
+    out = tmp_path / "mix.wav"
+    p = _plan(anchor=1.0, vocal_src=(0.0, 2.0))
+    p.bed_stretch = 1.05
+    render.render_mix(p, stems, vocal, out)
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    dur = len(y) / sr
+    expected = 8.0 / 1.05  # ~7.619s
+    assert expected - 0.15 <= dur <= expected + 0.15, f"bed not sped up: {dur:.3f}s (want ~{expected:.3f}s)"
+    peak = float(np.max(np.abs(y)))
+    assert 0.0 < peak <= render._CEILING  # audible, never clipping
+
+
+def test_render_has_a_pitch_preserving_file_stretch_helper(tmp_path):
+    # B3: there must be a helper that time-stretches a whole audio FILE by a ratio (pitch-preserved),
+    # scaling its duration by 1/ratio (atempo semantics, matching B2 and the design) — a 4s clip at
+    # ratio 1.05 becomes ~3.81s. The implementer names it; we probe the plausible names the design
+    # implies (an atempo pass over a stem file) and both plausible signatures.
+    #
+    # ASSUMPTION (flagged): the helper is one of _CANDIDATES below and takes (src, ratio) -> path|array
+    # or (src, ratio, out_path). If the implementer picks another name/shape, extend this list — the
+    # asserted CONTRACT (duration scales by 1/ratio, pitch preserved via atempo) is what must hold.
+    src = tmp_path / "in.wav"
+    _tone(src, freq=220.0, secs=4.0)
+    candidates = ["_stretch_file", "_atempo_file", "_stretch_stem", "_prestretch_stem",
+                  "_prestretch", "_stretch_bed", "_time_stretch_file", "_atempo", "_bed_stretch"]
+    fn = next((getattr(render, n) for n in candidates if hasattr(render, n)), None)
+    assert fn is not None, f"no file-stretch helper found on render among {candidates}"
+    try:
+        result = fn(src, 1.05)
+    except TypeError:
+        outp = tmp_path / "stretched.wav"
+        result = fn(src, 1.05, outp) or outp
+    if isinstance(result, (str, Path)):
+        y, sr = sf.read(str(result), dtype="float32", always_2d=True)
+        dur = len(y) / sr
+    else:
+        dur = len(np.asarray(result)) / render.SR
+    assert 4.0 / 1.05 - 0.1 <= dur <= 4.0 / 1.05 + 0.1  # ~3.81s (duration = input / ratio)
+
+
+def test_render_tiny_bed_stretch_still_engages(tmp_path):
+    """ADVERSARIAL-REVIEW REGRESSION (F1): a bed_stretch in the tiny gap band (1e-4 .. 1e-3) must
+    STILL stretch the bed — the engine engages on the same 1e-6 threshold the planner/referee use.
+    An earlier draft gated the engine at 1e-3, which would leave the bed un-stretched while the plan
+    and referee assumed the retimed grid → an off-beat mix the referee couldn't see. A 1.0005 bed
+    must render measurably SHORTER than a 1.0 bed (it was atempo'd), proving the gate is closed."""
+    stems, vocal = _stems(tmp_path)  # 8s stems set the length
+    native, tiny = tmp_path / "native.wav", tmp_path / "tiny.wav"
+    p0 = _plan(anchor=1.0, vocal_src=(0.0, 2.0)); p0.bed_stretch = 1.0
+    p1 = _plan(anchor=1.0, vocal_src=(0.0, 2.0)); p1.bed_stretch = 1.0005
+    render.render_mix(p0, stems, vocal, native)
+    render.render_mix(p1, stems, vocal, tiny)
+    n = len(sf.read(native, dtype="float32", always_2d=True)[0])
+    t = len(sf.read(tiny, dtype="float32", always_2d=True)[0])
+    assert n - t > 50, f"tiny bed_stretch did not engage: native {n} vs stretched {t} samples"
