@@ -576,7 +576,8 @@ def lead_sections(a1: TrackAnalysis, placements, stretch: float,
 _CUT_BARS = 2  # bars of "just the beat" (bass+melody muted, drums alone) right before the build
 
 
-def stem_moves_for_drops(placements, a1_downbeats: list[float], stretch: float = 1.0) -> list[StemMove]:
+def stem_moves_for_drops(placements, a1_downbeats: list[float], stretch: float = 1.0,
+                         s1_regions: list[tuple[float, float]] | None = None) -> list[StemMove]:
     """Auto-perform every produced drop's beat: a `bass` StemMove held silent (gain 0->0, not a
     fading ramp) across [the cut start, the anchor] so it SLAMS to full only at the anchor, and — when
     there's real runway — an `other` StemMove muted across [the cut start, the build start] so the
@@ -586,6 +587,14 @@ def stem_moves_for_drops(placements, a1_downbeats: list[float], stretch: float =
     never reach back over the PREVIOUS placement's real vocal end (`fence.placement_end`) — the same
     guard the engine's own build window uses, so a close prior vocal simply shortens or skips the cut
     rather than talking over it.
+
+    A produced drop is SKIPPED ENTIRELY (no bass or other move at all) if its cut+build span would
+    overlap any of Song 1's OWN vocal moments (`s1_regions` — the "both vocals trade" leads and the
+    predrop LICKS that specifically run right into a drop, the vocal-into-the-drop a DJ never cuts).
+    Hollowing out the backing (no bass, no melody) under Father Ocean's own vocal line is not a
+    stripped-back breather — it guts the very moment the app is protecting elsewhere. When his vocal
+    is already leading into the drop, that IS the produced moment; the beat plays under it exactly as
+    before Step 3.
 
     One `bass` move per drop, held silent for its whole cut+build span (rather than one move per
     stage), so there is no seam where the two would otherwise touch: two independent moves on the
@@ -598,6 +607,7 @@ def stem_moves_for_drops(placements, a1_downbeats: list[float], stretch: float =
     """
     if not a1_downbeats:
         return []
+    s1_regions = s1_regions or []
     moves: list[StemMove] = []
     ordered = sorted(placements, key=lambda pl: pl.anchor)
     for i, p in enumerate(ordered):
@@ -617,6 +627,10 @@ def stem_moves_for_drops(placements, a1_downbeats: list[float], stretch: float =
             while cut_start_i < build_start_i and a1_downbeats[cut_start_i] < prev_end - 1e-6:
                 cut_start_i += 1
         cut_start = a1_downbeats[cut_start_i]
+        # never hollow out the backing under Father Ocean's OWN vocal (a lead or a predrop lick) —
+        # if any s1 region overlaps the span this drop would touch, skip the whole move for this drop.
+        if any(s < anchor - 1e-6 and e > cut_start + 1e-6 for s, e in s1_regions):
+            continue
         # the bass stays silent across the WHOLE cut+build span (one move, no seam) — it slams to
         # full only at the anchor. If there's no cut room (a close prior vocal), the bass move still
         # covers the build window alone, exactly as Wave 1 did.

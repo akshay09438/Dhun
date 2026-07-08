@@ -423,6 +423,28 @@ def test_produced_drop_gets_a_bass_pull(monkeypatch):
             assert m.end not in produced and m.start < m.end
 
 
+def test_stem_moves_never_overlap_song1s_own_vocal(monkeypatch):
+    """BUG REPRODUCTION (founder ear-test): a hollowed-out backing (no bass, no melody) under Father
+    Ocean's OWN vocal leading into a drop read as the mix being broken, not stripped-back. Build a
+    real plan where his vocal leads right into a produced drop and assert no stem move ever overlaps
+    any of his own vocal regions."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    energy = [0.3] * 48
+    for i in range(36, 40):
+        energy[i] = 0.2
+    for i in range(40, 48):
+        energy[i] = 0.95  # a big drop at bar 40 -> 80.0s
+    a1 = make_analysis(bpm=120.0, n_bars=48, energy=energy, vocal_regions=[(74.0, 80.0)])  # FO sings into the drop
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 16.0), (40.0, 56.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
+
+    assert plan.s1_vocal_regions, "the setup should give Father Ocean a predrop lick into the drop"
+    for m in plan.stem_moves:
+        for s, e in plan.s1_vocal_regions:
+            assert not (s < m.end and e > m.start), f"{m.stem} [{m.start},{m.end}] overlaps s1 vocal [{s},{e}]"
+
+
 def test_shaky_song_has_no_stem_moves(monkeypatch):
     """A shaky grid plays a plain, safe beat — no auto-performed stem moves (same gate as build/echo)."""
     monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)

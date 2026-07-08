@@ -306,8 +306,10 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
                                     opts["vocal_stretch"], opts["master_bpm"])
         # Step 3: auto-perform each produced drop's tension arc (cut to just the beat, then bass held
         # silent through the build, then the slam), on the retimed grid the audio plays at. Keys off
-        # build_bars, so it only fires where a real drop got a build.
-        stem_moves = fence.stem_moves_for_drops(placements, a1g.downbeats, opts["vocal_stretch"])
+        # build_bars, so it only fires where a real drop got a build. Skips any drop where Father
+        # Ocean's OWN vocal (s1_regions) is already leading into it — never hollow out the backing
+        # under his voice.
+        stem_moves = fence.stem_moves_for_drops(placements, a1g.downbeats, opts["vocal_stretch"], s1_regions)
     first = placements[0]
     return MixPlan(
         mix_id=mix_id, song1_id=a1.song_id, song2_id=a2.song_id,

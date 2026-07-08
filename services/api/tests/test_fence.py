@@ -580,3 +580,26 @@ def test_stem_moves_cut_clamped_by_a_close_previous_vocal():
     other = next(m for m in moves if m.stem == "other")
     assert bass.start == 8.0  # pulled forward off the naive 6.0, right to the previous vocal's end
     assert other.start == 8.0 and other.end == 10.0  # the shortened (1-bar) cut still fires
+
+
+def test_stem_moves_skip_a_drop_where_song1s_own_vocal_leads_in():
+    # BUG REPRODUCTION (founder ear-test): Father Ocean's OWN vocal (a lead or a predrop lick) often
+    # runs right up to a drop's anchor — the "vocal-into-the-drop a DJ never cuts". A cut+bass-hold
+    # move under it hollows out the backing (no bass, no melody) while he's singing, which read as
+    # broken, not stripped-back. The whole move must be SKIPPED for that drop when an s1_region
+    # overlaps its cut+build span — not trimmed, not shortened, skipped entirely.
+    a1 = make_analysis(bpm=120.0, n_bars=64)  # downbeats every 2.0s
+    drop = Placement(anchor=16.0, vocal_src=(0.0, 8.0), build_bars=3)  # cut wants [6.0,10.0], build [10.0,16.0]
+    s1_lick = [(14.0, 16.0)]  # Father Ocean sings right into the anchor — overlaps the build window
+    moves = fence.stem_moves_for_drops([drop], a1.downbeats, s1_regions=s1_lick)
+    assert moves == []  # no bass, no melody move at all for this drop
+
+
+def test_stem_moves_fire_normally_without_an_s1_overlap():
+    # The mirror of the above: an s1 region that does NOT overlap this drop's cut+build span must
+    # not suppress it (regression guard — the new check shouldn't over-trigger).
+    a1 = make_analysis(bpm=120.0, n_bars=64)
+    drop = Placement(anchor=16.0, vocal_src=(0.0, 8.0), build_bars=3)  # cut+build spans [6.0, 16.0]
+    s1_far = [(40.0, 44.0)]  # Father Ocean sings much later, nowhere near this drop
+    moves = fence.stem_moves_for_drops([drop], a1.downbeats, s1_regions=s1_far)
+    assert len(moves) == 2  # bass + other both fire as normal
