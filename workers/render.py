@@ -49,6 +49,8 @@ _ECHO_TAPS = 4  # how many decaying repeats the echo throws
 _ECHO_SEG_SECS = 1.2  # echo only the LAST ~1.2s (the last word or two) of each phrase, not the whole line
 _ECHO_SILENCE_FRAC = 0.12  # a bar is "a pause" when the vocal envelope drops below this fraction of its peak
 _ECHO_MIN_GAP_SECS = 0.15  # a pause this long or longer separates two sung phrases (each gets its own throw)
+_CHOP_SECS = 0.22  # the hook ONSET fragment a vocal chop re-fires (~one syllable — "dum")
+_CHOP_INTERVAL_BEATS = 0.5  # re-fire the chop every 8th note (rhythmic "dum-da-ra-dum" on the beat grid)
 _FFMPEG_TIMEOUT = 180
 # Bound decoded audio so a tiny-but-hours-long low-bitrate file can't balloon in
 # memory (the upload cap is on bytes, not duration). A decoded stereo minute is
@@ -329,6 +331,29 @@ def _echo(voc: np.ndarray, bpm: float) -> np.ndarray:
     return _guard_duration(out)  # a tiny/octave-halved bpm can't balloon the tail buffer
 
 
+def _chop_pattern(voc: np.ndarray, out_len: int, bpm: float) -> np.ndarray:
+    """A VOCAL CHOP: fill `out_len` samples (one bar of the drop) with the hook ONSET of `voc`
+    re-fired on the beat grid — "dum-da-ra-dum". The fragment is the first `_CHOP_SECS` of the
+    vocal (its first syllable), edge-faded so each hit is click-free, laid every
+    `_CHOP_INTERVAL_BEATS` of the beat. Returns exactly `out_len` samples, so it REPLACES the
+    vocal's first bar without changing the placement's total length (the referee's overlap math is
+    untouched). Peaks fold into the downstream peak-normalize + clip guard, so it never clips.
+
+    Returns the vocal's own first `out_len` samples unchanged if there's no usable fragment or tempo
+    (a graceful no-op — never worse than the un-chopped bar)."""
+    frag = _edge_fade(voc[: int(_CHOP_SECS * SR)].copy())
+    out = np.zeros((out_len, 2), dtype=np.float32)
+    if len(frag) == 0 or bpm <= 0 or out_len <= 0:
+        return voc[:out_len].copy() if len(voc) else out
+    step = max(1, int((60.0 / bpm) * _CHOP_INTERVAL_BEATS * SR))  # 8th-note spacing on Song 1's grid
+    pos = 0
+    while pos < out_len:
+        m = min(len(frag), out_len - pos)
+        out[pos: pos + m] += frag[:m]
+        pos += step
+    return out
+
+
 def _placements_of(plan):
     """The plan's vocal placements — or the scalar anchor/vocal_src as a one-element
     arrangement, so a legacy (M3) single-placement plan still renders."""
@@ -392,6 +417,10 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
             else:  # legacy single global stretch (M3/M4a–c cached plans, or a thin-grid fallback)
                 start, end = p.vocal_src
                 voc = _edge_fade(_vocal_take(song2_vocal, start, max(end - start, 0.0), plan.vocal_stretch))
+            if getattr(p, "chop", False):  # Step 4: re-fire the hook onset over this entry's FIRST bar
+                k = min(bar, len(voc))       # (a vocal chop). Replaces bar 1 -> voc length is unchanged,
+                if k > 0:                    # so placement_end / the referee's overlap math don't move.
+                    voc[:k] = _chop_pattern(voc[:k], k, plan.master_bpm)
             if getattr(p, "echo", False):  # ring the (already edge-faded) vocal out into the drop
                 voc = _echo(voc, plan.master_bpm)
             anchor = max(0, int(p.anchor * SR))  # never place before the start

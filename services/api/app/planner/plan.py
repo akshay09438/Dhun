@@ -173,6 +173,21 @@ def _produce_drops(placements: list[Placement], drops: list[float],
     return placements
 
 
+def _flag_chop_on_biggest_drop(placements: list[Placement], a1: TrackAnalysis) -> None:
+    """Set `chop=True` on the ONE produced drop (build_bars>0) whose anchor sits on Song 1's loudest
+    bar — the biggest drop, where a vocal chop signature lands best (recipe R2). One showcase moment
+    per mix; no-op if there are no produced drops or no energy/grid to rank by."""
+    produced = [p for p in placements if getattr(p, "build_bars", 0) > 0]
+    if not produced or not a1.downbeats or not a1.energy_curve:
+        return
+
+    def _anchor_energy(p: Placement) -> float:
+        i = min(range(len(a1.downbeats)), key=lambda k: abs(a1.downbeats[k] - p.anchor))
+        return a1.energy_curve[i] if i < len(a1.energy_curve) else 0.0
+
+    max(produced, key=_anchor_energy).chop = True
+
+
 def _default_arrangement(opts: dict, take: int) -> list[Placement]:
     """Deterministic ENERGY-SYNCED arrangement: 2-3 anchors spread across the song's thirds
     (an energy ARC, not a cluster — Handbook H1/H2), PREFERRING the house track's real drops
@@ -355,6 +370,10 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         # every produced drop and lands on its own clear spot.
         stem_moves = stem_moves + fence.breakdown_moves(a1g, placements, s1_regions, stem_moves,
                                                         opts["vocal_stretch"])
+        # Step 4: vocal chops on the BIGGEST drop — re-fire the hook onset over that entry's first bar
+        # ("dum-da-ra-dum"). One showcase moment, on the produced drop whose anchor is Song 1's
+        # loudest. Additive: the chop replaces the vocal's first bar in the engine, same length.
+        _flag_chop_on_biggest_drop(placements, a1g)
     first = placements[0]
     return MixPlan(
         mix_id=mix_id, song1_id=a1.song_id, song2_id=a2.song_id,

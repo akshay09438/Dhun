@@ -307,10 +307,45 @@ def test_loudest_vocal_peak_lands_on_the_biggest_drop(monkeypatch):
 
 
 def test_placement_produce_fields_default_off():
-    """The produced-drop fields are additive: old cached plans (no build_bars/echo) still parse."""
+    """The produced-drop fields are additive: old cached plans (no build_bars/echo/chop) still parse."""
     from app.models import Placement
     p = Placement(anchor=1.0, vocal_src=(0.0, 2.0))
-    assert p.build_bars == 0 and p.echo is False
+    assert p.build_bars == 0 and p.echo is False and p.chop is False
+
+
+def test_vocal_chop_flagged_on_the_biggest_drop(monkeypatch):
+    """Step 4: exactly ONE placement — the produced drop on Song 1's loudest bar — gets chop=True."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    energy = [0.3] * 96
+    for i in range(24, 28):
+        energy[i] = 0.9   # a solid drop at bar 24 -> 48.0s
+    for i in range(60, 64):
+        energy[i] = 0.2
+    for i in range(64, 72):
+        energy[i] = 0.98  # the BIGGEST drop at bar 64 -> 128.0s
+    a1 = make_analysis(bpm=120.0, n_bars=96, energy=energy)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 20.0), (40.0, 70.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
+
+    chopped = [p for p in plan.placements if getattr(p, "chop", False)]
+    assert len(chopped) == 1, "exactly one drop should carry the chop"
+    assert chopped[0].build_bars > 0  # it's a produced drop
+    # ...and it's the loudest produced drop (no other produced placement sits on a louder bar)
+    def energy_at(anchor):
+        i = min(range(len(a1.downbeats)), key=lambda k: abs(a1.downbeats[k] - anchor))
+        return a1.energy_curve[i]
+    produced = [p for p in plan.placements if getattr(p, "build_bars", 0) > 0]
+    assert energy_at(chopped[0].anchor) == max(energy_at(p.anchor) for p in produced)
+
+
+def test_no_chop_when_no_produced_drop(monkeypatch):
+    """A flat song with no real drop -> no produced drop -> no chop (nothing to showcase)."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0, n_bars=64, energy=[0.5] * 64)  # no low->high transition -> no drops
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 20.0)])
+    plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
+    assert not any(getattr(p, "chop", False) for p in plan.placements)
 
 
 def test_drop_placements_are_produced(monkeypatch):

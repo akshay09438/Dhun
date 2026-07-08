@@ -95,7 +95,11 @@ _S1_STEMS = ("drums", "bass", "other")
 # m5m.0: Step 3 Wave 2 (3rd/last move) — "breakdown": drums+bass RAMP DOWN to a low simmer for 8 bars
 #        in the next-best energetic stretch, leaving the melody exposed, then kick back to full at the
 #        window end (fence.breakdown_moves). Completes the four beat moves. render.py/validate.py UNCHANGED.
-ENGINE_VERSION = "m5m.0"
+# m5n.0: Step 4 (1st) — VOCAL CHOPS on the biggest drop. Additive Placement.chop; the engine
+#        (render._chop_pattern) re-fires the hook onset over that entry's FIRST bar ("dum-da-ra-dum").
+#        Replaces bar 1 only, so the placement's length — and the referee's overlap math — are
+#        unchanged; validate.py UNTOUCHED. A plan with no chop flag renders as before.
+ENGINE_VERSION = "m5n.0"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.
