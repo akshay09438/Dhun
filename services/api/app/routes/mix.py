@@ -75,7 +75,10 @@ _S1_STEMS = ("drums", "bass", "other")
 #        line ends instead of smearing echoes across the whole lyric. Echo tail length unchanged.
 # m5g.3: per-PHRASE throw — split the vocal on its pauses and echo after EACH sung phrase into its
 #        own pause (render._phrase_ends), not once for the whole slice. Tail-past-vocal unchanged.
-ENGINE_VERSION = "m5g.3"
+# m5h.1: movable-master tempo — house-protective shared tempo unblocks far-apart pairs (e.g. Tere
+#        Bina). MixPlan.bed_stretch time-stretches Song 1's whole bed to the target; the planner and
+#        referee rescale Song 1's grid by the same factor (fence.retimed_analysis). Additive.
+ENGINE_VERSION = "m5h.1"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.
