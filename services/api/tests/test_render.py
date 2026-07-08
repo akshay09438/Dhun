@@ -176,6 +176,19 @@ def test_echo_throws_only_the_last_segment_not_the_whole_vocal():
     assert float(np.max(np.abs(out[3 * sr:]))) > 1e-3
 
 
+def test_echo_throws_after_each_phrase_into_its_pause():
+    """The vocal is 3-4 sung phrases with pauses between; the throw must ring after EACH phrase
+    (in its pause), not only once at the very end of the whole slice."""
+    sr = render.SR
+    voc = np.zeros((4 * sr, 2), dtype=np.float32)
+    voc[0 * sr:1 * sr] = 0.4          # phrase 1 (0-1s)
+    voc[2 * sr:3 * sr] = 0.4          # phrase 2 (2-3s), a 1s pause between them
+    out = render._echo(voc, 120.0)
+    peak = lambda a, b: float(np.max(np.abs(out[int(a * sr):int(b * sr)])))
+    assert peak(1.1, 1.9) > 1e-3   # an echo rings in the pause AFTER phrase 1
+    assert peak(3.1, 3.9) > 1e-3   # ...and after phrase 2 (the tail)
+
+
 def test_echo_tail_length_stays_bounded():
     """SAFETY: the throw must not ring LONGER than _ECHO_TAPS delays past the vocal — the R1
     echo-tail guard (in plan.py) depends on this bound."""

@@ -44,7 +44,9 @@ _BUILD_GAIN_LO = 0.55  # a produced-drop BUILD starts at this volume and rises t
 _ECHO_BEATS = 0.75  # produced-drop ECHO delay, in beats (a dotted-eighth — the classic vocal throw)
 _ECHO_FEEDBACK = 0.42  # each echo repeat is this fraction of the previous (decaying tail)
 _ECHO_TAPS = 4  # how many decaying repeats the echo throws
-_ECHO_SEG_SECS = 1.2  # only the LAST ~1.2s (the last word or two) is thrown, not the whole vocal
+_ECHO_SEG_SECS = 1.2  # echo only the LAST ~1.2s (the last word or two) of each phrase, not the whole line
+_ECHO_SILENCE_FRAC = 0.12  # a bar is "a pause" when the vocal envelope drops below this fraction of its peak
+_ECHO_MIN_GAP_SECS = 0.15  # a pause this long or longer separates two sung phrases (each gets its own throw)
 _FFMPEG_TIMEOUT = 180
 # Bound decoded audio so a tiny-but-hours-long low-bitrate file can't balloon in
 # memory (the upload cap is on bytes, not duration). A decoded stereo minute is
@@ -225,26 +227,61 @@ def _build_bed(seg: np.ndarray, sr: int) -> np.ndarray:
     return (swept * ramp).astype(np.float32)
 
 
+def _phrase_ends(voc: np.ndarray) -> list[int]:
+    """The sample index where each sung PHRASE ends — the vocal is 3-4 phrases with pauses between,
+    so we split on the pauses. A phrase ends where the vocal envelope drops into a pause of at least
+    _ECHO_MIN_GAP_SECS; the final phrase ends where the vocal itself ends (if it ends voiced)."""
+    n = len(voc)
+    mono = np.abs(voc).mean(axis=1) if voc.ndim == 2 else np.abs(voc)
+    win = max(1, int(0.02 * SR))
+    env = np.convolve(mono, np.ones(win, dtype=np.float32) / win, mode="same")
+    peak = float(env.max())
+    if peak <= 0:
+        return []
+    voiced = env > (_ECHO_SILENCE_FRAC * peak)
+    min_gap = max(1, int(_ECHO_MIN_GAP_SECS * SR))
+    ends: list[int] = []
+    i = 1
+    while i < n:
+        if voiced[i - 1] and not voiced[i]:  # a falling edge: the vocal just stopped
+            j = i
+            while j < n and not voiced[j]:  # measure the pause
+                j += 1
+            if j - i >= min_gap:  # a real pause -> the phrase ended at i
+                ends.append(i)
+            i = j
+        else:
+            i += 1
+    if voiced[n - 1]:  # the vocal ends mid-word -> the final phrase ends at the very end
+        ends.append(n)
+    return ends
+
+
 def _echo(voc: np.ndarray, bpm: float) -> np.ndarray:
-    """Throw a decaying ECHO of only the LAST word or two of the vocal (delay ~a dotted-eighth of
-    the beat), so the repeats ring out AFTER the line ends — the classic vocal throw — rather than
-    smearing echoes across the whole lyric. The dry vocal plays through untouched; only its tail
-    segment is repeated, decaying, past the end. The dry vocal is already edge-faded, so the
-    repeated segment is faded too (no clicks). Peaks fold into the downstream normalize + clip
-    guard; the total tail past the vocal stays delay*_ECHO_TAPS (the R1 echo-tail guard bound)."""
+    """Throw a decaying ECHO after EACH sung phrase — echo the last word or two of every phrase into
+    the pause that follows it (delay ~a dotted-eighth of the beat), the way a DJ throws a vocal.
+    The dry vocal plays through untouched; only each phrase's tail is repeated, decaying. The dry
+    vocal is already edge-faded, so the repeated segment is faded too (no clicks). Peaks fold into
+    the downstream normalize + clip guard; the tail past the vocal (from the final phrase) stays
+    delay*_ECHO_TAPS — the bound the R1 echo-tail guard depends on."""
     n = len(voc)
     if bpm <= 0 or n == 0:
         return voc
     delay = max(1, int((60.0 / bpm) * _ECHO_BEATS * SR))
-    seg_len = min(int(_ECHO_SEG_SECS * SR), n)  # the last word(s) — the only part that echoes
-    seg = voc[n - seg_len:]
+    ends = _phrase_ends(voc) or [n]  # a steady, gap-less vocal is one phrase (echo its end)
+    seg_max = int(_ECHO_SEG_SECS * SR)
     out = np.zeros((n + delay * _ECHO_TAPS, 2), dtype=np.float32)
-    out[:n] += voc  # the dry vocal, unchanged — no echo THROUGHOUT the line
-    g = _ECHO_FEEDBACK
-    for k in range(1, _ECHO_TAPS + 1):
-        off = (n - seg_len) + delay * k  # each repeat of the last word, a beat further out, decaying
-        out[off:off + seg_len] += seg * g
-        g *= _ECHO_FEEDBACK
+    out[:n] += voc  # the dry vocal, unchanged — no echo THROUGHOUT a phrase
+    for end in ends:
+        seg_len = min(seg_max, end)  # this phrase's last word(s)
+        seg = voc[end - seg_len:end]
+        g = _ECHO_FEEDBACK
+        for k in range(1, _ECHO_TAPS + 1):
+            off = (end - seg_len) + delay * k  # each repeat, a beat further into the pause, decaying
+            m = min(seg_len, len(out) - off)
+            if m > 0:
+                out[off:off + m] += seg[:m] * g
+            g *= _ECHO_FEEDBACK
     return _guard_duration(out)  # a tiny/octave-halved bpm can't balloon the tail buffer
 
 

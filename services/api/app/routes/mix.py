@@ -73,7 +73,9 @@ _S1_STEMS = ("drums", "bass", "other")
 #        tail is clear of the next lead vocal (plan._produce_drops; reuses the render echo engine).
 # m5g.2: proper throw — echo only the LAST word or two (render._echo), so it rings out AFTER the
 #        line ends instead of smearing echoes across the whole lyric. Echo tail length unchanged.
-ENGINE_VERSION = "m5g.2"
+# m5g.3: per-PHRASE throw — split the vocal on its pauses and echo after EACH sung phrase into its
+#        own pause (render._phrase_ends), not once for the whole slice. Tail-past-vocal unchanged.
+ENGINE_VERSION = "m5g.3"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.
