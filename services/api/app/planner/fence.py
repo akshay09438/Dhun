@@ -302,6 +302,24 @@ def vocal_peaks(a2: TrackAnalysis, limit: int = 4) -> list[tuple[float, float]]:
     return [_snap_and_cap(a2, s, e) for s, e in ranked]
 
 
+def predrop_licks(a1: TrackAnalysis, placements, stretch: float,
+                  max_lick: float = 4.0, min_lick: float = 1.5) -> list[tuple[float, float]]:
+    """Keep Song 1's short vocal 'lick' in the seconds right BEFORE each Song-2 entry — the
+    vocal-that-leads-into-the-drop a real DJ never cuts. Each is clipped to END at the entry so it
+    hands off the instant Song 2 drops in (no overlap — one lead at a time, R1). Only where Song 1
+    actually sings within `max_lick` of the entry, and only if at least `min_lick` long (so it's a
+    real lick, not a sliver). This is the judgment upgrade: a short bit against a drop is NOT a
+    throwaway scrap — it's the most important vocal to keep."""
+    out: list[tuple[float, float]] = []
+    for p in placements:
+        a = p.anchor
+        for vs, ve in a1.vocal_regions:
+            s, e = max(vs, a - max_lick), min(ve, a)  # Song 1's vocal in the run-up, up to the entry
+            if e - s >= min_lick:
+                out.append((round(s, 3), round(e, 3)))
+    return out
+
+
 def arrangement_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
     """The legal menu for a full arrangement: the M3 legal set plus ranked phrase
     anchors and the available vocal slices. Declines pass through unchanged."""

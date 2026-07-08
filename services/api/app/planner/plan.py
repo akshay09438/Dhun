@@ -81,9 +81,12 @@ def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement],
             p.beat_breath = False
             p.fx = None
         return safe, []
-    # Both vocals trade: Song 1 leads its substantial sung passages in the gaps (the app keeps
-    # the real ones and drops the scraps — the keep-or-drop judgment), never over Song 2 (R1).
-    s1_regions = fence.lead_sections(a1, placements, stretch)
+    # Both vocals trade: Song 1 leads its substantial sung passages in the gaps (keep the real
+    # ones, drop the scraps), AND keeps its short vocal LICK right before each drop (the
+    # vocal-into-the-drop a real DJ never cuts) — never over Song 2 (R1). Merge any overlap.
+    leads = fence.lead_sections(a1, placements, stretch)
+    licks = fence.predrop_licks(a1, placements, stretch)
+    s1_regions = fence._merge_regions(leads + licks, max_gap=0.0)
     if len(placements) >= 2:  # one filter sweep, into the final (biggest) entry
         placements[-1].fx = "sweep_in"
     return placements, s1_regions

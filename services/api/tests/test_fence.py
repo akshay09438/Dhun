@@ -194,6 +194,31 @@ def test_lead_sections_never_overlap_a_placement():
             assert le <= p.anchor + 1e-6 or ls >= pe - 1e-6  # strictly in a gap
 
 
+def test_predrop_licks_keeps_song1_vocal_into_the_drop():
+    """A real DJ never cuts the vocal just before the drop. Keep Song 1's short vocal 'lick' in
+    the seconds right before a Song-2 entry (the vocal-into-the-drop), clipped to end AT the
+    entry so it hands off cleanly (no overlap, R1)."""
+    a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(100.0, 106.0)])  # FO sings 100-106
+    placements = [Placement(anchor=104.0, vocal_src=(0.0, 8.0))]              # Song 2 drops at 104
+    licks = fence.predrop_licks(a1, placements, stretch=1.0)
+    assert licks == [(100.0, 104.0)]  # FO's lick just before the drop, clipped to the entry
+
+
+def test_predrop_licks_never_run_past_the_entry():
+    """The part of Song 1's vocal AFTER the drop belongs to Song 2 (one lead at a time) — the lick
+    is only the bit before the entry."""
+    a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(100.0, 110.0)])  # FO sings across the drop
+    placements = [Placement(anchor=104.0, vocal_src=(0.0, 8.0))]
+    licks = fence.predrop_licks(a1, placements, stretch=1.0)
+    assert licks and all(e <= 104.0 + 1e-6 for _s, e in licks)  # never past the entry
+
+
+def test_predrop_licks_ignores_when_song1_silent_before_the_drop():
+    a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(10.0, 20.0)])  # FO sings only early
+    placements = [Placement(anchor=104.0, vocal_src=(0.0, 8.0))]
+    assert fence.predrop_licks(a1, placements, stretch=1.0) == []
+
+
 def test_lead_sections_empty_when_song1_has_no_real_passage():
     a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(0.0, 6.0)])  # only a short scrap early
     placements = [Placement(anchor=16.0, vocal_src=(0.0, 12.0)),

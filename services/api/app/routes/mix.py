@@ -64,7 +64,9 @@ _S1_STEMS = ("drums", "bass", "other")
 #        (Der Lagi 0->15 regions), so vocals now enter cleanly and last their real sung length.
 # m5d.1: both vocals TRADE (Step 1) — Song 1 leads its own substantial sung passages in the gaps
 #        (fence.lead_sections; keep the real ones, drop the scraps), never over Song 2 (R1).
-ENGINE_VERSION = "m5d.1"
+# m5e.1: judgment upgrade — KEEP Song 1's vocal LICK into a drop (fence.predrop_licks): a short bit
+#        against a drop is the vocal-into-the-drop a DJ never cuts, not a scrap. General to any pair.
+ENGINE_VERSION = "m5e.1"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.
