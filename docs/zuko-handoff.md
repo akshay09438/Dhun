@@ -4,7 +4,9 @@ _The single source of truth for "where things stand" between sessions. `/handoff
 
 ## Last updated
 
-2026-07-09 (**Step 4 vocal chops: independent safety review FINISHED → dangerous risks disproven, tests landed, then the founder ear-tested it, it sounded dead, and he PARKED it. Next up: Step 5, the AI taste layer**). All work is on branch **`feat/house-bollywood-energy-sync`**, **NOT merged to main**. Everything is committed + pushed to origin. Suite green: **300 backend + 39 web, typecheck clean** (re-run fresh at handoff).
+2026-07-09 (**Step 4 vocal chops reviewed → PARKED; then a `/zuko:goodnight` batch rendered 9 of 10 requested mashups. Next up: Step 5, the AI taste layer + the founder's ear-test of the 9 mashups**). All work is on branch **`feat/house-bollywood-energy-sync`**, **NOT merged to main**. Everything is committed + pushed to origin. Suite green: **300 backend + 39 web, typecheck clean** (re-run fresh at handoff).
+
+**Goodnight batch (2026-07-09 → 10): 9/10 mashups rendered, waiting in `Desktop/DJAI SONGS`.** Founder gave 10 beat×vocal pairs; rendered on the deterministic engine (all built features minus the AI judgment layer; `ANTHROPIC_API_KEY` popped → no Claude cost). 1 pair declined (07 Tumhi Ho Bandhu×CHANEL, ~17% tempo gap — a genuine incompatibility). **No dangerous surface touched — a pure production run, no code change, so there is NO approval queue.** Morning report: [.zuko/goodnight/report.md](../.zuko/goodnight/report.md). Awaiting the founder's ear-test.
 
 ## Where things stand (one breath)
 
@@ -18,9 +20,10 @@ Last session left the vocal-chops change (`render.py` 🔒) committed but with i
 
 ## Do first next session
 
-1. **Step 5 — the AI taste layer.** Today the AI already chooses _where the vocals go_ (`plan._ai_arrange` sends Claude the song's energy/drops/sections/vocal-slices chart and gets back placements); the **beat moves are still fixed rules** (`fence.stem_moves_for_drops` / `beat_up_moves` / `breakdown_moves`). Step 5 extends the AI's job to **choosing which moves to make and where, from the same legal set the fence computes** — validated by the referee (`validate.py` already checks every StemMove regardless of origin, so likely little/no dangerous-file touch), with the fixed rules as the fallback. **Recommended:** run a short `superpowers:brainstorming` with the founder first to lock (a) the taste rules and (b) the one open product decision below — _then_ build behind the fence→AI→referee→fallback safety net.
-2. **The one product decision to settle with the founder** (surfaced, not yet answered): does the AI just make **smart default move choices**, or also let the **user's typed words reshape the moves** ("darker" → more breakdowns; "high energy" → more beat-ups)? This changes the scope of Step 5.
-3. **Clear the open R1 safety item before ANY merge to main** (see Open escalations) — still owed, untouched this session.
+1. **Hear the founder's verdict on the 9 goodnight mashups** (in `Desktop/DJAI SONGS`; see [.zuko/goodnight/report.md](../.zuko/goodnight/report.md)). The 4 Father Ocean pairs (01–04) are the safe reference; the 5 new-beat pairs (05/06/08/09/10) are first-time-through-the-app and unproven — the founder decides keepers vs. redo vs. bin. Likely follow-ups: re-pair the declined 07 (Tumhi Ho Bandhu×CHANEL is a ~17% tempo mismatch) with a different beat/vocal; and any "close-but-fix-X" tuning. All these songs are now cached, so re-renders are FREE.
+2. **Step 5 — the AI taste layer.** Today the AI already chooses _where the vocals go_ (`plan._ai_arrange` sends Claude the song's energy/drops/sections/vocal-slices chart and gets back placements); the **beat moves are still fixed rules** (`fence.stem_moves_for_drops` / `beat_up_moves` / `breakdown_moves`). Step 5 extends the AI's job to **choosing which moves to make and where, from the same legal set the fence computes** — validated by the referee (`validate.py` already checks every StemMove regardless of origin, so likely little/no dangerous-file touch), with the fixed rules as the fallback. **Recommended:** run a short `superpowers:brainstorming` with the founder first to lock (a) the taste rules and (b) the one open product decision below — _then_ build behind the fence→AI→referee→fallback safety net.
+3. **The one product decision to settle with the founder** (surfaced, not yet answered): does the AI just make **smart default move choices**, or also let the **user's typed words reshape the moves** ("darker" → more breakdowns; "high energy" → more beat-ups)? This changes the scope of Step 5.
+4. **Clear the open R1 safety item before ANY merge to main** (see Open escalations) — still owed, untouched this session.
 
 ## Verification evidence (which checks ran, what they returned)
 
