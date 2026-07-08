@@ -369,6 +369,21 @@ def test_warp_map_beats_the_single_ratio_drift():
     assert new_drift <= 0.03      # the per-bar re-lock stays glued to Song 1's grid
 
 
+def test_warp_map_grips_bars_near_the_stretch_edge():
+    """Regression (drift fix): at a global stretch near the SAFE_STRETCH edge (e.g. Tere Bina at
+    0.89), the per-bar ratios sit in [WARP_LO, SAFE_STRETCH_LO) (~0.87). The WIDER grip band must
+    still LOCK them (a populated warp) instead of bailing to [] — an empty warp means a single
+    global stretch that drifts off the beat over a long placement (what the founder heard at 4:18)."""
+    bar1 = 60.0 / 122.0 * 4       # a Song 1 bar
+    bar2 = 0.87 * bar1            # Song 2 bar -> per-bar ratio 0.87, BELOW the old 0.89 floor
+    d1 = [round(i * bar1, 4) for i in range(12)]
+    d2 = [round(i * bar2, 4) for i in range(12)]
+    segs = fence.warp_map(d1[0], (d2[0], d2[10]), d1, d2, 0.87)
+    assert segs, "beat-lock must engage near the edge (was [] with the tight band -> drift)"
+    for s0, s1, out_secs in segs:
+        assert fence.WARP_LO - 1e-6 <= (s1 - s0) / out_secs <= fence.WARP_HI + 1e-6
+
+
 def test_warp_map_thin_grid_falls_back_to_one_global_segment():
     segs = fence.warp_map(10.0, (0.0, 20.0), [10.0], [0.0], 0.98)  # <2 downbeats each side
     assert segs == [(0.0, 20.0, round(20.0 / 0.98, 4))] or segs == [(0.0, 20.0, 20.0 / 0.98)]

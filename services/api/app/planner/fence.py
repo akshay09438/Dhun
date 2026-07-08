@@ -28,6 +28,17 @@ SAFE_STRETCH_HI = 1.11
 HOUSE_SLOW_MAX = 0.04   # the house may slow at most 4%
 HOUSE_SPEED_MAX = 0.08  # ...and speed at most 8%
 
+# The per-bar beat-lock (warp_map / validate R7) grip band — DELIBERATELY WIDER than the global
+# SAFE_STRETCH band. A per-bar stretch is a TRANSIENT single-bar correction (~1.7s) that snaps the
+# vocal back onto Song 1's downbeat; the global band above governs the SUSTAINED overall stretch
+# (which pairs mix / warble). When a pair's global stretch sits near a SAFE_STRETCH edge, its bars
+# straddle that edge (measured: Tere Bina bars 0.874–0.894 at global 0.89; Der Lagi 1.086–1.112 at
+# 1.099), so a grip band == the global band lets go and the vocal DRIFTS off the beat over a long
+# placement. This wider grip holds every bar down; the extra per-bar excursion is brief and far
+# preferable to sustained drift (founder call 2026-07-08). Tunable by ear.
+WARP_LO = 0.85
+WARP_HI = 1.15
+
 # Cap the vocal slice so one long region can't dominate the whole mix — M3 is a
 # single placement; a section-length drop stays punchy.
 MAX_VOCAL_SECS = 40.0
@@ -453,7 +464,7 @@ def placement_end(anchor: float, vocal_src: tuple[float, float], stretch: float,
 
 def warp_map(anchor: float, vocal_src: tuple[float, float],
              a1_downbeats: list[float], a2_downbeats: list[float], global_ratio: float,
-             lo: float = SAFE_STRETCH_LO, hi: float = SAFE_STRETCH_HI
+             lo: float = WARP_LO, hi: float = WARP_HI
              ) -> list[tuple[float, float, float]]:
     """Per-bar phase-lock: map each Song-2 bar in the vocal slice onto the matching Song-1
     bar from the anchor, so every bar re-locks to the beat and drift can't accumulate
