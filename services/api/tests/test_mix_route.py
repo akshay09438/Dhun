@@ -148,4 +148,4 @@ def test_mix_rejects_bad_song_id(tmp_path, monkeypatch):
 
 def test_engine_version_is_current():
     # bumped when the engine/plan changes so a stale cached mix is never served
-    assert mix_route.ENGINE_VERSION == "m5j.0"  # Step 3 Wave 1: stem_moves (bass pull-and-slam)
+    assert mix_route.ENGINE_VERSION == "m5k.0"  # Step 3 Wave 2: drop-to-just-the-beat + held-silent bass

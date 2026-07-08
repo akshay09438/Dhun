@@ -397,8 +397,9 @@ def test_extract_json_tolerates_prose():
 
 
 def test_produced_drop_gets_a_bass_pull(monkeypatch):
-    """Step 3: on a confident pair, a produced drop (build) also gets a BASS pull-and-slam —
-    one bass stem_move whose window is the build into that drop, landing the slam on the anchor."""
+    """Step 3: on a confident pair, a produced drop (build) also gets the tension arc — a `bass`
+    StemMove held silent (not a fading ramp) across the cut+build, slamming back at the anchor, and
+    (with runway) an `other` StemMove cutting the melody for the stretch before the build."""
     monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
     energy = [0.3] * 48
     for i in range(36, 40):
@@ -410,12 +411,16 @@ def test_produced_drop_gets_a_bass_pull(monkeypatch):
 
     plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
 
-    assert plan.stem_moves, "a produced drop should carry a bass pull-and-slam"
-    assert all(m.stem == "bass" and m.gain_from == 1.0 and m.gain_to == 0.0 for m in plan.stem_moves)
-    # each pull slams back on a produced placement's anchor (end == that anchor), and pulls before it
+    assert plan.stem_moves, "a produced drop should carry the tension-arc stem moves"
+    assert all(m.gain_from == 0.0 and m.gain_to == 0.0 for m in plan.stem_moves)  # held, not fading
+    assert all(m.stem in ("bass", "other") for m in plan.stem_moves)
     produced = [p.anchor for p in plan.placements if getattr(p, "build_bars", 0) > 0]
+    # the bass move slams back on a produced placement's anchor (end == that anchor)
     for m in plan.stem_moves:
-        assert m.end in produced and m.start < m.end
+        if m.stem == "bass":
+            assert m.end in produced and m.start < m.end
+        else:  # "other" cuts end BEFORE the anchor (where the build begins), not at it
+            assert m.end not in produced and m.start < m.end
 
 
 def test_shaky_song_has_no_stem_moves(monkeypatch):
@@ -434,8 +439,10 @@ def test_shaky_song_has_no_stem_moves(monkeypatch):
 
 
 def test_stem_move_window_matches_the_build(monkeypatch):
-    """The bass pull window equals the build into the drop: it steps back planner._BUILD_BARS whole
-    bars from the anchor along the real grid, so the bass sucks out exactly as the build rises."""
+    """The bass move's window covers the build into the drop (it steps back planner._BUILD_BARS whole
+    bars from the anchor along the real grid) PLUS the cut stretch before it (fence._CUT_BARS more
+    bars back), so the bass is silent through the whole tension arc and the melody's cut ends exactly
+    where the build begins."""
     monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
     energy = [0.3] * 48
     for i in range(36, 40):
@@ -447,6 +454,14 @@ def test_stem_move_window_matches_the_build(monkeypatch):
 
     plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
 
-    for m in plan.stem_moves:
-        i = min(range(len(a1.downbeats)), key=lambda k: abs(a1.downbeats[k] - m.end))
-        assert m.start == a1.downbeats[max(0, i - planner._BUILD_BARS)]
+    for p in plan.placements:
+        if getattr(p, "build_bars", 0) <= 0:
+            continue
+        anchor_i = min(range(len(a1.downbeats)), key=lambda k: abs(a1.downbeats[k] - p.anchor))
+        build_start = a1.downbeats[max(0, anchor_i - planner._BUILD_BARS)]
+        cut_start = a1.downbeats[max(0, anchor_i - planner._BUILD_BARS - fence._CUT_BARS)]
+        bass = next((m for m in plan.stem_moves if m.stem == "bass" and m.end == p.anchor), None)
+        other = next((m for m in plan.stem_moves if m.stem == "other" and m.end == build_start), None)
+        assert bass is not None and bass.start == cut_start  # bass silent from the cut start onward
+        if cut_start < build_start:
+            assert other is not None and other.start == cut_start

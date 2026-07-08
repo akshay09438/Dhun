@@ -509,22 +509,28 @@ def test_synced_anchors_spans_even_when_the_only_drop_is_in_the_middle():
 
 
 # ---------------------------------------------------------------- stem dynamics (Step 3)
-# fence.stem_moves_for_drops emits the auto-performed BASS pull-and-slam: one bass StemMove per
-# placement that carries build_bars (a produced drop), pulling bass 1.0 -> 0.0 across the build
-# window, both ends on Song 1's real downbeat grid (make_analysis: downbeats every 2.0s).
+# fence.stem_moves_for_drops emits the auto-performed tension arc for every produced drop: an
+# `other` cut (melody muted, drums alone) for _CUT_BARS bars, then `bass` held silent (0->0, not a
+# fading ramp) across the WHOLE cut+build span so it SLAMS back only at the anchor. Both ends land
+# on Song 1's real downbeat grid (make_analysis: downbeats every 2.0s).
 
 
-def test_stem_moves_bass_pull_on_a_produced_drop():
+def test_stem_moves_cut_then_bass_held_silent_on_a_produced_drop():
     a1 = make_analysis(bpm=120.0, n_bars=32)  # downbeats 0,2,4,...; anchor 16.0 = downbeats[8]
     p = Placement(anchor=16.0, vocal_src=(0.0, 8.0), build_bars=3)
     moves = fence.stem_moves_for_drops([p], a1.downbeats)
-    assert len(moves) == 1
-    m = moves[0]
-    assert m.stem == "bass" and m.gain_from == 1.0 and m.gain_to == 0.0
-    assert m.end == 16.0                       # slams back on the anchor downbeat
-    assert m.start == a1.downbeats[8 - 3]      # 3 whole bars earlier, on the grid (10.0)
-    # both ends land exactly on real downbeats (on-beat by construction -> referee R3)
-    assert m.start in a1.downbeats and m.end in a1.downbeats
+    assert len(moves) == 2  # one bass (cut+build), one other (cut only)
+    bass = next(m for m in moves if m.stem == "bass")
+    other = next(m for m in moves if m.stem == "other")
+    assert bass.gain_from == 0.0 and bass.gain_to == 0.0  # held silent, not a fading ramp
+    assert other.gain_from == 0.0 and other.gain_to == 0.0
+    build_start = a1.downbeats[8 - 3]           # 3 bars before the anchor (10.0) — build starts here
+    cut_start = a1.downbeats[8 - 3 - fence._CUT_BARS]  # 2 MORE bars back (6.0) — the cut starts here
+    assert bass.start == cut_start and bass.end == 16.0        # bass silent for the WHOLE cut+build
+    assert other.start == cut_start and other.end == build_start  # melody cut only for the cut stretch
+    # every edge lands exactly on a real downbeat (on-beat by construction -> referee R3)
+    for m in moves:
+        assert m.start in a1.downbeats and m.end in a1.downbeats
 
 
 def test_no_stem_move_for_a_plain_entry():
@@ -533,13 +539,14 @@ def test_no_stem_move_for_a_plain_entry():
     assert fence.stem_moves_for_drops([p], a1.downbeats) == []
 
 
-def test_stem_moves_one_per_produced_drop():
+def test_stem_moves_one_pair_per_produced_drop():
     a1 = make_analysis(bpm=120.0, n_bars=64)
     ps = [Placement(anchor=16.0, vocal_src=(0.0, 8.0), build_bars=3),
           Placement(anchor=64.0, vocal_src=(0.0, 8.0), build_bars=3),
           Placement(anchor=100.0, vocal_src=(0.0, 8.0))]  # plain -> no move
     moves = fence.stem_moves_for_drops(ps, a1.downbeats)
-    assert len(moves) == 2 and all(m.stem == "bass" for m in moves)
+    assert sum(1 for m in moves if m.stem == "bass") == 2
+    assert sum(1 for m in moves if m.stem == "other") == 2
 
 
 def test_stem_moves_empty_without_a_grid():
@@ -548,10 +555,28 @@ def test_stem_moves_empty_without_a_grid():
 
 
 def test_stem_move_clamps_to_the_grid_start():
-    # A produced drop near the very start has no room for a full build-bars step-back; the pull
-    # clamps to the first downbeat and never goes negative (and stays a valid start < end).
+    # A produced drop near the very start has no room for a full build-bars step-back (build starts
+    # at the very first downbeat), so there's no room for the cut either — the bass move alone still
+    # clamps to the first downbeat and never goes negative (matches Wave 1's original guarantee).
     a1 = make_analysis(bpm=120.0, n_bars=32)
     p = Placement(anchor=4.0, vocal_src=(0.0, 8.0), build_bars=3)  # only 2 bars of runway
     moves = fence.stem_moves_for_drops([p], a1.downbeats)
-    assert len(moves) == 1 and moves[0].start == a1.downbeats[0] and moves[0].end == 4.0
+    assert len(moves) == 1 and moves[0].stem == "bass"  # no room left for a separate cut
+    assert moves[0].start == a1.downbeats[0] and moves[0].end == 4.0
     assert moves[0].start < moves[0].end
+
+
+def test_stem_moves_cut_clamped_by_a_close_previous_vocal():
+    # A previous placement's vocal tail sits close enough that the naive _CUT_BARS step-back (to
+    # 6.0) would reach back over it (real end 8.0) — the cut is pulled forward to the next downbeat
+    # at/after the vocal's end, rather than talking over the prior vocal, mirroring the engine's own
+    # build-window clamp. There's still 1 bar of room before the build starts (10.0), so the melody
+    # cut still fires, just shorter.
+    a1 = make_analysis(bpm=120.0, n_bars=32)  # downbeats every 2.0s
+    prev = Placement(anchor=2.0, vocal_src=(0.0, 6.0))  # ends at 2.0+6.0=8.0 (stretch=1.0)
+    drop = Placement(anchor=16.0, vocal_src=(0.0, 8.0), build_bars=3)  # naive cut wants 6.0, build starts 10.0
+    moves = fence.stem_moves_for_drops([prev, drop], a1.downbeats)
+    bass = next(m for m in moves if m.stem == "bass")
+    other = next(m for m in moves if m.stem == "other")
+    assert bass.start == 8.0  # pulled forward off the naive 6.0, right to the previous vocal's end
+    assert other.start == 8.0 and other.end == 10.0  # the shortened (1-bar) cut still fires

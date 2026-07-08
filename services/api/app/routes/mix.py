@@ -84,7 +84,12 @@ _S1_STEMS = ("drums", "bass", "other")
 # m5j.0: Step 3 Wave 1 — auto-performed stem dynamics. The engine can ride Song 1's bed stems by a
 #        per-stem gain envelope; the planner emits a BASS pull-and-slam on every produced drop
 #        (MixPlan.stem_moves). Additive: a plan with no stem_moves renders as before.
-ENGINE_VERSION = "m5j.0"
+# m5k.0: Step 3 Wave 2 (first move) — "drop to just the beat" precedes each produced drop's build:
+#        bass + melody ("other") are cut for a stretch (drums alone), then bass stays held SILENT
+#        (not a fading ramp) through the build too, slamming to full only at the anchor — a real
+#        held-breath before the hit (fence.stem_moves_for_drops rework). render.py/validate.py
+#        UNCHANGED — same StemMove primitive, only which windows/gains the planner emits.
+ENGINE_VERSION = "m5k.0"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.

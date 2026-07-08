@@ -561,20 +561,37 @@ def lead_sections(a1: TrackAnalysis, placements, stretch: float,
 
 # ---------------------------------------------------------------- stem dynamics (Step 3)
 # The "mixing board": auto-perform Song 1's bed stems so the beat MOVES like a DJ set instead of
-# sitting flat under the vocal (recipe §2.6 "PRODUCE, don't assemble"). Wave 1 is one move — the
-# bass pull-and-slam — placed on every produced drop. Everything here is on-beat by construction
-# (windows are real Song-1 downbeats) and additive: no produced drops => no moves => today's bed.
+# sitting flat under the vocal (recipe §2.6 "PRODUCE, don't assemble"). Every produced drop is a
+# 3-stage tension arc, all via the one StemMove primitive:
+#   1. CUT (Wave 2) — bass + melody ("other") held fully muted for _CUT_BARS bars: just the drums
+#      driving alone, a stripped-back breather before the build (the "drop to just the beat" move).
+#   2. BUILD (unchanged, render.py) — drums + melody filter/volume-climb across the drop's BUILD
+#      window; bass stays held muted through this too (one continuous mute, not a fading ramp — a
+#      guaranteed silence regardless of how loud the source bass happens to be beforehand).
+#   3. SLAM — right at the anchor, the ~8ms declick snaps bass back to full with the vocal, and the
+#      melody is already back up from the build — so everything lands together on the beat.
+# Everything is on-beat by construction (windows are real Song-1 downbeats) and additive: no
+# produced drops => no moves => today's flat bed.
+
+_CUT_BARS = 2  # bars of "just the beat" (bass+melody muted, drums alone) right before the build
 
 
-def stem_moves_for_drops(placements, a1_downbeats: list[float]) -> list[StemMove]:
-    """Auto-perform the BASS on every produced drop: pull it from full to silent across the drop's
-    BUILD window so it SLAMS back on the downbeat with the vocal (the punch that makes a drop hit).
+def stem_moves_for_drops(placements, a1_downbeats: list[float], stretch: float = 1.0) -> list[StemMove]:
+    """Auto-perform every produced drop's beat: a `bass` StemMove held silent (gain 0->0, not a
+    fading ramp) across [the cut start, the anchor] so it SLAMS to full only at the anchor, and — when
+    there's real runway — an `other` StemMove muted across [the cut start, the build start] so the
+    melody drops out too, leaving just the drums for `_CUT_BARS` bars (the "drop to just the beat"
+    breather) before the build climbs. Both windows are taken from Song 1's REAL downbeat grid (not
+    bpm arithmetic), so every edge is on-beat by construction (referee R3), and the cut is clamped to
+    never reach back over the PREVIOUS placement's real vocal end (`fence.placement_end`) — the same
+    guard the engine's own build window uses, so a close prior vocal simply shortens or skips the cut
+    rather than talking over it.
 
-    One `bass` StemMove per placement that already carries `build_bars` (i.e. one the planner marked
-    as a produced drop). The pull window is [the downbeat `build_bars` bars before the anchor, the
-    anchor] — both taken from Song 1's REAL downbeat grid (not bpm arithmetic), so start and end land
-    exactly on downbeats and the move is on-beat by construction (referee R3). The window matches the
-    engine's build window, so the bass sucks out precisely as the filter+volume build rises.
+    One `bass` move per drop, held silent for its whole cut+build span (rather than one move per
+    stage), so there is no seam where the two would otherwise touch: two independent moves on the
+    same stem, each computing its own ramp, would leave bass jump to 1.0 for an instant at the join —
+    an audible pop right in the middle of the build. Holding it as one continuous mute keeps the
+    envelope's decline-into-silence exact and click-free (the engine's existing declick logic).
 
     Returns [] when there are no produced drops or no grid — the bed then stays flat (today's mix).
     The caller gates this on a confident grid; a produced drop only exists on one anyway.
@@ -582,15 +599,30 @@ def stem_moves_for_drops(placements, a1_downbeats: list[float]) -> list[StemMove
     if not a1_downbeats:
         return []
     moves: list[StemMove] = []
-    for p in sorted(placements, key=lambda pl: pl.anchor):
+    ordered = sorted(placements, key=lambda pl: pl.anchor)
+    for i, p in enumerate(ordered):
         build_bars = getattr(p, "build_bars", 0)
-        if build_bars <= 0:  # only produced drops get a bass pull; a plain entry stays untouched
+        if build_bars <= 0:  # only produced drops get the tension arc; a plain entry stays untouched
             continue
-        i = min(range(len(a1_downbeats)), key=lambda k: abs(a1_downbeats[k] - p.anchor))  # the anchor's downbeat
-        start = a1_downbeats[max(0, i - build_bars)]  # step back build_bars WHOLE bars along the real grid
-        end = a1_downbeats[i]
-        if end - start <= 0:  # anchor at/near the very start — no runway for a build; skip
+        anchor_i = min(range(len(a1_downbeats)), key=lambda k: abs(a1_downbeats[k] - p.anchor))
+        build_start_i = max(0, anchor_i - build_bars)  # step back build_bars WHOLE bars, on the real grid
+        anchor = a1_downbeats[anchor_i]
+        build_start = a1_downbeats[build_start_i]
+        if build_start >= anchor:  # anchor at/near the very start — no runway for a build; skip
             continue
-        moves.append(StemMove(stem="bass", start=round(start, 3), end=round(end, 3),
-                              gain_from=1.0, gain_to=0.0))
+        cut_start_i = max(0, build_start_i - _CUT_BARS)  # step back _CUT_BARS MORE bars for the cut
+        if i > 0:  # never reach back over the PREVIOUS placement's real vocal tail
+            prev = ordered[i - 1]
+            prev_end = placement_end(prev.anchor, prev.vocal_src, stretch, getattr(prev, "warp", None))
+            while cut_start_i < build_start_i and a1_downbeats[cut_start_i] < prev_end - 1e-6:
+                cut_start_i += 1
+        cut_start = a1_downbeats[cut_start_i]
+        # the bass stays silent across the WHOLE cut+build span (one move, no seam) — it slams to
+        # full only at the anchor. If there's no cut room (a close prior vocal), the bass move still
+        # covers the build window alone, exactly as Wave 1 did.
+        moves.append(StemMove(stem="bass", start=round(cut_start, 3), end=round(anchor, 3),
+                              gain_from=0.0, gain_to=0.0))
+        if cut_start_i < build_start_i:  # real cut room -> mute the melody too, just for the cut stretch
+            moves.append(StemMove(stem="other", start=round(cut_start, 3), end=round(build_start, 3),
+                                  gain_from=0.0, gain_to=0.0))
     return moves

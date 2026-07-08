@@ -304,9 +304,10 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     if _confident(a1g):  # only produce (build/echo/stem-moves) on a trustworthy grid — shaky songs stay safe
         placements = _produce_drops(placements, opts.get("drops", []), s1_regions,
                                     opts["vocal_stretch"], opts["master_bpm"])
-        # Step 3: auto-perform the bass on each produced drop (pull-and-slam), on the retimed grid the
-        # audio plays at. Keys off build_bars, so it only fires where a real drop got a build.
-        stem_moves = fence.stem_moves_for_drops(placements, a1g.downbeats)
+        # Step 3: auto-perform each produced drop's tension arc (cut to just the beat, then bass held
+        # silent through the build, then the slam), on the retimed grid the audio plays at. Keys off
+        # build_bars, so it only fires where a real drop got a build.
+        stem_moves = fence.stem_moves_for_drops(placements, a1g.downbeats, opts["vocal_stretch"])
     first = placements[0]
     return MixPlan(
         mix_id=mix_id, song1_id=a1.song_id, song2_id=a2.song_id,
