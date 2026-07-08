@@ -584,6 +584,13 @@ def lead_sections(a1: TrackAnalysis, placements, stretch: float,
 # The RETURN at the anchor stays the engine's hard declick on purpose — that abruptness IS the hit.
 
 _CUT_BARS = 2  # bars of "just the beat" (bass+melody muted, drums alone) right before the build
+# The melody must be fully back to normal for at least this long BEFORE the build's own quiet+muffled
+# opening bar starts — otherwise the melody's own recovery (an ~8ms declick) lands at the SAME instant
+# the build's own low starting volume (render._BUILD_GAIN_LO) and heavy low-pass filter kick in, and
+# the two quiet moments stack into a longer, more noticeable dip than either alone (founder ear-test:
+# a real, audible dip right at that exact boundary, ~57s on the real pair). Giving the melody a clean
+# bar to already be at full before the build's own quiet start takes over removes the compounding.
+_CUT_RECOVERY_BARS = 1
 
 
 def stem_moves_for_drops(placements, a1_downbeats: list[float], stretch: float = 1.0,
@@ -591,12 +598,16 @@ def stem_moves_for_drops(placements, a1_downbeats: list[float], stretch: float =
     """Auto-perform every produced drop's beat: a `bass` StemMove RAMPS DOWN (gain 1.0->0.0, a real
     decline, not a flat hold) across [the cut start, the anchor], reaching silence only right at the
     anchor where it SLAMS back to full, and — when there's real runway — an `other` StemMove ramps
-    down the same way across [the cut start, the build start] so the melody audibly recedes too,
-    leaving just the drums driving by the time the build climbs (the "drop to just the beat" breather).
-    Both windows are taken from Song 1's REAL downbeat grid (not bpm arithmetic), so every edge is
-    on-beat by construction (referee R3), and the cut is clamped to never reach back over the PREVIOUS
-    placement's real vocal end (`fence.placement_end`) — the same guard the engine's own build window
-    uses, so a close prior vocal simply shortens or skips the cut rather than talking over it.
+    down the same way across [the cut start, one bar before the build start] so the melody audibly
+    recedes too, leaving just the drums driving (the "drop to just the beat" breather), THEN has a
+    full bar back at normal BEFORE the build's own quiet+muffled opening bar takes over — without that
+    recovery bar, the melody's own ~8ms declick recovery lands at the SAME instant the build's own low
+    starting volume kicks in, and the two quiet moments stack into a longer, more audible dip than
+    either alone (a real founder ear-test finding). Both windows are taken from Song 1's REAL downbeat
+    grid (not bpm arithmetic), so every edge is on-beat by construction (referee R3), and the cut is
+    clamped to never reach back over the PREVIOUS placement's real vocal end (`fence.placement_end`)
+    — the same guard the engine's own build window uses, so a close prior vocal simply shortens or
+    skips the cut rather than talking over it.
 
     Both ramps start at `gain_from=1.0` (not 0.0) so the decline is a genuine, audible LOWERING across
     the whole window — not an instant mute reached via the engine's ~8ms declick, which a founder
@@ -637,11 +648,15 @@ def stem_moves_for_drops(placements, a1_downbeats: list[float], stretch: float =
         build_start = a1_downbeats[build_start_i]
         if build_start >= anchor:  # anchor at/near the very start — no runway for a build; skip
             continue
-        cut_start_i = max(0, build_start_i - _CUT_BARS)  # step back _CUT_BARS MORE bars for the cut
+        # the melody's ramp-down ENDS _CUT_RECOVERY_BARS before build_start (giving it a clean bar to
+        # already be at full before the build's own quiet+muffled opening bar takes over), so the cut
+        # steps back that much further to preserve the full _CUT_BARS of genuine "just drums" time.
+        other_end_i = max(0, build_start_i - _CUT_RECOVERY_BARS)
+        cut_start_i = max(0, other_end_i - _CUT_BARS)
         if i > 0:  # never reach back over the PREVIOUS placement's real vocal tail
             prev = ordered[i - 1]
             prev_end = placement_end(prev.anchor, prev.vocal_src, stretch, getattr(prev, "warp", None))
-            while cut_start_i < build_start_i and a1_downbeats[cut_start_i] < prev_end - 1e-6:
+            while cut_start_i < other_end_i and a1_downbeats[cut_start_i] < prev_end - 1e-6:
                 cut_start_i += 1
         cut_start = a1_downbeats[cut_start_i]
         # never hollow out the backing under Father Ocean's OWN vocal (a lead or a predrop lick) —
@@ -653,7 +668,7 @@ def stem_moves_for_drops(placements, a1_downbeats: list[float], stretch: float =
         # vocal), the bass move still covers the build window alone, exactly as Wave 1 did.
         moves.append(StemMove(stem="bass", start=round(cut_start, 3), end=round(anchor, 3),
                               gain_from=1.0, gain_to=0.0))
-        if cut_start_i < build_start_i:  # real cut room -> ramp the melody down too, just for the cut stretch
-            moves.append(StemMove(stem="other", start=round(cut_start, 3), end=round(build_start, 3),
+        if cut_start_i < other_end_i:  # real cut room -> ramp the melody down too, just for the cut stretch
+            moves.append(StemMove(stem="other", start=round(cut_start, 3), end=round(a1_downbeats[other_end_i], 3),
                                   gain_from=1.0, gain_to=0.0))
     return moves

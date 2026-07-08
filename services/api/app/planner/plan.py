@@ -93,6 +93,13 @@ def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement],
 
 
 _BUILD_BARS = 3  # bars of rising filter+volume build the engine lays before a produced drop
+# A bar this quiet or quieter is a genuine BREAKDOWN in Song 1's own source — the app's own
+# invariant is that the beat never fully stops, so the produced-drop build must never be asked to
+# climb THROUGH an already-near-silent bar (its filter+volume treatment would tip it into true
+# silence, not just a dip). Chosen from real data: a healthy build bar in the catalog sits >=0.13;
+# a genuine source breakdown measured at ~0.047-0.049 (founder ear-test, Father Ocean x Der Lagi,
+# drop 2's build window) — 0.10 sits cleanly between the two with margin on both sides.
+_BUILD_ENERGY_FLOOR = 0.10
 # The engine's echo rings for render._ECHO_BEATS * render._ECHO_TAPS = 0.75 * 4 = 3 beats. Keep
 # this in sync with those constants. We derive the tail from the ACTUAL tempo (airtight at any
 # bpm, incl. an octave/quarter-tempo misread), plus a small margin, so the echo is suppressed
@@ -107,20 +114,48 @@ def _echo_tail_secs(bpm: float) -> float:
     return (60.0 / bpm) * _ECHO_TAIL_BEATS + _ECHO_TAIL_MARGIN_SECS if bpm > 0 else 1e9
 
 
+def _safe_build_bars(a1_downbeats: list[float], a1_energy: list[float], anchor: float,
+                     max_bars: int) -> int:
+    """How many bars of BUILD are safe to place before `anchor`: walk backward bar-by-bar from the
+    anchor's downbeat and stop at the first bar whose energy is at/under `_BUILD_ENERGY_FLOOR` — a
+    real breakdown in Song 1's own recording (founder ear-test: the pre-existing filter+volume build,
+    applied blindly across a fixed window, tipped an already-near-silent source bar into a full
+    second of true silence — 'a continuous song can't go blank'). The build shrinks to only the
+    CONTIGUOUS run of bars that actually have something to build from; if even the bar right before
+    the anchor is too quiet, returns 0 (no build at all — a plain entry). Without energy/grid data,
+    returns `max_bars` unchanged (can't judge, so don't second-guess the caller)."""
+    if not a1_downbeats or not a1_energy:
+        return max_bars
+    anchor_i = min(range(len(a1_downbeats)), key=lambda k: abs(a1_downbeats[k] - anchor))
+    n = 0
+    for k in range(anchor_i - 1, anchor_i - 1 - max_bars, -1):
+        if k < 0 or k >= len(a1_energy) or a1_energy[k] <= _BUILD_ENERGY_FLOOR:
+            break
+        n += 1
+    return n
+
+
 def _produce_drops(placements: list[Placement], drops: list[float],
-                   s1_regions: list[tuple[float, float]], stretch: float, bpm: float) -> list[Placement]:
+                   s1_regions: list[tuple[float, float]], stretch: float, bpm: float,
+                   a1: TrackAnalysis | None = None) -> list[Placement]:
     """Mark the placements that land on a real house DROP as PRODUCED: a multi-bar filter+volume
     BUILD into the entry (so the drop is felt coming), and an ECHO throw so the vocal rings out on
     EVERY big drop (Step 2). The engine executes both; here we only decide where. FX-only and
-    additive — a placement not on a drop is untouched (stays a plain, valid entry)."""
+    additive — a placement not on a drop is untouched (stays a plain, valid entry). The build window
+    SHRINKS to skip any real breakdown in Song 1's own source (`_safe_build_bars`) — never 0 bars of
+    real music, only ever the amount of build the source can actually support."""
     if not placements or not drops:
         return placements
     ordered = sorted(placements, key=lambda p: p.anchor)
     is_drop = lambda p: any(abs(p.anchor - d) <= 0.06 for d in drops)
+    a1_downbeats = a1.downbeats if a1 else []
+    a1_energy = a1.energy_curve if a1 else []
     for p in ordered:
         if is_drop(p):
-            p.build_bars = _BUILD_BARS
-            p.fx = None  # the multi-bar build supersedes the one-bar sweep on this entry
+            bars = _safe_build_bars(a1_downbeats, a1_energy, p.anchor, _BUILD_BARS)
+            p.build_bars = bars
+            if bars > 0:
+                p.fx = None  # the multi-bar build supersedes the one-bar sweep on this entry
     # Throw an echo on each drop, BUT only where the echo tail is clear of the next lead vocal —
     # neither a Song 1 lead/lick nor the next Song 2 placement may start inside it (R1: the echo
     # tail must never ring over a later lead, a breach the referee can't see — placement_end has
@@ -303,7 +338,7 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     stem_moves: list = []
     if _confident(a1g):  # only produce (build/echo/stem-moves) on a trustworthy grid — shaky songs stay safe
         placements = _produce_drops(placements, opts.get("drops", []), s1_regions,
-                                    opts["vocal_stretch"], opts["master_bpm"])
+                                    opts["vocal_stretch"], opts["master_bpm"], a1g)
         # Step 3: auto-perform each produced drop's tension arc (cut to just the beat, then bass held
         # silent through the build, then the slam), on the retimed grid the audio plays at. Keys off
         # build_bars, so it only fires where a real drop got a build. Skips any drop where Father

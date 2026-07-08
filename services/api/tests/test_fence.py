@@ -527,10 +527,11 @@ def test_stem_moves_cut_then_bass_ramps_down_on_a_produced_drop():
     other = next(m for m in moves if m.stem == "other")
     assert bass.gain_from == 1.0 and bass.gain_to == 0.0  # a real decline, not a flat hold
     assert other.gain_from == 1.0 and other.gain_to == 0.0
-    build_start = a1.downbeats[8 - 3]           # 3 bars before the anchor (10.0) — build starts here
-    cut_start = a1.downbeats[8 - 3 - fence._CUT_BARS]  # 2 MORE bars back (6.0) — the cut starts here
-    assert bass.start == cut_start and bass.end == 16.0        # bass ramps down across the WHOLE cut+build
-    assert other.start == cut_start and other.end == build_start  # melody ramps down only across the cut
+    build_start_i = 8 - 3                                    # 3 bars before the anchor — build starts here (10.0)
+    other_end_i = build_start_i - fence._CUT_RECOVERY_BARS   # 1 bar EARLIER — melody is back to full by here (8.0)
+    cut_start_i = other_end_i - fence._CUT_BARS              # 2 MORE bars back — the cut starts here (4.0)
+    assert bass.start == a1.downbeats[cut_start_i] and bass.end == 16.0  # bass ramps down the WHOLE cut+build
+    assert other.start == a1.downbeats[cut_start_i] and other.end == a1.downbeats[other_end_i]  # ends 1 bar early
     # every edge lands exactly on a real downbeat (on-beat by construction -> referee R3)
     for m in moves:
         assert m.start in a1.downbeats and m.end in a1.downbeats
@@ -570,19 +571,19 @@ def test_stem_move_clamps_to_the_grid_start():
 
 
 def test_stem_moves_cut_clamped_by_a_close_previous_vocal():
-    # A previous placement's vocal tail sits close enough that the naive _CUT_BARS step-back (to
-    # 6.0) would reach back over it (real end 8.0) — the cut is pulled forward to the next downbeat
-    # at/after the vocal's end, rather than talking over the prior vocal, mirroring the engine's own
-    # build-window clamp. There's still 1 bar of room before the build starts (10.0), so the melody
-    # cut still fires, just shorter.
+    # A previous placement's vocal tail sits close enough that the naive step-back (to 4.0, 2 bars
+    # before the melody's recovery point at 8.0) would reach back over it (real end 6.0) — the cut is
+    # pulled forward to the next downbeat at/after the vocal's end, rather than talking over the prior
+    # vocal, mirroring the engine's own build-window clamp. There's still room before the melody's
+    # recovery point (8.0), so the cut still fires, just shorter.
     a1 = make_analysis(bpm=120.0, n_bars=32)  # downbeats every 2.0s
-    prev = Placement(anchor=2.0, vocal_src=(0.0, 6.0))  # ends at 2.0+6.0=8.0 (stretch=1.0)
-    drop = Placement(anchor=16.0, vocal_src=(0.0, 8.0), build_bars=3)  # naive cut wants 6.0, build starts 10.0
+    prev = Placement(anchor=2.0, vocal_src=(0.0, 4.0))  # ends at 2.0+4.0=6.0 (stretch=1.0)
+    drop = Placement(anchor=16.0, vocal_src=(0.0, 8.0), build_bars=3)  # naive cut wants 4.0, build starts 10.0
     moves = fence.stem_moves_for_drops([prev, drop], a1.downbeats)
     bass = next(m for m in moves if m.stem == "bass")
     other = next(m for m in moves if m.stem == "other")
-    assert bass.start == 8.0  # pulled forward off the naive 6.0, right to the previous vocal's end
-    assert other.start == 8.0 and other.end == 10.0  # the shortened (1-bar) cut still fires
+    assert bass.start == 6.0  # pulled forward off the naive 4.0, right to the previous vocal's end
+    assert other.start == 6.0 and other.end == 8.0  # the shortened cut still fires, ending 1 bar before the build
 
 
 def test_stem_moves_skip_a_drop_where_song1s_own_vocal_leads_in():

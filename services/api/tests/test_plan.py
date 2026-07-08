@@ -331,6 +331,47 @@ def test_drop_placements_are_produced(monkeypatch):
     assert any(getattr(p, "echo", False) for p in plan.placements)        # an echo on the climax
 
 
+def test_safe_build_bars_shrinks_across_a_natural_breakdown():
+    """BUG REPRODUCTION (founder ear-test): Father Ocean x Der Lagi's real drop 2 has a natural
+    breakdown (measured source energy ~0.047-0.049) in the MIDDLE of what would be a 3-bar build
+    window. The pre-existing build (filter+volume climb, unrelated to Step 3) applied blindly there
+    tipped an already-near-silent bar into a full second of TRUE silence — 'a continuous song can't
+    go blank'. The build must shrink to only the bars that actually have something to build from."""
+    downbeats = [0.0, 2.0, 4.0, 6.0, 8.0, 10.0]  # bar indices 0..5; anchor at 10.0 (index 5)
+    energy = [0.5, 0.5, 0.05, 0.05, 0.5, 0.9]  # bars@4.0 and @6.0 are a real breakdown
+    assert planner._safe_build_bars(downbeats, energy, anchor=10.0, max_bars=3) == 1  # only bar@8.0 counts
+
+
+def test_safe_build_bars_zero_when_bar_right_before_anchor_is_quiet():
+    downbeats = [0.0, 2.0, 4.0, 6.0, 8.0, 10.0]
+    energy = [0.5, 0.5, 0.5, 0.5, 0.05, 0.9]  # the bar RIGHT before the anchor is the quiet one
+    assert planner._safe_build_bars(downbeats, energy, anchor=10.0, max_bars=3) == 0  # no safe runway
+
+
+def test_safe_build_bars_unchanged_when_all_healthy():
+    downbeats = [0.0, 2.0, 4.0, 6.0, 8.0, 10.0]
+    energy = [0.5, 0.5, 0.5, 0.5, 0.5, 0.9]
+    assert planner._safe_build_bars(downbeats, energy, anchor=10.0, max_bars=3) == 3  # nothing to shrink
+
+
+def test_safe_build_bars_defaults_to_max_without_data():
+    assert planner._safe_build_bars([], [], anchor=10.0, max_bars=3) == 3  # can't judge -> unchanged
+
+
+def test_produce_drops_shrinks_build_across_a_source_breakdown():
+    """Integration: `_produce_drops` must shrink a produced drop's build rather than let it cross a
+    genuine breakdown in Song 1's own source (reproduces the real founder ear-test bug)."""
+    from app.models import Placement
+    a1 = make_analysis(bpm=120.0, n_bars=48)  # downbeats every 2.0s -> bar index 40 = 80.0s
+    a1.energy_curve = [0.3] * 48
+    a1.energy_curve[36] = a1.energy_curve[37] = 0.05  # a real breakdown right before the drop
+    a1.energy_curve[38] = a1.energy_curve[39] = 0.5    # healthy in the 2 bars right before the anchor
+    a1.energy_curve[40] = 0.95
+    placements = [Placement(anchor=80.0, vocal_src=(0.0, 8.0))]
+    out = planner._produce_drops(placements, [80.0], [], 1.0, 120.0, a1)
+    assert 0 < out[0].build_bars < planner._BUILD_BARS  # shrunk (2), not the full 3, not zero
+
+
 def test_produce_drops_suppresses_echo_when_a_song1_vocal_follows():
     """R1 guard (found by adversarial review): the echo tail rings PAST the vocal's dry end, so
     it must never fire when Song 1's own contrast vocal lands in that tail — that would be two
@@ -463,10 +504,11 @@ def test_shaky_song_has_no_stem_moves(monkeypatch):
 
 
 def test_stem_move_window_matches_the_build(monkeypatch):
-    """The bass move's window covers the build into the drop (it steps back planner._BUILD_BARS whole
-    bars from the anchor along the real grid) PLUS the cut stretch before it (fence._CUT_BARS more
-    bars back), so the bass is silent through the whole tension arc and the melody's cut ends exactly
-    where the build begins."""
+    """The bass move's window covers the build into the drop (it steps back the placement's actual
+    build_bars along the real grid) PLUS the cut stretch before it (fence._CUT_BARS more bars back),
+    so the bass ramps down through the whole tension arc, and the melody's cut ends a full
+    fence._CUT_RECOVERY_BARS before the build begins (giving it time to recover before the build's
+    own quiet opening bar takes over — avoids the two quiet moments stacking)."""
     monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
     energy = [0.3] * 48
     for i in range(36, 40):
@@ -479,13 +521,16 @@ def test_stem_move_window_matches_the_build(monkeypatch):
     plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
 
     for p in plan.placements:
-        if getattr(p, "build_bars", 0) <= 0:
+        build_bars = getattr(p, "build_bars", 0)
+        if build_bars <= 0:
             continue
         anchor_i = min(range(len(a1.downbeats)), key=lambda k: abs(a1.downbeats[k] - p.anchor))
-        build_start = a1.downbeats[max(0, anchor_i - planner._BUILD_BARS)]
-        cut_start = a1.downbeats[max(0, anchor_i - planner._BUILD_BARS - fence._CUT_BARS)]
+        build_start = a1.downbeats[max(0, anchor_i - build_bars)]
+        other_end = a1.downbeats[max(0, anchor_i - build_bars - fence._CUT_RECOVERY_BARS)]
+        cut_start = a1.downbeats[max(0, anchor_i - build_bars - fence._CUT_RECOVERY_BARS - fence._CUT_BARS)]
         bass = next((m for m in plan.stem_moves if m.stem == "bass" and m.end == p.anchor), None)
-        other = next((m for m in plan.stem_moves if m.stem == "other" and m.end == build_start), None)
-        assert bass is not None and bass.start == cut_start  # bass silent from the cut start onward
-        if cut_start < build_start:
+        other = next((m for m in plan.stem_moves if m.stem == "other" and m.end == other_end), None)
+        assert bass is not None and bass.start == cut_start  # bass ramps down from the cut start onward
+        if cut_start < other_end:
             assert other is not None and other.start == cut_start
+            assert other_end < build_start or fence._CUT_RECOVERY_BARS == 0  # melody recovers before the build
