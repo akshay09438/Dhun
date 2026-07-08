@@ -21,6 +21,13 @@ from app.models import TrackAnalysis
 SAFE_STRETCH_LO = 0.89
 SAFE_STRETCH_HI = 1.11
 
+# The house/EDM track is the anchor — slowing it kills its drive, so when a far-apart pair
+# needs the movable master, the house moves the MINIMUM and is bounded here (never dragged
+# down; a small nudge only). The guest vocal absorbs the rest of the stretch and sits near
+# the edge of the safe band (recipe §1.5; founder call 2026-07-08). Tunable by ear.
+HOUSE_SLOW_MAX = 0.04   # the house may slow at most 4%
+HOUSE_SPEED_MAX = 0.08  # ...and speed at most 8%
+
 # Cap the vocal slice so one long region can't dominate the whole mix — M3 is a
 # single placement; a section-length drop stays punchy.
 MAX_VOCAL_SECS = 40.0
@@ -53,6 +60,57 @@ def best_stretch(master_bpm: float, source_bpm: float) -> tuple[float, bool]:
     )
     ratio = min(candidates, key=lambda r: abs(r - 1.0))
     return round(ratio, 4), SAFE_STRETCH_LO <= ratio <= SAFE_STRETCH_HI
+
+
+def _fold_source(master_bpm: float, source_bpm: float) -> float:
+    """Octave-fold the source BPM to the multiple (x0.5 / x1 / x2) nearest the master."""
+    return min((source_bpm, source_bpm * 2, source_bpm / 2), key=lambda b: abs(b - master_bpm))
+
+
+def tempo_plan(master_bpm: float, source_bpm: float,
+               lo: float = SAFE_STRETCH_LO, hi: float = SAFE_STRETCH_HI,
+               slow_max: float = HOUSE_SLOW_MAX, speed_max: float = HOUSE_SPEED_MAX
+               ) -> tuple[float, float, float, bool]:
+    """Choose the shared tempo for the pair, PROTECTING the house track (the movable master).
+
+    Returns (master_bpm_out, bed_stretch, vocal_stretch, safe):
+      - if the one-sided lock (house fixed) already fits the safe band -> native master
+        (bed_stretch == 1.0), exactly today's behaviour; else
+      - move the house the MINIMUM to bring the vocal back into band, bounded to
+        [1-slow_max, 1+speed_max] (never dragged down; a small nudge only). The guest
+        vocal absorbs the rest and sits at its band edge.
+    `safe` is False (decline) when the house would have to move beyond its bounds.
+    """
+    if master_bpm <= 0 or source_bpm <= 0:
+        return master_bpm, 1.0, 1.0, False
+    src = _fold_source(master_bpm, source_bpm)
+    one_sided = master_bpm / src
+    if lo <= one_sided <= hi:
+        return master_bpm, 1.0, round(one_sided, 4), True         # native master (today)
+    t = min(max(master_bpm, lo * src), hi * src)                  # vocal-legal tempo nearest the house
+    bed, voc = t / master_bpm, t / src
+    safe = (1.0 - slow_max) - 1e-9 <= bed <= (1.0 + speed_max) + 1e-9
+    return round(t, 3), round(bed, 4), round(voc, 4), safe
+
+
+def retimed_analysis(a1: TrackAnalysis, target_bpm: float) -> TrackAnalysis:
+    """Return a copy of a1 whose timeline is scaled to target_bpm (for the movable master:
+    the house bed is stretched to target_bpm, so its grid must move with it). Pure arithmetic;
+    the per-bar energy_curve is unchanged (only re-timestamped via the scaled downbeats). Both
+    the planner and the referee call this, so they can never drift onto different grids. No-op
+    if either bpm is missing/zero."""
+    if not a1.bpm or a1.bpm <= 0 or target_bpm <= 0:
+        return a1
+    f = a1.bpm / target_bpm
+    return a1.model_copy(update={
+        "bpm": target_bpm,
+        "beats": [round(t * f, 4) for t in a1.beats],
+        "downbeats": [round(t * f, 4) for t in a1.downbeats],
+        "phrase_starts": [round(t * f, 4) for t in a1.phrase_starts],
+        "sections": [s.model_copy(update={"start": round(s.start * f, 4), "end": round(s.end * f, 4)})
+                     for s in a1.sections],
+        "vocal_regions": [(round(s * f, 4), round(e * f, 4)) for s, e in a1.vocal_regions],
+    })
 
 
 def _phrase_energy(energy_curve: list[float], phrase_idx: int) -> float:

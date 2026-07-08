@@ -44,6 +44,47 @@ def test_best_stretch_guards_zero():
     assert fence.best_stretch(120.0, 0.0) == (1.0, False)
 
 
+def test_tempo_plan_in_band_keeps_house_native():
+    m, bed, voc, safe = fence.tempo_plan(122.0, 111.0)  # +9.9% one-sided, in band
+    assert safe and bed == 1.0 and m == 122.0 and 1.08 < voc < 1.11
+
+
+def test_tempo_plan_protects_house_for_a_fast_guest():
+    # 122 house x 144 guest (Tere Bina): house moves the MINIMUM and only UP; vocal to band edge.
+    m, bed, voc, safe = fence.tempo_plan(122.0, 144.0)
+    assert safe
+    assert 1.0 < bed <= 1.0 + fence.HOUSE_SPEED_MAX + 1e-9   # house sped up, within its cap
+    assert abs(voc - fence.SAFE_STRETCH_LO) < 1e-3            # vocal parked at its slow edge
+    assert abs(m - bed * 122.0) < 0.05                        # master == house_bpm * bed_stretch
+
+
+def test_tempo_plan_octave_folds_a_half_counted_ballad():
+    # a 72-BPM ballad read as 72 folds to 144 (nearest 122) -> same result as 144
+    assert fence.tempo_plan(122.0, 72.0) == fence.tempo_plan(122.0, 144.0)
+
+
+def test_tempo_plan_declines_when_house_would_move_too_far():
+    # 120 x 150: house would need > +8% to reach the vocal's band -> declined (house protected)
+    assert fence.tempo_plan(120.0, 150.0)[3] is False
+
+
+def test_tempo_plan_guards_zero():
+    assert fence.tempo_plan(122.0, 0.0)[3] is False
+
+
+def test_retimed_analysis_scales_grid_to_target_tempo():
+    a1 = make_analysis(bpm=122.0, n_bars=16, vocal_regions=[(10.0, 20.0)],
+                       sections=[Section(start=0.0, end=8.0, label="intro")])
+    r = fence.retimed_analysis(a1, 128.16)          # house sped up (bed_stretch ~1.05)
+    f = 122.0 / 128.16
+    assert r.bpm == 128.16
+    assert abs(r.downbeats[1] - a1.downbeats[1] * f) < 1e-3   # every downbeat pulled in
+    assert abs(r.vocal_regions[0][0] - 10.0 * f) < 1e-3
+    assert abs(r.sections[0].end - 8.0 * f) < 1e-3
+    assert r.energy_curve == a1.energy_curve         # per-bar values unchanged
+    assert a1.downbeats[1] != r.downbeats[1]          # original left untouched (a copy)
+
+
 def test_candidate_drops_ranks_by_energy():
     energy = [0.3] * 32
     for i in range(8, 16):  # the second phrase (bars 8..15) is the loudest
