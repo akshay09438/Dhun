@@ -69,8 +69,8 @@ def _confident(a1: TrackAnalysis) -> bool:
 
 def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement],
                       stretch: float) -> tuple[list[Placement], list[tuple[float, float]]]:
-    """Slice B: on a confident Song 1, answer with Song 1's own vocal in one gap and put a
-    single filter-sweep into the final (big) entry. On a shaky Song 1, play safe — no
+    """On a confident Song 1: let Song 1 LEAD with its own vocal in the gaps (both songs trade —
+    Step 1) and put a filter-sweep into the final (big) entry. On a shaky Song 1, play safe — no
     flourishes and at most two placements — rather than bet fancy moves on bad data."""
     if not _confident(a1):
         # Play safe (<=2 placements, no flourishes) — but keep the arc's ENDS (first + last),
@@ -81,7 +81,9 @@ def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement],
             p.beat_breath = False
             p.fx = None
         return safe, []
-    s1_regions = fence.contrast_windows(a1, placements, stretch)[:1]
+    # Both vocals trade: Song 1 leads its substantial sung passages in the gaps (the app keeps
+    # the real ones and drops the scraps — the keep-or-drop judgment), never over Song 2 (R1).
+    s1_regions = fence.lead_sections(a1, placements, stretch)
     if len(placements) >= 2:  # one filter sweep, into the final (biggest) entry
         placements[-1].fx = "sweep_in"
     return placements, s1_regions

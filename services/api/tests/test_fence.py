@@ -165,20 +165,40 @@ def test_arrangement_options_declines_far_tempo():
     assert not fence.arrangement_options(a1, a2)["mixable"]
 
 
-def test_contrast_windows_finds_gap_where_s1_sings():
-    a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(50.0, 80.0)])  # S1 sings 50-80
-    placements = [Placement(anchor=16.0, vocal_src=(0.0, 12.0)),   # ends 28
-                  Placement(anchor=90.0, vocal_src=(0.0, 12.0))]   # gap 28-90
-    wins = fence.contrast_windows(a1, placements, stretch=1.0)
-    assert wins and all(s >= 28.0 and e <= 90.0 for s, e in wins)  # inside the gap
-    assert wins[0][0] >= 50.0 and wins[0][1] <= 80.0               # where S1 actually sings
+def test_lead_sections_merges_a_passage_and_drops_scraps():
+    """Both-vocals trade (Step 1): Song 1 LEADS its own substantial sung passages in the gaps
+    between Song 2's placements. Adjacent Song-1 regions split by a breath merge into one passage;
+    a real lead (>= min_secs) is kept, a tiny scrap is dropped."""
+    # Song 1 sings a passage 40-77 (3 regions, breaths bridged) + a 4s scrap at 100.
+    a1 = make_analysis(bpm=120.0, n_bars=64,
+                       vocal_regions=[(40.0, 54.0), (56.0, 67.0), (70.0, 77.0), (100.0, 104.0)])
+    placements = [Placement(anchor=10.0, vocal_src=(0.0, 8.0)),   # ends 18
+                  Placement(anchor=110.0, vocal_src=(0.0, 8.0))]  # gap 18-110
+    leads = fence.lead_sections(a1, placements, stretch=1.0)
+    assert leads, "Song 1 should lead its real passage"
+    assert leads[0][0] <= 41.0 and leads[0][1] >= 76.0     # the merged 40-77 passage, not a fragment
+    assert all(e - s >= 10.0 for s, e in leads)            # only substantial leads (the 4s scrap dropped)
 
 
-def test_contrast_windows_empty_when_s1_silent_in_gaps():
-    a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(0.0, 10.0)])  # S1 sings only early
+def test_lead_sections_never_overlap_a_placement():
+    """One lead at a time (R1): every Song-1 lead sits strictly in a beat-only gap, never over a
+    Song-2 vocal."""
+    a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(0.0, 200.0)])  # S1 sings throughout
+    placements = [Placement(anchor=20.0, vocal_src=(0.0, 10.0)),   # ends 30
+                  Placement(anchor=60.0, vocal_src=(0.0, 10.0))]   # ends 70
+    leads = fence.lead_sections(a1, placements, stretch=1.0)
+    assert leads
+    for ls, le in leads:
+        for p in placements:
+            pe = fence.placement_end(p.anchor, p.vocal_src, 1.0, None)
+            assert le <= p.anchor + 1e-6 or ls >= pe - 1e-6  # strictly in a gap
+
+
+def test_lead_sections_empty_when_song1_has_no_real_passage():
+    a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(0.0, 6.0)])  # only a short scrap early
     placements = [Placement(anchor=16.0, vocal_src=(0.0, 12.0)),
                   Placement(anchor=90.0, vocal_src=(0.0, 12.0))]
-    assert fence.contrast_windows(a1, placements, stretch=1.0) == []
+    assert fence.lead_sections(a1, placements, stretch=1.0) == []
 
 
 def test_arc_anchors_spreads_across_thirds():

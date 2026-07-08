@@ -49,8 +49,8 @@ def _setup_pair(tmp_path, song2_bpm=118.0):
     # uploaded songs
     _tone(tmp_path / f"{SONG1}.wav", 200.0)
     _tone(tmp_path / f"{SONG2}.wav", 300.0)
-    # analyses (Song 1 sings 40-55s so a contrast window exists in a late gap)
-    _write_analysis(tmp_path, SONG1, 120.0, [(40.0, 55.0)])
+    # analyses (Song 1 sings a substantial passage 20-62s so it LEADS in a gap — both vocals trade)
+    _write_analysis(tmp_path, SONG1, 120.0, [(20.0, 62.0)])
     _write_analysis(tmp_path, SONG2, song2_bpm, [(0.0, 4.0)])
     # stems (WAV content in .mp3-named files, as the real cache stores)
     for name, f in (("drums", 110.0), ("bass", 55.0), ("other", 330.0), ("vocals", 660.0)):

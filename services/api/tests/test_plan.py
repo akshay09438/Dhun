@@ -334,5 +334,23 @@ def test_produce_drops_echoes_when_nothing_follows():
     assert out[-1].echo is True
 
 
+def test_both_vocals_trade_when_song1_has_a_real_passage(monkeypatch):
+    """Step 1: when Song 1 (the house track) has a substantial sung passage in a gap between
+    Song 2's placements, it LEADS there — both vocals are present and trade (not Song 1 stripped)."""
+    from app.models import Placement
+    a1 = make_analysis(bpm=120.0, n_bars=96, vocal_regions=[(60.0, 92.0)])  # FO sings a real 32s passage
+    a2 = make_analysis(bpm=120.0, vocal_regions=[(0.0, 20.0)])
+    # Der Lagi leads early and late, leaving FO's 60-92 passage in a clean gap between them.
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: [
+        Placement(anchor=16.0, vocal_src=(0.0, 12.0)),
+        Placement(anchor=140.0, vocal_src=(0.0, 12.0)),
+    ])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    assert plan.s1_vocal_regions                                 # Song 1 leads its own passage
+    assert any(60.0 <= s and e <= 92.0 and e - s >= 10.0 for s, e in plan.s1_vocal_regions)  # its real passage
+
+
 def test_extract_json_tolerates_prose():
     assert llm.extract_json('sure!\n{"placements": []}\nthanks') == {"placements": []}

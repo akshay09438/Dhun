@@ -392,34 +392,59 @@ def warp_map(anchor: float, vocal_src: tuple[float, float],
     return segs
 
 
-def contrast_windows(a1: TrackAnalysis, placements, stretch: float,
-                     min_secs: float = 6.0, margin: float = 2.0) -> list[tuple[float, float]]:
-    """The beat-only gaps between Song-2 placements where Song 1 *actually sings* — the
-    only spots Song 1's own vocal can answer without ever overlapping Song 2's vocal.
-
-    A gap runs from one placement's real end to the next placement's entry (plus the tail
-    after the last one); each gap is shrunk by `margin` so it never touches a Song-2 vocal,
-    then intersected with Song 1's own `vocal_regions`. Windows shorter than `min_secs` are
-    dropped. This keeps the R1 "one voice at a time" guarantee true by construction.
-    """
-    if not placements:
+def _merge_regions(regions: list[tuple[float, float]], max_gap: float = 4.0) -> list[tuple[float, float]]:
+    """Merge vocal regions separated by <= max_gap seconds (a breath between sung phrases) into
+    one continuous passage, so a real sung passage isn't seen as a string of short scraps."""
+    if not regions:
         return []
-    ordered = sorted(placements, key=lambda p: p.anchor)
-    _end = lambda p: placement_end(p.anchor, p.vocal_src, stretch, getattr(p, "warp", None))
-    last_end = _end(ordered[-1])
-    track_end = a1.beats[-1] if a1.beats else last_end + min_secs
+    rs = sorted((float(s), float(e)) for s, e in regions)
+    merged = [list(rs[0])]
+    for s, e in rs[1:]:
+        if s - merged[-1][1] <= max_gap:
+            merged[-1][1] = max(merged[-1][1], e)
+        else:
+            merged.append([s, e])
+    return [(s, e) for s, e in merged]
 
-    gaps = [(_end(prev), nxt.anchor) for prev, nxt in zip(ordered, ordered[1:])]
-    gaps.append((last_end, track_end))
+
+def lead_sections(a1: TrackAnalysis, placements, stretch: float,
+                  min_secs: float = 10.0, margin: float = 2.0, max_leads: int = 3) -> list[tuple[float, float]]:
+    """Where Song 1 (the house track) LEADS with its OWN vocal — its substantial sung passages
+    that fall in the beat-only gaps between Song 2's placements, so the two songs TRADE the lead
+    (one voice at a time). This is the both-vocals move: Song 1's vocal is a real, central part,
+    not stripped.
+
+    A gap runs from one Song-2 placement's real end to the next entry (plus the tail after the
+    last), shrunk by `margin` so it never touches a Song-2 vocal (the R1 guarantee, by
+    construction). Song 1's own vocal regions are merged across breaths into passages; a passage
+    clipped to a gap is kept only if it is still >= min_secs (a real lead, not a throwaway scrap —
+    the founder's keep-or-drop judgment). Returned longest-first, capped at `max_leads`.
+    """
+    passages = _merge_regions(list(a1.vocal_regions))
+    if not passages:
+        return []
+    track_end = a1.beats[-1] if a1.beats else 0.0
+    if placements:
+        ordered = sorted(placements, key=lambda p: p.anchor)
+        _end = lambda p: placement_end(p.anchor, p.vocal_src, stretch, getattr(p, "warp", None))
+        last_end = _end(ordered[-1])
+        if not track_end:
+            track_end = last_end + min_secs
+        gaps = [(_end(prev), nxt.anchor) for prev, nxt in zip(ordered, ordered[1:])]
+        gaps.append((last_end, track_end))
+    else:  # no Song-2 vocal at all -> Song 1 can lead across the whole track
+        if not track_end:
+            track_end = max(e for _s, e in passages)
+        gaps = [(0.0, track_end)]
 
     out: list[tuple[float, float]] = []
     for gap_start, gap_end in gaps:
         gs, ge = gap_start + margin, gap_end - margin
         if ge - gs < min_secs:
             continue
-        for vs, ve in a1.vocal_regions:  # where Song 1 itself sings
-            s, e = max(gs, vs), min(ge, ve)
+        for ps, pe in passages:  # where Song 1 itself sings a real passage
+            s, e = max(gs, ps), min(ge, pe)
             if e - s >= min_secs:
                 out.append((round(s, 3), round(e, 3)))
-                break  # one contrast window per gap is plenty
-    return out
+    out.sort(key=lambda r: r[1] - r[0], reverse=True)  # the biggest lead moments first
+    return out[:max_leads]
