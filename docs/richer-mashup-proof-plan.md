@@ -3,7 +3,12 @@
 **Status: DRAFT FOR FOUNDER REVIEW. No code will be written until you read this and say go.**
 Date: 2026-07-08 · Branch it will land on: a new branch off `feat/m5-live-control`
 
-> ⚠️ **PARTIALLY SUPERSEDED (2026-07-08, later same day).** After the founder shared 5 real house/techno × Bollywood reference mashups, the **hero move in this plan — "Song 2 plays as itself / beat-swap" — is WRONG for this genre.** In house × Bollywood the **house beat stays the constant foundation**; you do NOT swap to the Bollywood beat. The real recipe is **ENERGY SYNC** (align the Bollywood vocal's peaks with the house track's builds/drops — build-with-build, drop-with-peak), **vocal chops/hums on the drops** ("dum da ra dum"), plus a **tempo "fast-track" fix** (speed up slow songs like Tere Bina instead of rejecting them) and **vocal chopping**. This doc will be **rewritten in "Phase 0"** into a _House × Bollywood Recipe_ + updated plan. Do NOT build the beat-swap move. See the 2026-07-08 (2nd) implementation-plan drift entry and the handoff for the full recipe.
+> 🛑 **FULLY SUPERSEDED (2026-07-08). Do not build from this doc.** It has been replaced by two new docs:
+>
+> - **[house-bollywood-recipe.md](house-bollywood-recipe.md)** — the taste (energy-sync, chops/hums on drops, Bollywood accents, house beat as the floor) + the 5 reference links + per-song rules + the tempo map.
+> - **[house-bollywood-build-plan.md](house-bollywood-build-plan.md)** — the rewritten, file-by-file build plan (movable-master tempo, energy detection, energy-sync arrangement, chops, build/filter, accents).
+>
+> Why this doc is wrong: its hero move — "Song 2 plays as itself / beat-swap" — is **wrong for house × Bollywood** (the house beat stays the constant floor; a DJ does NOT swap to the Bollywood beat). Kept only for history. See the 2026-07-08 implementation-plan drift entries for the trail.
 
 ---
 
