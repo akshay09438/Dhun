@@ -25,6 +25,25 @@ def test_fallback_arrangement_without_api_key(monkeypatch):
     assert fence.SAFE_STRETCH_LO <= mix.vocal_stretch <= fence.SAFE_STRETCH_HI
 
 
+def test_build_mix_plan_sets_bed_stretch_and_plans_on_retimed_grid(monkeypatch):
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)  # force fallback
+    a1 = make_analysis(bpm=122.0, n_bars=64, vocal_regions=[(20.0, 40.0)])
+    a2 = make_analysis(bpm=144.0, n_bars=64, vocal_regions=[(16.0, 40.0)])  # Tere Bina shape
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+    assert plan.bed_stretch > 1.0 and plan.master_bpm > 122.0  # house nudged up, movable master
+    # every anchor lands on a downbeat of the RETIMED grid (what the audio will play at)
+    dg = fence.retimed_analysis(a1, plan.master_bpm).downbeats
+    for p in plan.placements:
+        assert min(abs(p.anchor - d) for d in dg) <= 0.06
+
+
+def test_build_mix_plan_in_band_pair_has_unit_bed_stretch(monkeypatch):
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=122.0, n_bars=64, vocal_regions=[(20.0, 40.0)])
+    a2 = make_analysis(bpm=118.0, n_bars=64, vocal_regions=[(16.0, 40.0)])
+    assert planner.build_mix_plan("m" * 64, a1, a2).bed_stretch == 1.0
+
+
 def test_arrangement_has_multiple_nonoverlapping_placements(monkeypatch):
     monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)  # force fallback
     energy = [0.3] * 32

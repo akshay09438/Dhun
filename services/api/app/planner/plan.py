@@ -281,28 +281,33 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     opts = fence.arrangement_options(a1, a2)
     if not opts["mixable"]:
         raise MixDeclined(opts["reason"])
+    # Plan against the (possibly retimed) grid the movable master chose — warp, flourishes and
+    # drops all key off Song 1's downbeats, which move when the house bed is stretched. a1g is
+    # a1 on the native path (bed_stretch == 1.0), so nothing changes for today's pairs.
+    a1g = opts.get("a1_grid", a1)
 
     placements = _ai_arrange(opts, prompt, take)
     source = "ai" if placements else "rules"
     if not placements:
         placements = _default_arrangement(opts, take)
-    placements = _attach_warp(placements, a1, a2, opts["vocal_stretch"])  # per-bar beat-lock
+    placements = _attach_warp(placements, a1g, a2, opts["vocal_stretch"])  # per-bar beat-lock
     placements = _dedupe_nonoverlapping(placements, opts["vocal_stretch"])
     # The arc guard: if the plan (AI's or a thin fallback) clusters instead of spanning the
     # song, rebuild it as a deterministic energy arc so the vocal always reaches the whole
     # track with a strong finish — the founder's acceptance test, guaranteed by construction.
     if not _spans_song(placements, opts.get("track_end", 0.0)):
-        rebuilt = _attach_warp(_default_arrangement(opts, take), a1, a2, opts["vocal_stretch"])
+        rebuilt = _attach_warp(_default_arrangement(opts, take), a1g, a2, opts["vocal_stretch"])
         placements = _dedupe_nonoverlapping(rebuilt, opts["vocal_stretch"])
         source = "rules"
-    placements, s1_regions = _apply_flourishes(a1, placements, opts["vocal_stretch"])
-    if _confident(a1):  # only produce (build/echo) on a trustworthy grid — shaky songs stay safe
+    placements, s1_regions = _apply_flourishes(a1g, placements, opts["vocal_stretch"])
+    if _confident(a1g):  # only produce (build/echo) on a trustworthy grid — shaky songs stay safe
         placements = _produce_drops(placements, opts.get("drops", []), s1_regions,
                                     opts["vocal_stretch"], opts["master_bpm"])
     first = placements[0]
     return MixPlan(
         mix_id=mix_id, song1_id=a1.song_id, song2_id=a2.song_id,
         master_bpm=opts["master_bpm"], vocal_stretch=opts["vocal_stretch"],
+        bed_stretch=opts.get("bed_stretch", 1.0),  # movable master: how much Song 1's bed is stretched
         vocal_src=first.vocal_src, anchor=first.anchor,  # scalar mirrors first (M3 back-compat)
         placements=placements, s1_vocal_regions=s1_regions, take=take,
         notes=_describe_arrangement(placements, s1_regions),
