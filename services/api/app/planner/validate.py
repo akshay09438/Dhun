@@ -25,7 +25,8 @@ import numpy as np
 import soundfile as sf
 
 from app.models import MixPlan, TrackAnalysis
-from app.planner.fence import LEAD_XFADE_SECS, SAFE_STRETCH_HI, SAFE_STRETCH_LO, placement_end
+from app.planner.fence import (HOUSE_SLOW_MAX, HOUSE_SPEED_MAX, LEAD_XFADE_SECS,
+                               SAFE_STRETCH_HI, SAFE_STRETCH_LO, placement_end, retimed_analysis)
 
 # A sample magnitude at or above this counts as clipping (square-wave distortion).
 CLIP_CEILING = 0.999
@@ -90,6 +91,20 @@ def _warp_violations(p, downbeats: list[float]) -> list[str]:
 def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[str]:
     """Return the list of hard-rule violations in the plan (empty == clean)."""
     violations: list[str] = []
+    # Movable master: when Song 1's bed is stretched to a shared tempo, the house stretch must be
+    # inside its protected band, the master tempo must be self-consistent with Song 1's real tempo
+    # (so the referee stays an INDEPENDENT check, not an echo of the plan it judges), and every
+    # on-beat/warp check below must run against the RETIMED grid the audio actually plays at. We
+    # engage on the SAME 1e-6 threshold the planner and engine use, so the three can never disagree
+    # about whether the grid moved (an off-beat mix the referee couldn't see). bed_stretch == 1.0
+    # (every existing plan) skips this whole block -> validated exactly as before.
+    bed_stretch = getattr(plan, "bed_stretch", 1.0) or 1.0
+    if abs(bed_stretch - 1.0) >= 1e-6:
+        if not (1.0 - HOUSE_SLOW_MAX - 1e-6 <= bed_stretch <= 1.0 + HOUSE_SPEED_MAX + 1e-6):
+            violations.append("the house tempo stretch is outside the safe band (B3)")
+        if a1.bpm and abs(plan.master_bpm - a1.bpm * bed_stretch) > 0.1:
+            violations.append("the master tempo is inconsistent with the house stretch (B3)")
+        a1 = retimed_analysis(a1, plan.master_bpm)
     if not SAFE_STRETCH_LO <= plan.vocal_stretch <= SAFE_STRETCH_HI:
         violations.append("tempo stretch is outside the safe band (B3)")
 
