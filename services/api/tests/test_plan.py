@@ -313,8 +313,10 @@ def test_placement_produce_fields_default_off():
     assert p.build_bars == 0 and p.echo is False and p.chop is False
 
 
-def test_vocal_chop_flagged_on_the_biggest_drop(monkeypatch):
-    """Step 4: exactly ONE placement — the produced drop on Song 1's loudest bar — gets chop=True."""
+def test_vocal_chop_is_parked_but_the_function_still_works(monkeypatch):
+    """Step 4 vocal chop is PARKED (founder decision 2026-07-09): the plan flags NO chop, so no mix can
+    go dead on a breath. But the dormant _flag_chop_on_biggest_drop still works when called directly —
+    so reviving the feature later is a one-line change, and this proves the machinery is intact."""
     monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
     energy = [0.3] * 96
     for i in range(24, 28):
@@ -328,14 +330,20 @@ def test_vocal_chop_flagged_on_the_biggest_drop(monkeypatch):
 
     plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
 
+    # PARKED: even with a real biggest drop present, the plan never flags a chop.
+    assert not any(getattr(p, "chop", False) for p in plan.placements)
+
+    # Dormant-but-intact: calling the helper directly still flags exactly the loudest produced drop.
+    produced = [p for p in plan.placements if getattr(p, "build_bars", 0) > 0]
+    assert produced, "test needs at least one produced drop to exercise the parked helper"
+    planner._flag_chop_on_biggest_drop(plan.placements, a1)
     chopped = [p for p in plan.placements if getattr(p, "chop", False)]
-    assert len(chopped) == 1, "exactly one drop should carry the chop"
+    assert len(chopped) == 1, "the helper still flags exactly one drop when called"
     assert chopped[0].build_bars > 0  # it's a produced drop
-    # ...and it's the loudest produced drop (no other produced placement sits on a louder bar)
+
     def energy_at(anchor):
         i = min(range(len(a1.downbeats)), key=lambda k: abs(a1.downbeats[k] - anchor))
         return a1.energy_curve[i]
-    produced = [p for p in plan.placements if getattr(p, "build_bars", 0) > 0]
     assert energy_at(chopped[0].anchor) == max(energy_at(p.anchor) for p in produced)
 
 

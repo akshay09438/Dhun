@@ -370,10 +370,13 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         # every produced drop and lands on its own clear spot.
         stem_moves = stem_moves + fence.breakdown_moves(a1g, placements, s1_regions, stem_moves,
                                                         opts["vocal_stretch"])
-        # Step 4: vocal chops on the BIGGEST drop — re-fire the hook onset over that entry's first bar
-        # ("dum-da-ra-dum"). One showcase moment, on the produced drop whose anchor is Song 1's
-        # loudest. Additive: the chop replaces the vocal's first bar in the engine, same length.
-        _flag_chop_on_biggest_drop(placements, a1g)
+        # Step 4: vocal chops on the BIGGEST drop — PARKED 2026-07-09 (founder decision). The chop
+        # re-fired the vocal's first 0.22s onset; on real material that onset can be a breath, which
+        # made the drop go DEAD (founder ear-test at 3:56 on Father Ocean × Der Lagi). The machinery
+        # (render._chop_pattern, Placement.chop, _flag_chop_on_biggest_drop) stays in the tree, dormant
+        # and tested, so reviving is a one-line change — but only after the chop grabs a punchy syllable
+        # instead of the raw first slice (see the drift log, 17th/18th entries).
+        # _flag_chop_on_biggest_drop(placements, a1g)  # <- re-enable here to revive
     first = placements[0]
     return MixPlan(
         mix_id=mix_id, song1_id=a1.song_id, song2_id=a2.song_id,
