@@ -678,3 +678,51 @@ def test_beat_up_empty_without_a_grid():
     a1.downbeats = []
     placements = [Placement(anchor=10.0, vocal_src=(0.0, 4.0))]
     assert fence.beat_up_moves(a1, placements, [], []) == []
+
+
+# ---------------------------------------------------------------- breakdown (Step 3 Wave 2, 3rd move)
+# fence.breakdown_moves fades drums+bass to a low simmer for _BREAKDOWN_BARS bars in the strongest
+# clear stretch, leaving 'other' full, then they return at the window end (make_analysis: 2.0s bars).
+
+
+def test_breakdown_fades_drums_and_bass_keeps_the_melody():
+    a1 = make_analysis(bpm=120.0, n_bars=64, energy=[0.6] * 64)  # energetic throughout
+    placements = [Placement(anchor=10.0, vocal_src=(0.0, 4.0))]  # gap [14.0, track_end]
+    moves = fence.breakdown_moves(a1, placements, [], [])
+    assert {m.stem for m in moves} == {"drums", "bass"}  # never touches 'other' (the exposed simmer)
+    for m in moves:
+        assert m.gain_from == 1.0 and m.gain_to == fence._BREAKDOWN_FLOOR  # a gradual fade to a simmer
+        assert m.end - m.start == fence._BREAKDOWN_BARS * 2.0  # a real section, longer than beat-up
+        assert m.start in a1.downbeats and m.end in a1.downbeats  # on-beat (referee R3)
+    assert moves[0].start == moves[1].start and moves[0].end == moves[1].end  # drums+bass together
+
+
+def test_breakdown_returns_nothing_below_the_energy_floor():
+    a1 = make_analysis(bpm=120.0, n_bars=64, energy=[0.1] * 64)  # nothing energetic enough to break down
+    placements = [Placement(anchor=10.0, vocal_src=(0.0, 4.0))]
+    assert fence.breakdown_moves(a1, placements, [], []) == []
+
+
+def test_breakdown_avoids_an_existing_move_and_song1_vocal():
+    from app.models import StemMove
+    a1 = make_analysis(bpm=120.0, n_bars=64, energy=[0.6] * 64)
+    placements = [Placement(anchor=10.0, vocal_src=(0.0, 4.0))]  # gap [14.0, track_end]
+    # a beat-up already placed AND a Song-1 vocal together cover the whole gap -> no clear room
+    existing = [StemMove(stem="other", start=14.0, end=70.0, gain_from=1.0, gain_to=0.4)]
+    s1 = [(70.0, 130.0)]
+    assert fence.breakdown_moves(a1, placements, s1, existing) == []
+
+
+def test_breakdown_never_all_muted_by_construction():
+    # drums+bass go to _BREAKDOWN_FLOOR (> the referee's mute floor) and 'other' is untouched, so the
+    # never-all-muted guard passes by construction — verified through the real referee.
+    from app.models import MixPlan
+    from app.planner import validate
+    a1 = make_analysis(bpm=120.0, n_bars=64, energy=[0.6] * 64)
+    placements = [Placement(anchor=10.0, vocal_src=(0.0, 4.0))]
+    moves = fence.breakdown_moves(a1, placements, [], [])
+    assert moves
+    plan = MixPlan(mix_id="m" * 64, song1_id="a" * 64, song2_id="b" * 64, master_bpm=120.0,
+                   vocal_stretch=1.0, vocal_src=(0.0, 4.0), anchor=10.0,
+                   placements=[Placement(anchor=10.0, vocal_src=(0.0, 4.0))], stem_moves=moves)
+    assert not any("mute" in v.lower() for v in validate._stem_move_violations(moves, a1.downbeats))

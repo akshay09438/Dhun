@@ -350,6 +350,11 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         # produced drop's own cut/build/bass.
         stem_moves = stem_moves + fence.beat_up_moves(a1g, placements, s1_regions, stem_moves,
                                                        opts["vocal_stretch"])
+        # Wave 2's 3rd move: one "breakdown" (drums+bass fade to a simmer, then kick back) in the
+        # next-best energetic stretch — passed the running stem_moves, so it avoids the beat-up and
+        # every produced drop and lands on its own clear spot.
+        stem_moves = stem_moves + fence.breakdown_moves(a1g, placements, s1_regions, stem_moves,
+                                                        opts["vocal_stretch"])
     first = placements[0]
     return MixPlan(
         mix_id=mix_id, song1_id=a1.song_id, song2_id=a2.song_id,

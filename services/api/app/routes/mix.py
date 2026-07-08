@@ -92,7 +92,10 @@ _S1_STEMS = ("drums", "bass", "other")
 # m5l.0: Step 3 Wave 2 (2nd move) — "beat-up": the melody ducks (to fence._BEAT_UP_TARGET, matching
 #        the live "beat up" command's own sound) for up to 4 bars in the strongest beat-only stretch,
 #        so the drums+bass visibly drive (fence.beat_up_moves). render.py/validate.py UNCHANGED.
-ENGINE_VERSION = "m5l.0"
+# m5m.0: Step 3 Wave 2 (3rd/last move) — "breakdown": drums+bass RAMP DOWN to a low simmer for 8 bars
+#        in the next-best energetic stretch, leaving the melody exposed, then kick back to full at the
+#        window end (fence.breakdown_moves). Completes the four beat moves. render.py/validate.py UNCHANGED.
+ENGINE_VERSION = "m5m.0"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.

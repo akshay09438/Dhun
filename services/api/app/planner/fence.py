@@ -686,38 +686,23 @@ def stem_moves_for_drops(placements, a1_downbeats: list[float], stretch: float =
     return moves
 
 
-# ---------------------------------------------------------------- beat-up (Step 3 Wave 2, 2nd move)
-# "The beat takes over": the melody ducks so the drums+bass visibly drive for a stretch — matching
-# the live 'beat up' command's own sound (app/planner/live.py), now auto-placed in the arrangement.
-# Only ever touches 'other' (never bass or drums, unlike the drop-to-the-beat move), so it can never
-# combine into a silent hole and never collides with a same-stem move placed elsewhere.
-
-_BEAT_UP_BARS = 4  # bars the duck spans, at most
-_BEAT_UP_TARGET = 0.4  # matches the live 'beat up' command's melody duck level, for a consistent sound
-_BEAT_UP_ENERGY_FLOOR = 0.3  # only beat-up an ALREADY-energetic stretch — a real intensification of
-                              # something driving, not a random dip in a quiet section
+# ---------------------------------------------------------------- energetic-window picker (shared)
+# Both beat-up and breakdown want the SAME thing: the single most energetic `bars`-wide beat-only
+# window in the whole song, clear of Song 1's own vocal and of every stem move already placed. One
+# helper, so the two moves can never land on the same stretch (each avoids the other's move) and the
+# gap/energy/clash logic lives in exactly one place.
 
 
-def beat_up_moves(a1: TrackAnalysis, placements, s1_regions: list[tuple[float, float]],
-                  existing_moves: list[StemMove], stretch: float = 1.0,
-                  bars: int = _BEAT_UP_BARS) -> list[StemMove]:
-    """One 'beat-up' moment per mix: for `bars` bars somewhere in the app's best beat-only stretch,
-    the melody ('other') RAMPS DOWN (a genuine decline, never instant — the founder's standing rule)
-    toward `_BEAT_UP_TARGET`, then the engine's own declick carries it back to full right after. A
-    partial duck's return is a small, everyday transition (not the near-total-silence case that
-    demanded the drop-to-the-beat move's transition guards), so the window is placed wherever the
-    ENERGY is genuinely highest — a real intensification — not pinned to a gap boundary.
-
-    Slides a `bars`-wide window, one bar at a time, across every beat-only gap and keeps the single
-    highest-average-energy window across the WHOLE song that clears `_BEAT_UP_ENERGY_FLOOR`; returns
-    [] if nothing qualifies. Clamped away from any of Song 1's OWN vocal moments (`s1_regions`) and
-    any window already carrying a stem move (`existing_moves`, e.g. a produced drop's own
-    cut/build/bass) — checked directly against what was actually placed, so it can never collide with
-    them, on this or any future stem.
-    """
+def _best_energy_window(a1: TrackAnalysis, placements, s1_regions: list[tuple[float, float]],
+                        existing_moves: list[StemMove], stretch: float, bars: int,
+                        energy_floor: float) -> tuple[float, float] | None:
+    """The (start, end) of the highest-average-energy `bars`-wide window that (a) sits entirely inside
+    a beat-only gap, (b) clears `energy_floor` (a real, driving stretch — not a quiet dip), and (c)
+    overlaps neither Song 1's own vocal (`s1_regions`) nor any already-placed stem move
+    (`existing_moves`). Slides one bar at a time across every gap. None if nothing qualifies."""
     downbeats, energy = a1.downbeats, a1.energy_curve
     if not downbeats or not energy or bars <= 0:
-        return []
+        return None
     track_end = a1.beats[-1] if a1.beats else downbeats[-1]
     gaps = _beat_only_gaps(placements, stretch, track_end)
     blocked = list(s1_regions) + [(m.start, m.end) for m in existing_moves]
@@ -738,14 +723,72 @@ def beat_up_moves(a1: TrackAnalysis, placements, s1_regions: list[tuple[float, f
             if not window:
                 continue
             avg = sum(window) / len(window)
-            if avg < _BEAT_UP_ENERGY_FLOOR:
+            if avg < energy_floor:
                 continue
             if best is None or avg > best[0]:
                 best = (avg, start, end)
+    return (best[1], best[2]) if best else None
 
-    if best is None:
+
+# ---------------------------------------------------------------- beat-up (Step 3 Wave 2, 2nd move)
+# "The beat takes over": the melody ducks so the drums+bass visibly drive for a stretch — matching
+# the live 'beat up' command's own sound (app/planner/live.py), now auto-placed in the arrangement.
+# Only ever touches 'other' (never bass or drums, unlike the drop-to-the-beat move), so it can never
+# combine into a silent hole and never collides with a same-stem move placed elsewhere.
+
+_BEAT_UP_BARS = 4  # bars the duck spans, at most
+_BEAT_UP_TARGET = 0.4  # matches the live 'beat up' command's melody duck level, for a consistent sound
+_BEAT_UP_ENERGY_FLOOR = 0.3  # only beat-up an ALREADY-energetic stretch — a real intensification of
+                              # something driving, not a random dip in a quiet section
+
+
+def beat_up_moves(a1: TrackAnalysis, placements, s1_regions: list[tuple[float, float]],
+                  existing_moves: list[StemMove], stretch: float = 1.0,
+                  bars: int = _BEAT_UP_BARS) -> list[StemMove]:
+    """One 'beat-up' moment per mix: for `bars` bars in the app's most energetic beat-only stretch,
+    the melody ('other') RAMPS DOWN (a genuine decline, never instant — the founder's standing rule)
+    toward `_BEAT_UP_TARGET`, then the engine's own declick carries it back to full right after. A
+    partial duck's return is a small, everyday transition (not the near-total-silence case that
+    demanded the drop-to-the-beat move's transition guards). Placed by `_best_energy_window`, so it
+    lands wherever the energy is highest AND clear of every vocal and other stem move."""
+    win = _best_energy_window(a1, placements, s1_regions, existing_moves, stretch, bars,
+                              _BEAT_UP_ENERGY_FLOOR)
+    if win is None:
         return []
-    _, start, end = best
+    start, end = win
     return [StemMove(stem="other", start=round(start, 3), end=round(end, 3),
                      gain_from=1.0, gain_to=_BEAT_UP_TARGET)]
-    return moves
+
+
+# ---------------------------------------------------------------- breakdown (Step 3 Wave 2, 3rd move)
+# "The beat drops away, the atmosphere holds, then it kicks back in": drums + bass RAMP DOWN to a low
+# simmer across a stretch, leaving the melody/pad ('other') exposed, then both return to full at the
+# window's end — the beat kicking back in on the downbeat (a return the song earns, like the bass
+# slam, not a mid-phrase cut). Distinct from beat-up: it ducks the BEAT (not the melody), goes DEEPER
+# (_BREAKDOWN_FLOOR), and LONGER (_BREAKDOWN_BARS). Never touches 'other', which stays fully audible,
+# so the never-all-muted rule holds by construction.
+
+_BREAKDOWN_BARS = 8  # a real section of space, longer than beat-up's 4
+_BREAKDOWN_FLOOR = 0.12  # drums+bass simmer this low (a near-gone beat, never silent)
+_BREAKDOWN_ENERGY_FLOOR = 0.3  # only break DOWN from an energetic stretch — the contrast is the point
+
+
+def breakdown_moves(a1: TrackAnalysis, placements, s1_regions: list[tuple[float, float]],
+                    existing_moves: list[StemMove], stretch: float = 1.0,
+                    bars: int = _BREAKDOWN_BARS) -> list[StemMove]:
+    """One 'breakdown' moment per mix: for `bars` bars in the app's most energetic beat-only stretch
+    (so losing the beat is a real contrast), `drums` and `bass` RAMP DOWN to `_BREAKDOWN_FLOOR` — a
+    genuine gradual decline (the founder's standing rule) — leaving the melody ('other') as the
+    exposed simmer, then both return to full at the window's end (the beat kicks back in, on the
+    downbeat). Placed by `_best_energy_window`, clear of every vocal and other stem move, so it never
+    lands on the beat-up or a produced drop. Returns [] if no clear energetic stretch is long enough.
+
+    One ramp per stem (no hold, no same-stem seam): the beat fades over the window and slams back at
+    the end. `other` is untouched (always audible), so this can never combine into a silent hole."""
+    win = _best_energy_window(a1, placements, s1_regions, existing_moves, stretch, bars,
+                              _BREAKDOWN_ENERGY_FLOOR)
+    if win is None:
+        return []
+    start, end = win
+    return [StemMove(stem=s, start=round(start, 3), end=round(end, 3),
+                     gain_from=1.0, gain_to=_BREAKDOWN_FLOOR) for s in ("drums", "bass")]

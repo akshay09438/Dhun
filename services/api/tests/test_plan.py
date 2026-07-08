@@ -457,7 +457,7 @@ def test_produced_drop_gets_a_bass_pull(monkeypatch):
     drop_moves = [m for m in plan.stem_moves if m.gain_to == 0.0]  # the drop tension-arc moves only
     assert drop_moves, "a produced drop should carry the tension-arc stem moves"
     assert all(m.gain_from == 1.0 for m in drop_moves)  # a real decline
-    assert all(m.stem in ("bass", "other") for m in plan.stem_moves)  # every move, incl. any beat-up
+    assert all(m.stem in ("bass", "other") for m in drop_moves)  # the drop arc rides bass + melody
     produced = [p.anchor for p in plan.placements if getattr(p, "build_bars", 0) > 0]
     # the bass move slams back on a produced placement's anchor (end == that anchor)
     for m in drop_moves:
@@ -489,6 +489,37 @@ def test_beat_up_move_wired_into_the_plan(monkeypatch):
         if m is bu:
             continue
         assert not (bu.start < m.end and bu.end > m.start), "beat-up overlaps another stem move"
+
+
+def test_breakdown_move_wired_into_the_plan(monkeypatch):
+    """Wave 2's 3rd move: build_mix_plan attaches a breakdown (drums+bass fade to a simmer) on a
+    confident, energetic pair — on a DIFFERENT clear stretch than the beat-up, never overlapping any
+    other stem move that shares a stem (drums/bass), and 'other' left untouched (never all-muted)."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    energy = [0.6] * 96  # long, energetic song with room for both beat-up and breakdown
+    for i in range(52, 56):
+        energy[i] = 0.2
+    for i in range(56, 64):
+        energy[i] = 0.95  # a big drop mid-song
+    a1 = make_analysis(bpm=120.0, n_bars=96, energy=energy)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 16.0), (40.0, 56.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
+
+    bd = [m for m in plan.stem_moves if m.gain_to == fence._BREAKDOWN_FLOOR]
+    assert bd, "an energetic beat-only stretch should get a breakdown move"
+    assert {m.stem for m in bd} == {"drums", "bass"} and all(m.gain_from == 1.0 for m in bd)
+    # no two moves that share a stem may overlap in time (the referee's own rule, checked at plan level)
+    from collections import defaultdict
+    by_stem = defaultdict(list)
+    for m in plan.stem_moves:
+        by_stem[m.stem].append((m.start, m.end))
+    for spans in by_stem.values():
+        spans.sort()
+        for (s1, e1), (s2, e2) in zip(spans, spans[1:]):
+            assert e1 <= s2 + 1e-9, "two same-stem moves overlap"
+    # the whole plan still passes the real referee (never-all-muted, on-beat, etc.)
+    validate.assert_plan(plan, a1, a2)
 
 
 def test_stem_moves_never_overlap_song1s_own_vocal(monkeypatch):
