@@ -85,6 +85,24 @@ def test_retimed_analysis_scales_grid_to_target_tempo():
     assert a1.downbeats[1] != r.downbeats[1]          # original left untouched (a copy)
 
 
+def test_arrangement_options_engages_movable_master_for_tere_bina_shape():
+    a1 = make_analysis(bpm=122.0, n_bars=64, vocal_regions=[(20.0, 40.0)])
+    a2 = make_analysis(bpm=144.0, n_bars=64, vocal_regions=[(16.0, 40.0)])
+    opts = fence.arrangement_options(a1, a2)
+    assert opts["mixable"]
+    assert opts["bed_stretch"] > 1.0                      # house nudged up (never slowed)
+    assert opts["master_bpm"] > 122.0                     # shared tempo above the house's own
+    assert opts["a1_grid"].bpm == opts["master_bpm"]      # planning grid is the retimed one
+
+
+def test_arrangement_options_in_band_pair_stays_native():
+    a1 = make_analysis(bpm=122.0, n_bars=64, vocal_regions=[(20.0, 40.0)])
+    a2 = make_analysis(bpm=118.0, n_bars=64, vocal_regions=[(16.0, 40.0)])
+    opts = fence.arrangement_options(a1, a2)
+    assert opts["bed_stretch"] == 1.0 and opts["master_bpm"] == 122.0
+    assert opts["a1_grid"] is a1                          # untouched grid, today's path
+
+
 def test_candidate_drops_ranks_by_energy():
     energy = [0.3] * 32
     for i in range(8, 16):  # the second phrase (bars 8..15) is the loudest

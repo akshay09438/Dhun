@@ -231,17 +231,22 @@ def legal_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
     if not a1.bpm or not a2.bpm or not (a1.phrase_starts or a1.downbeats or a1.beats):
         return {"mixable": False, "reason": "One track has no reliable beat to lock to."}
 
-    ratio, safe = best_stretch(a1.bpm, a2.bpm)
+    # Movable master (house-protective): pick the shared tempo, nudging the house the minimum
+    # only when a pair would otherwise be declined. bed_stretch == 1.0 is today's native path.
+    master_bpm, bed_stretch, vocal_stretch, safe = tempo_plan(a1.bpm, a2.bpm)
     if not safe:
-        pct = round(abs(ratio - 1) * 100)
+        pct = round(abs(a1.bpm / _fold_source(a1.bpm, a2.bpm) - 1) * 100)
         return {
             "mixable": False,
             "reason": f"These two songs are too far apart in tempo (~{pct}% stretch) to blend cleanly.",
         }
 
+    # Plan against the retimed grid when the house is stretched, so anchors/drops/warp land on
+    # the beats the audio will actually play at. Identity (a1g is a1) on the native path.
+    a1g = retimed_analysis(a1, master_bpm) if abs(bed_stretch - 1.0) >= 1e-6 else a1
     vocal_src = best_vocal_slice(a2)
-    need = (vocal_src[1] - vocal_src[0]) * ratio
-    drops = candidate_drops(a1, need)
+    need = (vocal_src[1] - vocal_src[0]) * vocal_stretch
+    drops = candidate_drops(a1g, need)
     if not drops:
         return {"mixable": False, "reason": "Couldn't find a spot in Song 1 with room for the vocal."}
 
@@ -250,11 +255,13 @@ def legal_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
     )
     return {
         "mixable": True,
-        "master_bpm": a1.bpm,
-        "vocal_stretch": ratio,
+        "master_bpm": master_bpm,
+        "bed_stretch": bed_stretch,
+        "vocal_stretch": vocal_stretch,
         "vocal_src": vocal_src,
         "drops": drops,  # ranked best-first
         "key_fit": key_fit,
+        "a1_grid": a1g,  # the (possibly retimed) grid to plan + warp + validate against
     }
 
 
@@ -394,11 +401,12 @@ def arrangement_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
     base = legal_options(a1, a2)
     if not base["mixable"]:
         return base
+    a1g = base["a1_grid"]  # the retimed grid (== a1 on the native path); everything grid-derived uses it
     slices = vocal_slices(a2)
     need = min(e - s for s, e in slices) * base["vocal_stretch"]
-    anchors_ranked = candidate_drops(a1, need)  # best energy first, with runway
+    anchors_ranked = candidate_drops(a1g, need)  # best energy first, with runway
     track_end = (
-        a1.beats[-1] if a1.beats
+        a1g.beats[-1] if a1g.beats
         else (max(anchors_ranked) + need if anchors_ranked else need)
     )
     return {
@@ -406,9 +414,9 @@ def arrangement_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
         "anchors_ranked": anchors_ranked,
         "vocal_slices": slices,
         "vocal_peaks": vocal_peaks(a2),  # Song 2's strongest slices, loudest first (recipe R1)
-        "drops": energy_drops(a1.energy_curve, a1.downbeats),  # the house track's real drops
+        "drops": energy_drops(a1g.energy_curve, a1g.downbeats),  # the house track's real drops
         "track_end": track_end,  # the whole song's length, so the arrangement can span it
-        "sections": [(s.start, s.label) for s in a1.sections],  # Song 1's shape, for the AI
+        "sections": [(s.start, s.label) for s in a1g.sections],  # Song 1's shape, for the AI
     }
 
 
