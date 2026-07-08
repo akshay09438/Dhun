@@ -454,16 +454,41 @@ def test_produced_drop_gets_a_bass_pull(monkeypatch):
 
     plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
 
-    assert plan.stem_moves, "a produced drop should carry the tension-arc stem moves"
-    assert all(m.gain_from == 1.0 and m.gain_to == 0.0 for m in plan.stem_moves)  # a real decline
-    assert all(m.stem in ("bass", "other") for m in plan.stem_moves)
+    drop_moves = [m for m in plan.stem_moves if m.gain_to == 0.0]  # the drop tension-arc moves only
+    assert drop_moves, "a produced drop should carry the tension-arc stem moves"
+    assert all(m.gain_from == 1.0 for m in drop_moves)  # a real decline
+    assert all(m.stem in ("bass", "other") for m in plan.stem_moves)  # every move, incl. any beat-up
     produced = [p.anchor for p in plan.placements if getattr(p, "build_bars", 0) > 0]
     # the bass move slams back on a produced placement's anchor (end == that anchor)
-    for m in plan.stem_moves:
+    for m in drop_moves:
         if m.stem == "bass":
             assert m.end in produced and m.start < m.end
         else:  # "other" cuts end BEFORE the anchor (where the build begins), not at it
             assert m.end not in produced and m.start < m.end
+
+
+def test_beat_up_move_wired_into_the_plan(monkeypatch):
+    """Wave 2's 2nd move: build_mix_plan attaches a beat-up (melody duck) move on a confident, energetic
+    pair, and it never overlaps any of the drop tension-arc moves already in the same plan."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    energy = [0.6] * 64  # generally energetic throughout, well above the beat-up floor
+    for i in range(36, 40):
+        energy[i] = 0.2
+    for i in range(40, 48):
+        energy[i] = 0.95  # a big drop at bar 40 -> 80.0s
+    a1 = make_analysis(bpm=120.0, n_bars=64, energy=energy)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 16.0), (40.0, 56.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
+
+    beat_ups = [m for m in plan.stem_moves if m.gain_to == fence._BEAT_UP_TARGET]
+    assert beat_ups, "an energetic beat-only stretch should get a beat-up move"
+    bu = beat_ups[0]
+    assert bu.stem == "other" and bu.gain_from == 1.0
+    for m in plan.stem_moves:
+        if m is bu:
+            continue
+        assert not (bu.start < m.end and bu.end > m.start), "beat-up overlaps another stem move"
 
 
 def test_stem_moves_never_overlap_song1s_own_vocal(monkeypatch):

@@ -516,6 +516,20 @@ def _merge_regions(regions: list[tuple[float, float]], max_gap: float = 4.0) -> 
     return [(s, e) for s, e in merged]
 
 
+def _beat_only_gaps(placements, stretch: float, track_end: float) -> list[tuple[float, float]]:
+    """The beat-only stretches between Song-2's vocal placements (between each consecutive pair, and
+    from the last placement's real end to `track_end`) — no gap before the FIRST placement, since the
+    intro is Song 1's own instrumental opening, not a 'gap' in an arrangement. Shared by every move
+    that looks for beat-only room to work in (Song 1's own leads, beat-up, ...)."""
+    if not placements:
+        return [(0.0, track_end)] if track_end > 0 else []
+    ordered = sorted(placements, key=lambda p: p.anchor)
+    _end = lambda p: placement_end(p.anchor, p.vocal_src, stretch, getattr(p, "warp", None))
+    gaps = [(_end(prev), nxt.anchor) for prev, nxt in zip(ordered, ordered[1:])]
+    gaps.append((_end(ordered[-1]), track_end))
+    return gaps
+
+
 def lead_sections(a1: TrackAnalysis, placements, stretch: float,
                   min_secs: float = 10.0, margin: float = 2.0, max_leads: int = 3) -> list[tuple[float, float]]:
     """Where Song 1 (the house track) LEADS with its OWN vocal — its substantial sung passages
@@ -534,13 +548,11 @@ def lead_sections(a1: TrackAnalysis, placements, stretch: float,
         return []
     track_end = a1.beats[-1] if a1.beats else 0.0
     if placements:
-        ordered = sorted(placements, key=lambda p: p.anchor)
-        _end = lambda p: placement_end(p.anchor, p.vocal_src, stretch, getattr(p, "warp", None))
-        last_end = _end(ordered[-1])
+        last = sorted(placements, key=lambda p: p.anchor)[-1]
+        last_end = placement_end(last.anchor, last.vocal_src, stretch, getattr(last, "warp", None))
         if not track_end:
             track_end = last_end + min_secs
-        gaps = [(_end(prev), nxt.anchor) for prev, nxt in zip(ordered, ordered[1:])]
-        gaps.append((last_end, track_end))
+        gaps = _beat_only_gaps(placements, stretch, track_end)
     else:  # no Song-2 vocal at all -> Song 1 can lead across the whole track
         if not track_end:
             track_end = max(e for _s, e in passages)
@@ -671,4 +683,69 @@ def stem_moves_for_drops(placements, a1_downbeats: list[float], stretch: float =
         if cut_start_i < other_end_i:  # real cut room -> ramp the melody down too, just for the cut stretch
             moves.append(StemMove(stem="other", start=round(cut_start, 3), end=round(a1_downbeats[other_end_i], 3),
                                   gain_from=1.0, gain_to=0.0))
+    return moves
+
+
+# ---------------------------------------------------------------- beat-up (Step 3 Wave 2, 2nd move)
+# "The beat takes over": the melody ducks so the drums+bass visibly drive for a stretch — matching
+# the live 'beat up' command's own sound (app/planner/live.py), now auto-placed in the arrangement.
+# Only ever touches 'other' (never bass or drums, unlike the drop-to-the-beat move), so it can never
+# combine into a silent hole and never collides with a same-stem move placed elsewhere.
+
+_BEAT_UP_BARS = 4  # bars the duck spans, at most
+_BEAT_UP_TARGET = 0.4  # matches the live 'beat up' command's melody duck level, for a consistent sound
+_BEAT_UP_ENERGY_FLOOR = 0.3  # only beat-up an ALREADY-energetic stretch — a real intensification of
+                              # something driving, not a random dip in a quiet section
+
+
+def beat_up_moves(a1: TrackAnalysis, placements, s1_regions: list[tuple[float, float]],
+                  existing_moves: list[StemMove], stretch: float = 1.0,
+                  bars: int = _BEAT_UP_BARS) -> list[StemMove]:
+    """One 'beat-up' moment per mix: for `bars` bars somewhere in the app's best beat-only stretch,
+    the melody ('other') RAMPS DOWN (a genuine decline, never instant — the founder's standing rule)
+    toward `_BEAT_UP_TARGET`, then the engine's own declick carries it back to full right after. A
+    partial duck's return is a small, everyday transition (not the near-total-silence case that
+    demanded the drop-to-the-beat move's transition guards), so the window is placed wherever the
+    ENERGY is genuinely highest — a real intensification — not pinned to a gap boundary.
+
+    Slides a `bars`-wide window, one bar at a time, across every beat-only gap and keeps the single
+    highest-average-energy window across the WHOLE song that clears `_BEAT_UP_ENERGY_FLOOR`; returns
+    [] if nothing qualifies. Clamped away from any of Song 1's OWN vocal moments (`s1_regions`) and
+    any window already carrying a stem move (`existing_moves`, e.g. a produced drop's own
+    cut/build/bass) — checked directly against what was actually placed, so it can never collide with
+    them, on this or any future stem.
+    """
+    downbeats, energy = a1.downbeats, a1.energy_curve
+    if not downbeats or not energy or bars <= 0:
+        return []
+    track_end = a1.beats[-1] if a1.beats else downbeats[-1]
+    gaps = _beat_only_gaps(placements, stretch, track_end)
+    blocked = list(s1_regions) + [(m.start, m.end) for m in existing_moves]
+    overlaps = lambda s, e: any(s < be - 1e-6 and e > bs + 1e-6 for bs, be in blocked)
+
+    best: tuple[float, float, float] | None = None  # (avg_energy, start, end)
+    for gap_start, gap_end in gaps:
+        if gap_end - gap_start < 1e-6:
+            continue
+        # the downbeat indices that fall inside this gap (with a little slack for float rounding)
+        idxs = [i for i, d in enumerate(downbeats) if gap_start - 1e-6 <= d <= gap_end + 1e-6]
+        for j in range(len(idxs) - bars):  # every bars-wide window that stays fully inside the gap
+            start_i, end_i = idxs[j], idxs[j + bars]
+            start, end = downbeats[start_i], downbeats[end_i]
+            if overlaps(start, end):
+                continue
+            window = energy[start_i:end_i]
+            if not window:
+                continue
+            avg = sum(window) / len(window)
+            if avg < _BEAT_UP_ENERGY_FLOOR:
+                continue
+            if best is None or avg > best[0]:
+                best = (avg, start, end)
+
+    if best is None:
+        return []
+    _, start, end = best
+    return [StemMove(stem="other", start=round(start, 3), end=round(end, 3),
+                     gain_from=1.0, gain_to=_BEAT_UP_TARGET)]
     return moves

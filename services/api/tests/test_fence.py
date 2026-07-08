@@ -607,3 +607,74 @@ def test_stem_moves_fire_normally_without_an_s1_overlap():
     s1_far = [(40.0, 44.0)]  # Father Ocean sings much later, nowhere near this drop
     moves = fence.stem_moves_for_drops([drop], a1.downbeats, s1_regions=s1_far)
     assert len(moves) == 2  # bass + other both fire as normal
+
+
+# ---------------------------------------------------------------- beat-up (Step 3 Wave 2, 2nd move)
+# fence.beat_up_moves slides a _BEAT_UP_BARS-wide window across every beat-only gap and picks the
+# single highest-energy window across the whole song (make_analysis: downbeats every 2.0s).
+
+
+def test_beat_up_ducks_the_melody_somewhere_in_the_gap():
+    a1 = make_analysis(bpm=120.0, n_bars=32)  # downbeats 0,2,...,62.0; track_end (last beat) = 63.5
+    placements = [Placement(anchor=10.0, vocal_src=(0.0, 4.0))]  # ends at 14.0 -> one gap [14.0, 63.5]
+    moves = fence.beat_up_moves(a1, placements, [], [])
+    assert len(moves) == 1
+    m = moves[0]
+    assert m.stem == "other" and m.gain_from == 1.0 and m.gain_to == fence._BEAT_UP_TARGET
+    assert m.end - m.start == fence._BEAT_UP_BARS * 2.0  # exactly _BEAT_UP_BARS bars wide
+    assert 14.0 <= m.start and m.end <= 63.5  # entirely inside the gap
+    assert m.start in a1.downbeats and m.end in a1.downbeats  # on-beat by construction (referee R3)
+
+
+def test_beat_up_returns_nothing_below_the_energy_floor():
+    a1 = make_analysis(bpm=120.0, n_bars=32, energy=[0.1] * 32)  # every bar too quiet to beat-up
+    placements = [Placement(anchor=10.0, vocal_src=(0.0, 4.0))]
+    assert fence.beat_up_moves(a1, placements, [], []) == []
+
+
+def test_beat_up_finds_the_loudest_window_anywhere_in_a_gap():
+    # The loud stretch sits in the MIDDLE of a long gap, not at either edge — the search must slide
+    # across the whole gap to find it, not just check the ends.
+    a1 = make_analysis(bpm=120.0, n_bars=64)  # downbeats every 2.0s, 0..126
+    energy = [0.3] * 64
+    for i in range(6, 10):  # bars 12-18s — well inside the gap [6.0, 40.0], nowhere near either edge
+        energy[i] = 0.9
+    a1.energy_curve = energy
+    placements = [Placement(anchor=2.0, vocal_src=(0.0, 4.0)),    # ends 6.0 -> gap A: [6.0, 40.0]
+                  Placement(anchor=40.0, vocal_src=(0.0, 4.0))]   # ends 44.0 -> gap B: [44.0, track_end]
+    moves = fence.beat_up_moves(a1, placements, [], [])
+    assert len(moves) == 1
+    assert moves[0].start == 12.0 and moves[0].end == 20.0  # exactly the loud stretch, mid-gap
+
+
+def test_beat_up_clamped_away_from_song1s_own_vocal():
+    a1 = make_analysis(bpm=120.0, n_bars=32)  # downbeats 0,2,...,62.0
+    placements = [Placement(anchor=10.0, vocal_src=(0.0, 4.0))]  # gap [14.0, 63.5]
+    s1_regions = [(14.0, 63.5)]  # covers the WHOLE gap -> no window can avoid it
+    assert fence.beat_up_moves(a1, placements, s1_regions, []) == []
+
+
+def test_beat_up_shifts_away_from_a_partial_song1_vocal_block():
+    # A block that covers only PART of the gap must not suppress beat-up entirely — the search finds
+    # a valid window elsewhere in the same gap instead.
+    a1 = make_analysis(bpm=120.0, n_bars=32)  # downbeats 0,2,...,62.0
+    placements = [Placement(anchor=10.0, vocal_src=(0.0, 4.0))]  # gap [14.0, 63.5]
+    s1_regions = [(14.0, 50.0)]  # blocks the first part of the gap, leaves the tail clear
+    moves = fence.beat_up_moves(a1, placements, s1_regions, [])
+    assert len(moves) == 1
+    assert moves[0].start >= 50.0  # landed clear of the blocked span
+
+
+def test_beat_up_clamped_away_from_an_existing_stem_move():
+    from app.models import StemMove
+    a1 = make_analysis(bpm=120.0, n_bars=32)
+    placements = [Placement(anchor=10.0, vocal_src=(0.0, 4.0))]  # gap [14.0, 63.5]
+    existing = [StemMove(stem="bass", start=14.0, end=63.5, gain_from=1.0, gain_to=0.0)]  # the WHOLE gap
+    assert fence.beat_up_moves(a1, placements, [], existing) == []
+
+
+def test_beat_up_empty_without_a_grid():
+    a1 = make_analysis(bpm=120.0, n_bars=32)
+    a1.downbeats = []
+    placements = [Placement(anchor=10.0, vocal_src=(0.0, 4.0))]
+    assert fence.beat_up_moves(a1, placements, [], []) == []

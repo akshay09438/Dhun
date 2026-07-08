@@ -345,6 +345,11 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         # Ocean's OWN vocal (s1_regions) is already leading into it — never hollow out the backing
         # under his voice.
         stem_moves = fence.stem_moves_for_drops(placements, a1g.downbeats, opts["vocal_stretch"], s1_regions)
+        # Wave 2's 2nd move: one "beat-up" moment (melody ducks, drums+bass drive) in the strongest
+        # beat-only stretch. Checked directly against stem_moves so it can never collide with a
+        # produced drop's own cut/build/bass.
+        stem_moves = stem_moves + fence.beat_up_moves(a1g, placements, s1_regions, stem_moves,
+                                                       opts["vocal_stretch"])
     first = placements[0]
     return MixPlan(
         mix_id=mix_id, song1_id=a1.song_id, song2_id=a2.song_id,
