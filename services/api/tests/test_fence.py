@@ -273,6 +273,18 @@ def test_predrop_licks_extend_only_a_crossfade_past_the_entry():
     assert licks and all(e <= 104.0 + fence.LEAD_XFADE_SECS + 1e-6 for _s, e in licks)  # bounded
 
 
+def test_predrop_licks_end_stays_within_the_crossfade_after_rounding():
+    """Movable-master regression: with a non-round (retimed) anchor, a + LEAD_XFADE_SECS can round
+    UP past the crossfade boundary, and the referee (1e-6 tolerance) then flags the lick as beyond a
+    crossfade — wrongly declining the pair. The lick end must never exceed a + LEAD_XFADE_SECS."""
+    a = 359.7238  # a retimed downbeat; a + 1.2 = 360.9238 -> round(_, 3) = 360.924 (rounds UP)
+    a1 = make_analysis(vocal_regions=[(a - 3.0, a + 10.0)])  # Song 1 sings through the entry
+    placements = [Placement(anchor=a, vocal_src=(0.0, 8.0))]
+    licks = fence.predrop_licks(a1, placements, stretch=1.0)
+    assert licks
+    assert all(e <= a + fence.LEAD_XFADE_SECS + 1e-6 for _s, e in licks)  # within the referee's tolerance
+
+
 def test_predrop_licks_ignores_when_song1_silent_before_the_drop():
     a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(10.0, 20.0)])  # FO sings only early
     placements = [Placement(anchor=104.0, vocal_src=(0.0, 8.0))]

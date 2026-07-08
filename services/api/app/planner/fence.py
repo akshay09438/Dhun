@@ -391,7 +391,11 @@ def predrop_licks(a1: TrackAnalysis, placements, stretch: float,
             # Song 2 comes in (the vocal-into-the-drop blend) — bounded to LEAD_XFADE_SECS.
             s, e = max(vs, a - max_lick), min(ve, a + LEAD_XFADE_SECS)
             if min(e, a) - s >= min_lick:  # a real lick BEFORE the entry (not just a crossfade tail)
-                out.append((round(s, 3), round(e, 3)))
+                # Clamp the end so rounding to 3 dp can't push it PAST the crossfade boundary
+                # (a + LEAD_XFADE_SECS). A retimed (movable-master) anchor is a non-round number
+                # whose a+XFADE rounds up ~5e-4, beyond the referee's 1e-6 crossfade tolerance —
+                # which would wrongly flag the lick and decline the pair.
+                out.append((round(s, 3), min(round(e, 3), a + LEAD_XFADE_SECS)))
     return out
 
 
