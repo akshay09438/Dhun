@@ -26,6 +26,14 @@ SAFE_STRETCH_HI = 1.11
 MAX_VOCAL_SECS = 40.0
 MIN_VOCAL_SECS = 4.0
 
+# A hand-off between the two vocals may overlap by up to this long — enough for the OUTGOING
+# vocal's OWN natural phrase-end decay (e.g. "…alone…" ringing out) to keep sounding as the
+# incoming lead enters underneath it (a real DJ blend, using the recording's own tail, not an
+# imposed fade). It's the last sung word decaying, not a new lead, so a longer ring is still one
+# lead — but bounded so the outgoing vocal can't run its NEXT words over the incoming lead. Beyond
+# this the referee (R1) rejects it as two full lead voices (mud). Tunable by ear.
+LEAD_XFADE_SECS = 1.2
+
 _BARS_PER_PHRASE = 8  # 4/4 assumed in V1 (matches analysis.phrase_starts = downbeats[::8])
 
 
@@ -314,8 +322,10 @@ def predrop_licks(a1: TrackAnalysis, placements, stretch: float,
     for p in placements:
         a = p.anchor
         for vs, ve in a1.vocal_regions:
-            s, e = max(vs, a - max_lick), min(ve, a)  # Song 1's vocal in the run-up, up to the entry
-            if e - s >= min_lick:
+            # Song 1's vocal in the run-up, running a crossfade PAST the entry so it fades out as
+            # Song 2 comes in (the vocal-into-the-drop blend) — bounded to LEAD_XFADE_SECS.
+            s, e = max(vs, a - max_lick), min(ve, a + LEAD_XFADE_SECS)
+            if min(e, a) - s >= min_lick:  # a real lick BEFORE the entry (not just a crossfade tail)
                 out.append((round(s, 3), round(e, 3)))
     return out
 

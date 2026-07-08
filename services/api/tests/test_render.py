@@ -209,6 +209,14 @@ def test_build_does_not_muffle_a_close_previous_vocal(tmp_path):
     assert e(2.0, 2.9) > e(3.2, 4.0)
 
 
+def test_echo_tail_guard_covers_the_real_echo_tail():
+    """GUARDRAIL DRIFT-GUARD: plan._produce_drops suppresses the echo when a Song-1 vocal falls
+    within its echo-tail guard; that guard (in beats) must be >= the render's actual echo tail, or
+    an echo could ring over a later lead vocal (R1) the referee can't see."""
+    from app.planner import plan
+    assert plan._ECHO_TAIL_BEATS >= render._ECHO_BEATS * render._ECHO_TAPS
+
+
 def test_vocal_take_warped_survives_ffmpeg_length_overshoot(monkeypatch):
     """Reproduces the real "Father Ocean x With You" crash: FFmpeg's seek/atempo
     rounding (real MP3 frame-boundary rounding, confirmed on the actual pair) hands

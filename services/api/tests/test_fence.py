@@ -195,22 +195,23 @@ def test_lead_sections_never_overlap_a_placement():
 
 
 def test_predrop_licks_keeps_song1_vocal_into_the_drop():
-    """A real DJ never cuts the vocal just before the drop. Keep Song 1's short vocal 'lick' in
-    the seconds right before a Song-2 entry (the vocal-into-the-drop), clipped to end AT the
-    entry so it hands off cleanly (no overlap, R1)."""
+    """A real DJ never cuts the vocal just before the drop. Keep Song 1's vocal 'lick' in the
+    seconds before a Song-2 entry, and let it run a crossfade-length PAST the entry so it fades
+    out AS Song 2 comes in (the vocal-into-the-drop blend)."""
     a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(100.0, 106.0)])  # FO sings 100-106
     placements = [Placement(anchor=104.0, vocal_src=(0.0, 8.0))]              # Song 2 drops at 104
     licks = fence.predrop_licks(a1, placements, stretch=1.0)
-    assert licks == [(100.0, 104.0)]  # FO's lick just before the drop, clipped to the entry
+    assert licks[0][0] == 100.0                                       # from where FO starts
+    assert 104.0 < licks[0][1] <= 104.0 + fence.LEAD_XFADE_SECS + 1e-6  # runs a crossfade past the drop
 
 
-def test_predrop_licks_never_run_past_the_entry():
-    """The part of Song 1's vocal AFTER the drop belongs to Song 2 (one lead at a time) — the lick
-    is only the bit before the entry."""
-    a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(100.0, 110.0)])  # FO sings across the drop
+def test_predrop_licks_extend_only_a_crossfade_past_the_entry():
+    """The overlap is bounded to a crossfade — Song 1's vocal can't run a long way into Song 2's
+    lead (that would be two full voices, not a fade blend)."""
+    a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(100.0, 130.0)])  # FO sings well past the drop
     placements = [Placement(anchor=104.0, vocal_src=(0.0, 8.0))]
     licks = fence.predrop_licks(a1, placements, stretch=1.0)
-    assert licks and all(e <= 104.0 + 1e-6 for _s, e in licks)  # never past the entry
+    assert licks and all(e <= 104.0 + fence.LEAD_XFADE_SECS + 1e-6 for _s, e in licks)  # bounded
 
 
 def test_predrop_licks_ignores_when_song1_silent_before_the_drop():

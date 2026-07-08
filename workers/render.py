@@ -300,6 +300,8 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
     for s, e in getattr(plan, "s1_vocal_regions", []):
         if s1_vocals is None:
             break
+        # Song 1 leads its own vocal here, played as recorded (its natural phrase-end decay is the
+        # blend into Song 2 — we don't impose a fade); only an edge fade guards against a click.
         take = _edge_fade(_vocal_take(s1_vocals, s, max(e - s, 0.0), 1.0))
         a0 = max(0, int(s * SR))
         bed = _hold(bed, a0 + len(take))

@@ -66,7 +66,10 @@ _S1_STEMS = ("drums", "bass", "other")
 #        (fence.lead_sections; keep the real ones, drop the scraps), never over Song 2 (R1).
 # m5e.1: judgment upgrade — KEEP Song 1's vocal LICK into a drop (fence.predrop_licks): a short bit
 #        against a drop is the vocal-into-the-drop a DJ never cuts, not a scrap. General to any pair.
-ENGINE_VERSION = "m5e.1"
+# m5f.1: natural hand-off — Song 1's vocal runs a SHORT bound past a drop so its OWN natural
+#        phrase-end decay blends into Song 2 (no imposed fade); Song 2 enters full. R1 allows it.
+# m5f.2: let the outgoing vocal RING longer (0.3s -> 1.2s) so "…alone…" decays fully under Song 2.
+ENGINE_VERSION = "m5f.2"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.

@@ -96,6 +96,25 @@ def test_validate_accepts_s1_vocal_in_a_gap():
     assert v == []  # Song 1's vocal sits cleanly after Song 2's
 
 
+def test_validate_allows_a_bounded_vocal_crossfade():
+    """R1 refinement: Song 1's vocal may run a CROSSFADE-length into Song 2's entry (it fades out
+    as Song 2 comes in — a DJ blend, not a clash). Song 1 sings 8-16.5 into Song 2's entry at 16."""
+    a1, a2 = make_analysis(), make_analysis()  # downbeats every 2s
+    p = [Placement(anchor=16.0, vocal_src=(0.0, 8.0))]
+    from app.planner.fence import LEAD_XFADE_SECS
+    s1 = [(8.0, 16.0 + LEAD_XFADE_SECS)]  # ends exactly a crossfade past the entry
+    assert validate.validate_plan(make_arrangement_plan(p, s1_regions=s1), a1, a2) == []
+
+
+def test_validate_still_flags_overlap_beyond_a_crossfade():
+    """More than a crossfade of overlap is two full lead voices clashing — still a violation."""
+    a1, a2 = make_analysis(), make_analysis()
+    p = [Placement(anchor=16.0, vocal_src=(0.0, 8.0))]
+    s1 = [(8.0, 22.0)]  # runs 6s into Song 2's lead — far beyond a crossfade
+    v = validate.validate_plan(make_arrangement_plan(p, s1_regions=s1), a1, a2)
+    assert any("R1" in m or "overlap" in m.lower() for m in v)
+
+
 def test_validate_flags_empty_s1_region():
     a1, a2 = make_analysis(), make_analysis()
     p = [Placement(anchor=16.0, vocal_src=(0.0, 8.0))]

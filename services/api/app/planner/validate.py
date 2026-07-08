@@ -25,7 +25,7 @@ import numpy as np
 import soundfile as sf
 
 from app.models import MixPlan, TrackAnalysis
-from app.planner.fence import SAFE_STRETCH_HI, SAFE_STRETCH_LO, placement_end
+from app.planner.fence import LEAD_XFADE_SECS, SAFE_STRETCH_HI, SAFE_STRETCH_LO, placement_end
 
 # A sample magnitude at or above this counts as clipping (square-wave distortion).
 CLIP_CEILING = 0.999
@@ -109,17 +109,22 @@ def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[s
         if b.anchor < placement_end(a.anchor, a.vocal_src, plan.vocal_stretch, getattr(a, "warp", None)) - 1e-6:
             violations.append("two vocal placements overlap (R1)")
 
-    # R1 across both songs (Slice B contrast): Song 1's own vocal must sit only in the
-    # gaps — never overlapping any Song 2 placement window, else two lead voices play.
+    # R1 across both songs: Song 1's own vocal and Song 2's must not play as two full leads at
+    # once. A short hand-off overlap is allowed — Song 1's tail may run at most LEAD_XFADE_SECS
+    # past Song 2's entry, just long enough for its own natural phrase-end decay to ring as Song 2
+    # enters (the recording's own tail, a DJ blend). Any other overlap (Song 1 starting inside
+    # Song 2's lead, or running longer) is two full voices — rejected.
     for s, e in getattr(plan, "s1_vocal_regions", []):
         if e <= s:
             violations.append("a Song 1 vocal region is empty")
             continue
         for p in ordered:
             p_end = placement_end(p.anchor, p.vocal_src, plan.vocal_stretch, getattr(p, "warp", None))
-            if s < p_end - 1e-6 and e > p.anchor + 1e-6:  # spans overlap
-                violations.append("Song 1 and Song 2 vocals overlap (R1)")
-                break
+            if s < p_end - 1e-6 and e > p.anchor + 1e-6:  # the spans overlap at all
+                is_crossfade = s <= p.anchor + 1e-6 and e <= p.anchor + LEAD_XFADE_SECS + 1e-6
+                if not is_crossfade:  # a fade-out tail into the entry is fine; anything else is two leads
+                    violations.append("Song 1 and Song 2 vocals overlap beyond a crossfade (R1)")
+                    break
     return violations
 
 
