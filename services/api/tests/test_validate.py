@@ -235,3 +235,90 @@ def test_validate_flags_inconsistent_master_bpm():
     plan.master_bpm = 100.0                      # ...but should be ~126 (120 * 1.05); 100 is incoherent
     v = validate.validate_plan(plan, a1, a2)
     assert any("inconsistent" in m.lower() for m in v)
+
+
+# ---------------------------------------------------------- R7 per-bar warp grip band (WARP_LO/HI)
+# The per-bar beat-lock re-locks each Song-2 vocal bar onto Song 1's downbeat grid. Its PER-BAR
+# stretch ratio must be judged against the WIDER grip band [fence.WARP_LO, fence.WARP_HI] =
+# [0.85, 1.15], NOT the global no-warble band [SAFE_STRETCH_LO, SAFE_STRETCH_HI] = [0.89, 1.11].
+# Why wider: a single transient one-bar correction (~1.7s) may excurse past the global edge; the
+# alternative — the lock disengaging so the vocal DRIFTS off the beat over a long placement — is
+# far worse. The GLOBAL band (vocal_stretch, B3) is UNCHANGED; only this per-bar tolerance widens.
+# make_analysis() puts Song-1 downbeats every 2.0s, so out_secs == 2.0 per bar keeps every bar
+# boundary on that grid — isolating the RATIO band as the only thing under test.
+
+from app.planner import fence
+
+
+def _warp_at_ratio(ratio, n_bars=4, out_secs=2.0, src0=16.0):
+    """A warp list of n_bars, each a tuple (src_start, src_end, out_secs) with
+    (src_end - src_start) / out_secs == ratio and out_secs == a real Song-1 bar (2.0s), so the
+    cumulative boundaries land on the 2.0s downbeat grid and ONLY the per-bar ratio is under test."""
+    warp = []
+    s = src0
+    for _ in range(n_bars):
+        warp.append((round(s, 4), round(s + ratio * out_secs, 4), out_secs))
+        s += ratio * out_secs
+    return warp
+
+
+def _warp_placement(warp):
+    """A single placement entering on downbeat 16.0, its vocal slice spanning the warp bars."""
+    return Placement(anchor=16.0, vocal_src=(warp[0][0], warp[-1][1]), warp=warp)
+
+
+def test_r7_warp_ratio_in_lower_grip_zone_passes():
+    # AC1: ratio ~0.87 sits in the NEW grip zone [WARP_LO, SAFE_STRETCH_LO). Today it is flagged R7
+    # (0.87 < SAFE_STRETCH_LO 0.89); after the band widens to WARP_LO it must PASS. Boundaries are
+    # all on the 2.0s grid (out_secs == 2.0), so the ONLY thing that can raise R7 is the ratio band.
+    a1, a2 = make_analysis(), make_analysis()  # downbeats every 2s
+    ratio = (fence.WARP_LO + fence.SAFE_STRETCH_LO) / 2  # 0.87 — inside new band, below old floor
+    assert fence.WARP_LO <= ratio < fence.SAFE_STRETCH_LO
+    p = _warp_placement(_warp_at_ratio(ratio))
+    v = validate.validate_plan(make_arrangement_plan([p]), a1, a2)
+    assert not any("R7" in m for m in v), v
+
+
+def test_r7_warp_ratio_below_grip_floor_still_flagged():
+    # AC2: ratio ~0.80 is BELOW the new floor WARP_LO (0.85) — warble even for a transient bar. It is
+    # flagged today AND must stay flagged after the change (this pins that the band WIDENED, not that
+    # the R7 ratio check vanished). Regression guard — expected green today.
+    a1, a2 = make_analysis(), make_analysis()
+    ratio = fence.WARP_LO - 0.05  # 0.80, clearly below the new floor
+    p = _warp_placement(_warp_at_ratio(ratio))
+    v = validate.validate_plan(make_arrangement_plan([p]), a1, a2)
+    assert any("outside the safe stretch band (R7)" in m for m in v), v
+
+
+def test_r7_warp_ratio_in_upper_grip_zone_passes():
+    # AC3 (symmetric): ratio ~1.13 sits in the NEW grip zone (SAFE_STRETCH_HI, WARP_HI]. Flagged
+    # today (1.13 > SAFE_STRETCH_HI 1.11); must PASS after the band widens to WARP_HI.
+    a1, a2 = make_analysis(), make_analysis()
+    ratio = (fence.SAFE_STRETCH_HI + fence.WARP_HI) / 2  # 1.13 — inside new band, above old ceiling
+    assert fence.SAFE_STRETCH_HI < ratio <= fence.WARP_HI
+    p = _warp_placement(_warp_at_ratio(ratio))
+    v = validate.validate_plan(make_arrangement_plan([p]), a1, a2)
+    assert not any("R7" in m for m in v), v
+
+
+def test_r7_warp_ratio_above_grip_ceiling_still_flagged():
+    # AC3 (symmetric): ratio ~1.20 is ABOVE the new ceiling WARP_HI (1.15) — still flagged after the
+    # change. Regression guard — expected green today.
+    a1, a2 = make_analysis(), make_analysis()
+    ratio = fence.WARP_HI + 0.05  # 1.20, clearly above the new ceiling
+    p = _warp_placement(_warp_at_ratio(ratio))
+    v = validate.validate_plan(make_arrangement_plan([p]), a1, a2)
+    assert any("outside the safe stretch band (R7)" in m for m in v), v
+
+
+def test_r7_warp_boundary_off_grid_still_flagged():
+    # AC4 (regression): the boundary-on-grid check is UNCHANGED by the widening. Every bar here is in
+    # RATIO band (1.0), but the first bar's out_secs is 2.5s, so the interior boundary lands at 18.5s
+    # — off Song 1's 2.0s downbeat grid — and must still be flagged R7 as drift, not the ratio band.
+    a1, a2 = make_analysis(), make_analysis()  # downbeats every 2s
+    warp = [(16.0, 18.5, 2.5),   # ratio 2.5/2.5 == 1.0 (in band); boundary at 16.0+2.5 = 18.5 (off grid)
+            (18.5, 20.5, 2.0)]   # ratio 2.0/2.0 == 1.0 (in band)
+    p = _warp_placement(warp)
+    v = validate.validate_plan(make_arrangement_plan([p]), a1, a2)
+    assert any("drifted off Song 1's grid (R7)" in m for m in v), v
+    assert not any("outside the safe stretch band (R7)" in m for m in v), v  # ratio is in-band; only drift fires

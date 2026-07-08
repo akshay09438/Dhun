@@ -26,7 +26,8 @@ import soundfile as sf
 
 from app.models import MixPlan, TrackAnalysis
 from app.planner.fence import (HOUSE_SLOW_MAX, HOUSE_SPEED_MAX, LEAD_XFADE_SECS,
-                               SAFE_STRETCH_HI, SAFE_STRETCH_LO, placement_end, retimed_analysis)
+                               SAFE_STRETCH_HI, SAFE_STRETCH_LO, WARP_HI, WARP_LO,
+                               placement_end, retimed_analysis)
 
 # A sample magnitude at or above this counts as clipping (square-wave distortion).
 CLIP_CEILING = 0.999
@@ -67,16 +68,18 @@ def _placements_of(plan: MixPlan) -> list:
 
 
 def _warp_violations(p, downbeats: list[float]) -> list[str]:
-    """R7: a warped placement must re-lock cleanly — every per-bar stretch inside the safe
-    band (no warble), and every full-bar boundary on a Song 1 downbeat (the vocal's own end,
-    the last boundary, may fall mid-bar). Empty warp => nothing to check (legacy path)."""
+    """R7: a warped placement must re-lock cleanly — every per-bar stretch inside the WARP grip
+    band (WARP_LO..WARP_HI, wider than the global SAFE_STRETCH band: a per-bar re-lock is a
+    transient single-bar correction, not a sustained stretch), and every full-bar boundary on a
+    Song 1 downbeat (the vocal's own end, the last boundary, may fall mid-bar). Empty warp =>
+    nothing to check (legacy path)."""
     warp = getattr(p, "warp", None)
     if not warp:
         return []
     out: list[str] = []
     cum = p.anchor
     for i, (s0, s1, out_secs) in enumerate(warp):
-        if out_secs <= 0 or not (SAFE_STRETCH_LO - 1e-6 <= (s1 - s0) / out_secs <= SAFE_STRETCH_HI + 1e-6):
+        if out_secs <= 0 or not (WARP_LO - 1e-6 <= (s1 - s0) / out_secs <= WARP_HI + 1e-6):
             msg = "a beat-lock bar is outside the safe stretch band (R7)"
             if msg not in out:
                 out.append(msg)
