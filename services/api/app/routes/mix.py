@@ -55,7 +55,9 @@ _S1_STEMS = ("drums", "bass", "other")
 #        finish) instead of clustering; a span guard rebuilds any clustered plan.
 # m4d.1: per-bar beat-lock — each vocal bar re-locked to Song 1's grid (no drift); the
 #        referee gains R7 (per-bar ratios in band + bars lock to the grid).
-ENGINE_VERSION = "m4d.1"
+# m5a.1: energy-sync (Phase A) — the arrangement lands Song 2's loudest vocal peak on Song 1's
+#        real DROP (fence.energy_drops/vocal_peaks/synced_anchors); no engine/referee change.
+ENGINE_VERSION = "m5a.1"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.
