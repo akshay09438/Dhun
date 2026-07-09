@@ -452,10 +452,7 @@ def test_energy_drops_finds_two_drops_across_a_breakdown():
     energy = [0.25] * 4 + [0.9] * 6 + [0.2] * 6 + [0.95] * 6
     downbeats = [round(i * 2.0, 3) for i in range(len(energy))]
     drops = fence.energy_drops(energy, downbeats)
-    # Phrasing: the two onsets (bar 4, bar 16) snap to 8-bar phrase lines. Bar 4 is midway between
-    # lines 0 and 8, so it rounds UP to bar 8 (the upcoming turn, never back to the song start); bar
-    # 16 is already a phrase line. Two distinct drops, both phrase-aligned.
-    assert drops == [downbeats[8], downbeats[16]]
+    assert drops == [downbeats[4], downbeats[16]]
 
 
 def test_energy_drops_ignores_an_energetic_intro_with_no_rise():
@@ -640,14 +637,14 @@ def test_beat_up_finds_the_loudest_window_anywhere_in_a_gap():
     # across the whole gap to find it, not just check the ends.
     a1 = make_analysis(bpm=120.0, n_bars=64)  # downbeats every 2.0s, 0..126
     energy = [0.3] * 64
-    for i in range(8, 12):  # bars 16-22s — mid-gap AND on the 4-bar grid (bar index 8)
+    for i in range(6, 10):  # bars 12-18s — well inside the gap [6.0, 40.0], nowhere near either edge
         energy[i] = 0.9
     a1.energy_curve = energy
-    placements = [Placement(anchor=2.0, vocal_src=(0.0, 4.0)),    # ends ~6.0 -> gap A: [6.0, 40.0]
+    placements = [Placement(anchor=2.0, vocal_src=(0.0, 4.0)),    # ends 6.0 -> gap A: [6.0, 40.0]
                   Placement(anchor=40.0, vocal_src=(0.0, 4.0))]   # ends 44.0 -> gap B: [44.0, track_end]
     moves = fence.beat_up_moves(a1, placements, [], [])
     assert len(moves) == 1
-    assert moves[0].start == 16.0 and moves[0].end == 24.0  # the loud stretch, mid-gap, 4-bar-aligned
+    assert moves[0].start == 12.0 and moves[0].end == 20.0  # exactly the loud stretch, mid-gap
 
 
 def test_beat_up_clamped_away_from_song1s_own_vocal():
@@ -660,12 +657,12 @@ def test_beat_up_clamped_away_from_song1s_own_vocal():
 def test_beat_up_shifts_away_from_a_partial_song1_vocal_block():
     # A block that covers only PART of the gap must not suppress beat-up entirely — the search finds
     # a valid window elsewhere in the same gap instead.
-    a1 = make_analysis(bpm=120.0, n_bars=48)  # downbeats 0,2,...,94.0 — a long tail after the block
-    placements = [Placement(anchor=10.0, vocal_src=(0.0, 4.0))]  # gap [~14.0, track_end]
+    a1 = make_analysis(bpm=120.0, n_bars=32)  # downbeats 0,2,...,62.0
+    placements = [Placement(anchor=10.0, vocal_src=(0.0, 4.0))]  # gap [14.0, 63.5]
     s1_regions = [(14.0, 50.0)]  # blocks the first part of the gap, leaves the tail clear
     moves = fence.beat_up_moves(a1, placements, s1_regions, [])
     assert len(moves) == 1
-    assert moves[0].start >= 50.0  # landed clear of the blocked span, on the 4-bar grid
+    assert moves[0].start >= 50.0  # landed clear of the blocked span
 
 
 def test_beat_up_clamped_away_from_an_existing_stem_move():
@@ -729,44 +726,3 @@ def test_breakdown_never_all_muted_by_construction():
                    vocal_stretch=1.0, vocal_src=(0.0, 4.0), anchor=10.0,
                    placements=[Placement(anchor=10.0, vocal_src=(0.0, 4.0))], stem_moves=moves)
     assert not any("mute" in v.lower() for v in validate._stem_move_violations(moves, a1.downbeats))
-
-
-def test_snap_to_phrase_snaps_to_nearest_8bar_line():
-    a = make_analysis(bpm=120.0, n_bars=32)  # downbeats every 2.0s; 8-bar line every 16.0s
-    db = a.downbeats
-    assert fence.snap_to_phrase(15.0, db, 8) == db[8]   # 16.0s
-    assert fence.snap_to_phrase(17.5, db, 8) == db[8]
-    assert fence.snap_to_phrase(db[8], db, 8) == db[8]  # idempotent
-
-
-def test_snap_to_phrase_4bar_grid():
-    db = make_analysis(bpm=120.0, n_bars=32).downbeats
-    assert fence.snap_to_phrase(7.0, db, 4) == db[4]    # 8.0s
-    assert fence.snap_to_phrase(9.0, db, 4) == db[4]
-
-
-def test_snap_to_phrase_empty_grid_returns_input():
-    assert fence.snap_to_phrase(5.0, [], 8) == 5.0
-
-
-def test_energy_drops_land_on_phrase_lines():
-    energy = [0.2] * 32
-    for i in range(10, 16):
-        energy[i] = 0.9  # a rise starting at bar 10 (a NON-phrase downbeat, 20.0s)
-    a = make_analysis(bpm=120.0, n_bars=32, energy=energy)
-    drops = fence.energy_drops(a.energy_curve, a.downbeats)
-    phrase = a.downbeats[::8]
-    assert drops and all(d in phrase for d in drops)  # snapped to an 8-bar line
-
-
-def test_best_energy_window_starts_on_4bar_grid():
-    # one loud 4-bar run STARTING at a non-grid bar (index 9) must be rejected for a 4-grid start
-    energy = [0.5] * 48
-    for i in range(9, 13):
-        energy[i] = 0.99
-    a = make_analysis(bpm=120.0, n_bars=48, energy=energy)
-    lead = Placement(anchor=a.downbeats[2], vocal_src=(0.0, 3.0))  # a placement early, leaving a big gap after
-    win = fence._best_energy_window(a, [lead], [], [], 1.0, 4, 0.3)
-    assert win is not None
-    start_i = a.downbeats.index(win[0])
-    assert start_i % fence._BARS_PER_SUBPHRASE == 0

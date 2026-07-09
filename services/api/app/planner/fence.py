@@ -53,20 +53,6 @@ MIN_VOCAL_SECS = 4.0
 LEAD_XFADE_SECS = 1.2
 
 _BARS_PER_PHRASE = 8  # 4/4 assumed in V1 (matches analysis.phrase_starts = downbeats[::8])
-_BARS_PER_SUBPHRASE = 4  # the finer 4-bar grid for smaller moves (8-bar = _BARS_PER_PHRASE)
-
-
-def snap_to_phrase(t: float, downbeats: list[float], bars: int) -> float:
-    """Snap time `t` to the nearest phrase boundary on the `bars`-bar grid — the nearest of
-    `downbeats[::bars]` (every `bars`-th downbeat). Returns `t` unchanged if there is no such grid
-    (missing/thin analysis), so a mix is never blocked over phrasing. bars=8 -> the 8-bar 'turn of
-    phrase'; bars=4 -> the finer 4-bar grid."""
-    grid = downbeats[::bars] if bars > 0 else downbeats
-    if not grid:
-        return t
-    # Nearest grid line; on an exact tie prefer the LATER line (round half up) so a drop midway
-    # between two phrase lines resolves to the upcoming turn — never backward to the song's start.
-    return min(grid, key=lambda d: (abs(d - t), -d))
 
 
 def best_stretch(master_bpm: float, source_bpm: float) -> tuple[float, bool]:
@@ -343,14 +329,7 @@ def energy_drops(energy_curve: list[float], downbeats: list[float],
         if rose and not in_drop:
             drops.append(downbeats[i])
         in_drop = True
-    # Phrasing: a drop IS the turn of phrase, so pin each to the nearest 8-bar phrase line (phrase
-    # wins over a slightly-off detected downbeat). Dedupe drops that snap to the same line.
-    snapped: list[float] = []
-    for d in drops:
-        s = snap_to_phrase(d, downbeats, _BARS_PER_PHRASE)
-        if s not in snapped:
-            snapped.append(s)
-    return snapped
+    return drops
 
 
 def synced_anchors(anchors_ranked: list[float], drops: list[float], track_end: float,
@@ -736,8 +715,6 @@ def _best_energy_window(a1: TrackAnalysis, placements, s1_regions: list[tuple[fl
         # the downbeat indices that fall inside this gap (with a little slack for float rounding)
         idxs = [i for i, d in enumerate(downbeats) if gap_start - 1e-6 <= d <= gap_end + 1e-6]
         for j in range(len(idxs) - bars):  # every bars-wide window that stays fully inside the gap
-            if idxs[j] % _BARS_PER_SUBPHRASE != 0:  # phrasing: window start must sit on the 4-bar grid
-                continue
             start_i, end_i = idxs[j], idxs[j + bars]
             start, end = downbeats[start_i], downbeats[end_i]
             if overlaps(start, end):

@@ -1,7 +1,7 @@
 # Phrasing alignment — design spec
 
 **Date:** 2026-07-10
-**Status:** Approved (founder sign-off on the design; this spec pending founder review)
+**Status:** ⚠️ BUILT then REVERTED (2026-07-10) — kept as a historical record. The fixed-origin 8-bar grid (`downbeats[::8]`) pulled vocals 1–3 bars OFF the real drops because a song's phrasing is offset by its intro (Anchor Point drops at bars 43/61/97/121/139, none a multiple of 8). If revisited, anchor the grid to the music (a detected drop / first strong downbeat), never bar 0. See implementation-plan drift log 20th/21st.
 **Branch:** `feat/house-bollywood-energy-sync`
 **Blast radius:** HEAVY (architectural — governs all placement across the arrangement brain), but implementable on SAFE surfaces (`fence.py` / `plan.py`); the referee (`validate.py`) is NOT touched.
 
@@ -48,10 +48,10 @@ Returns the nearest downbeat that is on the n-bar grid (n=8 → an 8-bar phrase 
 | Beat-up window                     | 4-bar | `_best_energy_window` via `beat_up_moves`                                           |
 | Breakdown window                   | 4-bar | `_best_energy_window` via `breakdown_moves`                                         |
 
-**Not snapped (deliberately) — the gradual ramps:** two moves are *gradual fades into an already-aligned hard edge*, so they need no snapping:
+**Not snapped (deliberately) — the gradual ramps:** two moves are _gradual fades into an already-aligned hard edge_, so they need no snapping:
 
 1. The produced-drop **build** (the multi-bar filter/volume climb, rendered in `render.py`) ramps up INTO the drop anchor.
-2. The **"drop to just the beat" cut** (`stem_moves_for_drops`) ramps the bass and melody *down* — a genuine decline, per the standing "lower, never cut" rule — with its only hard change being the bass **slam at the anchor**.
+2. The **"drop to just the beat" cut** (`stem_moves_for_drops`) ramps the bass and melody _down_ — a genuine decline, per the standing "lower, never cut" rule — with its only hard change being the bass **slam at the anchor**.
 
 In both, the abrupt moment is the drop/slam at the anchor, which is already 8-bar-aligned (item 1/2). The ramps themselves are not abrupt, so aligning their starts to the 4-bar grid buys nothing audible and, for the 2-bar cut, would collapse it under the grid. Leaving them also keeps the change off `render.py`. Same result: nothing lands abruptly mid-phrase.
 

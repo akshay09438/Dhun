@@ -148,4 +148,4 @@ def test_mix_rejects_bad_song_id(tmp_path, monkeypatch):
 
 def test_engine_version_is_current():
     # bumped when the engine/plan changes so a stale cached mix is never served
-    assert mix_route.ENGINE_VERSION == "m5o.0"  # phrasing: changes land on the 8/4-bar phrase grid
+    assert mix_route.ENGINE_VERSION == "m5n.0"  # Step 4: vocal chops on the biggest drop
