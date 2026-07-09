@@ -28,6 +28,7 @@ from app.models import MixPlan, TrackAnalysis
 from app.planner.fence import (HOUSE_SLOW_MAX, HOUSE_SPEED_MAX, LEAD_XFADE_SECS,
                                SAFE_STRETCH_HI, SAFE_STRETCH_LO, WARP_HI, WARP_LO,
                                placement_end, retimed_analysis)
+from app.planner.window import window_analysis
 
 # A sample magnitude at or above this counts as clipping (square-wave distortion).
 CLIP_CEILING = 0.999
@@ -199,6 +200,15 @@ def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[s
         a1 = retimed_analysis(a1, plan.master_bpm)
     if not SAFE_STRETCH_LO <= plan.vocal_stretch <= SAFE_STRETCH_HI:
         violations.append("tempo stretch is outside the safe band (B3)")
+
+    # Good-parts window: the plan's anchors/warp/stem-moves are WINDOW-RELATIVE (0-based from the
+    # window start). Re-derive the SAME windowed grid the planner used — crop+rebase from a1 (so the
+    # referee stays an INDEPENDENT check, never trusting the plan's own numbers) — and judge on-beat/
+    # warp/moves against it. Runs AFTER any bed_stretch retiming, matching the planner's order
+    # (retime, then window). window=None -> a1 untouched -> validated exactly as before.
+    window = getattr(plan, "window", None)
+    if window:
+        a1 = window_analysis(a1, *window)
 
     ordered = sorted(_placements_of(plan), key=lambda p: p.anchor)
     for p in ordered:

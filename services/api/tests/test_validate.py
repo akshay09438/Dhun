@@ -30,6 +30,40 @@ def test_validate_plan_clean():
     assert validate.validate_plan(make_plan(anchor=16.0), a1, a2) == []
 
 
+def test_validate_plan_clean_on_a_windowed_plan():
+    """A good-parts WINDOWED plan has window-relative (0-based) anchors/warp/moves. The referee is
+    handed the FULL Song-1 grid (as the real pipeline does — mix.py passes _load_analysis(song1)),
+    so it must re-derive the SAME windowed grid the planner used before judging on-beat/warp/moves.
+    Without that, on a real (non-uniform) grid every windowed mix is falsely rejected as off-beat.
+    A deterministic drifting grid reproduces it without touching the cache."""
+    import os
+
+    from app.models import Section, TrackAnalysis
+    from app.planner.plan import build_mix_plan
+
+    os.environ.pop("ANTHROPIC_API_KEY", None)  # force the deterministic rules path
+    downs, t = [], 0.0
+    for i in range(160):  # bar interval drifts 2.00 -> ~2.13s (a real tempo wobble)
+        downs.append(round(t, 4)); t += 2.0 + 0.0008 * i
+    beats, tb = [], 0.0
+    for i in range(len(downs) * 4):
+        step = (2.0 + 0.0008 * (i // 4)) / 4
+        beats.append(round(tb, 4)); tb += step
+    energy = [0.9 if d >= 250.0 else 0.2 for d in downs]  # a clear late drop -> a window exists
+    a1 = TrackAnalysis(song_id="beat", status="ready", bpm=120.0, bpm_confidence=0.9,
+                       beats=beats, downbeats=downs, phrase_starts=downs[::8], energy_curve=energy,
+                       sections=[Section(start=0.0, end=downs[-1], label="verse")], vocal_regions=[])
+    a2 = TrackAnalysis(song_id="voc", status="ready", bpm=120.0, bpm_confidence=0.9,
+                       beats=[round(0.5 * i, 3) for i in range(600)],
+                       downbeats=[round(2.0 * i, 3) for i in range(150)],
+                       vocal_regions=[(20.0, 60.0), (120.0, 150.0)])
+
+    plan = build_mix_plan("m" * 64, a1, a2)
+
+    assert plan.window is not None                       # the long drifting song is windowed
+    assert validate.validate_plan(plan, a1, a2) == []    # ...and validates CLEAN against the full grid
+
+
 def test_validate_plan_flags_offbeat_entry():
     a1, a2 = make_analysis(), make_analysis()  # downbeats every 2s
     v = validate.validate_plan(make_plan(anchor=5.0), a1, a2)
