@@ -366,7 +366,7 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     # instead of the whole track. Only on a confident grid with a real drop; else keep the full
     # track (today's behaviour). windowed_options re-grids the menu onto the 0-based window, so the
     # entire arrangement below runs unchanged on the window.
-    window_span = window.choose_window(a1g, opts.get("drops", [])) if _confident(a1g) else None
+    window_span = window.choose_window(a1g, opts.get("drops", []), take) if _confident(a1g) else None
     if window_span:
         opts = window.windowed_options(opts, *window_span)
         a1g = opts["a1_grid"]

@@ -94,6 +94,51 @@ def test_choose_window_starts_on_the_low_density_cue_point():
     assert 60.0 <= end - start <= 120.0
 
 
+from app.planner.fence import energy_drops
+from app.planner.window import _TAIL_SECS, _drop_intensity
+
+
+def _grid_two_drops():
+    # 0..318s: a DRAMATIC drop at ~240s (near-silent breakdown, then a big hit) and a flatter,
+    # sustained-loud stretch at ~120s. The dramatic drop must rank HARDEST despite the quiet run-up.
+    downs = [round(2.0 * i, 3) for i in range(160)]
+    energy = [0.4] * 160
+    for i, d in enumerate(downs):
+        if 120.0 <= d < 160.0:
+            energy[i] = 0.72       # a flatter, sustained-loud section
+        if 236.0 <= d < 240.0:
+            energy[i] = 0.05       # a near-silent breakdown right before the big drop
+        if 240.0 <= d < 268.0:
+            energy[i] = 0.95       # the hard hit
+    return TrackAnalysis(
+        song_id="b", status="ready", bpm=120.0, bpm_confidence=0.9,
+        beats=[round(1.0 * i, 3) for i in range(320)], downbeats=downs,
+        phrase_starts=downs[::8], energy_curve=energy,
+        sections=[Section(start=0.0, end=downs[-1], label="verse")], vocal_regions=[],
+    )
+
+
+def test_choose_window_ranks_drops_by_the_hit_not_the_phrase_average():
+    """A dramatic drop (near-silent breakdown, then a loud hit) must OUTRANK a flatter sustained-loud
+    section. A phrase average would bury it under its own quiet run-up (founder ear-test: Father
+    Ocean's 3:56 main drop scored low that way). take=1's window lands on the hard hit."""
+    a = _grid_two_drops()
+    drops = energy_drops(a.energy_curve, a.downbeats)
+    ranked = sorted(drops, key=lambda d: _drop_intensity(a, d), reverse=True)
+    assert 238.0 <= ranked[0] <= 242.0                 # the hard hit, not the flat 120-160 stretch
+    win = choose_window(a, drops, take=1)
+    assert win is not None and abs((win[1] - _TAIL_SECS) - 240.0) <= 24.0  # window built on the hit
+
+
+def test_choose_window_varies_the_drop_by_take():
+    """Different takes land the window on different strong drops — variation, never the same mix."""
+    a = _grid_two_drops()
+    drops = energy_drops(a.energy_curve, a.downbeats)
+    w1 = choose_window(a, drops, take=1)
+    w2 = choose_window(a, drops, take=2)
+    assert w1 and w2 and w1 != w2                       # the window moved to a different strong drop
+
+
 from app.planner import fence
 from app.planner.window import windowed_options
 

@@ -55,7 +55,8 @@ _MIN_RUNUP_SECS = 16.0   # need at least this much build-up before the drop, els
 
 
 def _phrase_energy_at(a1: TrackAnalysis, t: float) -> float:
-    """Average energy of the phrase (8 bars) nearest time t; 0 without an energy grid."""
+    """Average energy of the phrase (8 bars) nearest time t; 0 without an energy grid. Used for CUE
+    selection (a low-density spot) — the phrase-aligned block is right there."""
     if not (a1.downbeats and a1.energy_curve):
         return 0.0
     idx = min(range(len(a1.downbeats)), key=lambda i: abs(a1.downbeats[i] - t))
@@ -64,24 +65,47 @@ def _phrase_energy_at(a1: TrackAnalysis, t: float) -> float:
     return sum(window) / len(window) if window else 0.0
 
 
+def _drop_intensity(a1: TrackAnalysis, t: float) -> float:
+    """How hard a drop HITS: the mean energy of the bars AT and AFTER the onset (not the phrase-
+    aligned block). A big drop is preceded by a near-silent breakdown; a phrase average that includes
+    those quiet run-up bars WRONGLY ranks the most dramatic drops LOW (founder ear-test 2026-07-09:
+    Father Ocean's 3:56 main drop, energy ~0.95 at the hit, scored 0.37 by phrase-average because of
+    the ~0.05 bars right before it — losing to a flatter 7:20 section). Measuring from the onset
+    forward captures the hit itself."""
+    if not (a1.downbeats and a1.energy_curve):
+        return 0.0
+    i = min(range(len(a1.downbeats)), key=lambda k: abs(a1.downbeats[k] - t))
+    window = a1.energy_curve[i:i + _BARS_PER_PHRASE]
+    return sum(window) / len(window) if window else 0.0
+
+
 def _snap(anchors: list[float], t: float) -> float:
     """Nearest phrase/downbeat anchor to t (t itself if there are no anchors)."""
     return min(anchors, key=lambda a: abs(a - t)) if anchors else t
 
 
-def choose_window(a1: TrackAnalysis, drops: list[float]) -> tuple[float, float] | None:
-    """The ~90s good-part window anchored on the MAIN drop (the highest-energy drop = the payoff).
+def choose_window(a1: TrackAnalysis, drops: list[float], take: int = 1) -> tuple[float, float] | None:
+    """The ~90s good-part window anchored on a MAIN drop (a hardest-hitting drop = the payoff).
 
-    Ends a short tail AFTER the main drop (snapped to a phrase, clamped to the track). Starts on
-    the best CUE POINT: the lowest-density (lowest-energy) phrase boundary that keeps the span in
-    the 60-120s band and leaves real run-up before the drop — so the mix eases in where a DJ would
-    (a breakdown/quiet spot), not mid-chorus. Returns None when there is no drop, no legal cue with
-    run-up, or the track is too short — in every None case the caller keeps today's full-track mix.
+    Ends a short tail AFTER the drop (snapped to a phrase, clamped to the track). Starts on the best
+    CUE POINT: the lowest-density (lowest-energy) phrase boundary that keeps the span in the 60-120s
+    band and leaves real run-up before the drop — so the mix eases in where a DJ would (a breakdown/
+    quiet spot), not mid-chorus. `take` rotates the window across the strong drops for VARIATION (a
+    different valid mix each play). Returns None when there is no drop, no legal cue with run-up, or
+    the track is too short — in every None case the caller keeps today's full-track mix.
     """
     if not drops or not a1.beats:
         return None
     track_end = a1.beats[-1]
-    main = max(drops, key=lambda d: _phrase_energy_at(a1, d))  # the biggest drop is the payoff
+    # The MAIN drop = how hard it HITS (post-onset intensity, not a phrase average that would bury a
+    # big drop under its own quiet run-up). For VARIATION (founder 2026-07-09: never the same mix),
+    # rotate by `take` among the genuinely-strong drops (>= 60% of the hardest hit), so each take
+    # lands its window on a different real drop — take=1 is the hardest, later takes pick other strong
+    # ones. Vocal-slice/cue variety already keys off `take` downstream, so the whole mix varies.
+    ranked = sorted(drops, key=lambda d: _drop_intensity(a1, d), reverse=True)
+    top = _drop_intensity(a1, ranked[0])
+    strong = [d for d in ranked if _drop_intensity(a1, d) >= 0.6 * top] or ranked[:1]
+    main = strong[(take - 1) % len(strong)]
     phrases = a1.phrase_starts or a1.downbeats or a1.beats
 
     win_end = min(track_end, _snap(phrases, main + _TAIL_SECS))
