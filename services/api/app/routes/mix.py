@@ -99,7 +99,10 @@ _S1_STEMS = ("drums", "bass", "other")
 #        (render._chop_pattern) re-fires the hook onset over that entry's FIRST bar ("dum-da-ra-dum").
 #        Replaces bar 1 only, so the placement's length — and the referee's overlap math — are
 #        unchanged; validate.py UNTOUCHED. A plan with no chop flag renders as before.
-ENGINE_VERSION = "m5n.0"
+# m5o.0: HOOK-ON-DROP — the drop plays each curated song's signature hook (app/planner/hooks.py),
+#        not the loudest blob; other entries get the setup. plan.py only (additive, safe); no marker
+#        -> old loudest pick. (An earlier m5o.0 "phrasing" attempt was reverted the same day.)
+ENGINE_VERSION = "m5o.0"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.
