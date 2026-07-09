@@ -6,6 +6,7 @@ Mirrors fence.retimed_analysis: everything here is a testable copy-and-rescale o
 from __future__ import annotations
 
 from app.models import TrackAnalysis
+from app.planner import fence
 
 _BARS_PER_PHRASE = 8
 
@@ -110,8 +111,6 @@ def windowed_options(opts: dict, win_start: float, win_end: float) -> dict:
     just the grid-derived fields on the 0-based windowed grid makes the existing arrangement run
     on the window with no other change.
     """
-    from app.planner import fence  # local import: window.py <- plan.py <- fence.py cycle guard
-
     a1w = window_analysis(opts["a1_grid"], win_start, win_end)
     need = min(e - s for s, e in opts["vocal_slices"]) * opts["vocal_stretch"]
     anchors = fence.candidate_drops(a1w, need)

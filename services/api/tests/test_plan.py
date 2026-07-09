@@ -668,8 +668,7 @@ def test_no_hook_falls_back_to_loudest(monkeypatch):
     assert plan.placements  # still produces a valid arrangement
 
 
-from app.models import Section, TrackAnalysis
-from app.planner import plan as planmod
+from app.models import TrackAnalysis
 
 
 def _beat_song(track_secs=240.0):
@@ -695,7 +694,7 @@ def _vocal_song():
 
 def test_build_mix_plan_windows_a_long_song(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)     # force the deterministic path
-    p = planmod.build_mix_plan("m1", _beat_song(240.0), _vocal_song())
+    p = planner.build_mix_plan("m1", _beat_song(240.0), _vocal_song())
     assert p.window is not None
     ws, we = p.window
     assert 60.0 <= we - ws <= 120.0                            # ~90s good part, not 4 minutes
@@ -706,5 +705,5 @@ def test_build_mix_plan_falls_back_full_track_without_a_drop(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     flat = _beat_song(240.0)
     flat = flat.model_copy(update={"energy_curve": [0.2] * len(flat.downbeats)})  # no drop
-    p = planmod.build_mix_plan("m2", flat, _vocal_song())
+    p = planner.build_mix_plan("m2", flat, _vocal_song())
     assert p.window is None                                    # today's full-track behaviour
