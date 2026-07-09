@@ -547,38 +547,19 @@ git commit -m "feat(planner): build_mix_plan builds on the good-parts window (fa
 
 - [ ] **Step 1: Write the failing test**
 
-```python
-# add to services/api/tests/test_render.py — reuse this file's existing stem/vocal fixtures.
-# Assumes a helper that writes N seconds of tone stems + a vocal and returns (stems, vocal, tmp);
-# mirror the existing test_render.py setup (see its current tests for the exact fixture helper).
-from app.models import MixPlan
-from workers import render
+The independent test-author has ALREADY written the core render tests into `services/api/tests/test_render.py` (in the working tree, uncommitted), using a `_long_stems(tmp_path, secs=120.0)` fixture that mirrors the file's existing `_stems()` helper:
 
+- `test_render_window_crops_output_to_window_length` — 120s stems, `window=(30.0,120.0)` → duration 88–96s and `< 110s` (crops).
+- `test_render_no_window_is_unchanged_full_length` — `window=None` → duration `>= 118s` (the safety invariant; passes today, must keep passing).
+- `test_render_window_never_clips` — windowed render peak `<= _CEILING`.
+- `test_render_window_places_vocal_within_the_cropped_output` — a window-relative placement at 85.0s inside a `(20.0,110.0)` window renders `<= 96s` (not stranded past the window).
 
-def test_render_window_crops_bed_to_the_window(tmp_path, make_stems_and_vocal):
-    stems, vocal = make_stems_and_vocal(seconds=120.0)         # 2-minute beat
-    plan = MixPlan(mix_id="w", song1_id="a", song2_id="b", master_bpm=120.0,
-                   vocal_stretch=1.0, vocal_src=(0.0, 8.0), anchor=40.0,
-                   placements=[], window=(30.0, 120.0))        # a 90s window
-    out = render.render_mix(plan, stems, vocal, tmp_path / "w.wav")
-    import soundfile as sf
-    y, sr = sf.read(out)
-    # ~90s window (allow a little vocal ring-out slack), and well under the full 120s
-    assert 88.0 <= len(y) / sr <= 96.0
-    assert float(abs(y).max()) <= 0.999                        # still clip-safe
+**ADD these two REQUIRED safety tests (from the adversarial review) before the render edit lands:**
 
+- `test_render_malformed_window_fails_loud` — a plan with `window=(120.0, 30.0)` (reversed → empty crop) must raise `render.RenderError`, NOT silently produce a beat-less WAV. This is the exact silent-bad-mix gap the guard closes. `with pytest.raises(render.RenderError): render.render_mix(plan, stems, vocal, out)`.
+- `test_render_window_with_bed_stretch` — a windowed plan with `bed_stretch != 1.0` (e.g. `1.05`) still renders to ≈ the window length and stays clip-safe (proves the crop indexes the post-stretch decoded bed correctly on the movable-master path — the reviewer noted this combo was previously uncovered).
 
-def test_render_no_window_is_full_length(tmp_path, make_stems_and_vocal):
-    stems, vocal = make_stems_and_vocal(seconds=120.0)
-    plan = MixPlan(mix_id="f", song1_id="a", song2_id="b", master_bpm=120.0,
-                   vocal_stretch=1.0, vocal_src=(0.0, 8.0), anchor=40.0, placements=[])
-    out = render.render_mix(plan, stems, vocal, tmp_path / "f.wav")
-    import soundfile as sf
-    y, sr = sf.read(out)
-    assert len(y) / sr >= 118.0                                # window=None -> full track, unchanged
-```
-
-> If `test_render.py` has no reusable `make_stems_and_vocal` fixture, the test-author adds one that writes short sine-tone WAVs for `drums/bass/other/vocals` and a vocal file at `SR`, matching the existing tests' construction. Keep it in `test_render.py` or `conftest.py` (note: `conftest.py` is itself a dangerous surface — prefer the test file).
+> Note (test-author): pure-tone fixtures prove the crop LENGTH, not that it starts at exactly `win_start`. Crop-start correctness is verified live in Task 9's founder ear-test on real pairs (a mis-started window would obviously not build into the hook).
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -600,9 +581,17 @@ insert:
         # anchors/stem_moves are window-relative (start at 0), so cropping the decoded stems here
         # aligns everything with sample 0 = win_start. window is on the SAME retimed grid the bed
         # is on (bed_stretch already applied above), so win*SR indexes the decoded arrays directly.
+        # FAIL LOUD on a malformed window (w1<=w0 -> an EMPTY bed -> a beat-less mix the render
+        # would otherwise ship silently, since validate_render's silence check still sees the vocal).
+        # Mirrors this file's own convention (master_bpm<=0, bed_stretch range) — a bad plan is a
+        # loud error, never a quiet bad mix. w1 is clamped to the bed length so a legit window that
+        # ends a hair past the last sample (float/atempo rounding) is fine, not an error.
         window = getattr(plan, "window", None)
         if window:
-            w0, w1 = max(0, int(window[0] * SR)), int(window[1] * SR)
+            dec_len = max(len(a) for a in decoded.values())
+            w0, w1 = int(window[0] * SR), min(int(window[1] * SR), dec_len)
+            if not (0 <= w0 < w1):
+                raise RenderError(f"plan.window {window} is malformed (empty or reversed crop)")
             decoded = {name: arr[w0:w1] for name, arr in decoded.items()}
 ```
 
