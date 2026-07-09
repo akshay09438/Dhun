@@ -404,6 +404,22 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
         # the pre-Step-3 engine.
         moves = getattr(plan, "stem_moves", []) or []
         decoded = {name: _decode(song1_stems[name]) for name in _BED_STEMS}
+        # Good-parts window: crop the (already retimed) bed to [win_start, win_end]. The plan's
+        # anchors/stem_moves/s1_vocal_regions are window-relative (start at 0), so cropping the
+        # decoded stems here aligns sample 0 with win_start. window is on the SAME retimed grid the
+        # bed is on (bed_stretch already applied above), so win*SR indexes the decoded arrays directly.
+        # FAIL LOUD on a malformed window (w1<=w0 -> an EMPTY bed -> a beat-less mix the render would
+        # otherwise ship silently, since validate_render's audible check still sees the vocal). This
+        # mirrors this file's own convention (master_bpm<=0, bed_stretch range): a bad plan is a loud
+        # error, never a quiet bad mix. w1 is clamped to the bed length so a legit window ending a hair
+        # past the last sample (float/atempo rounding) is fine, not a false error.
+        window = getattr(plan, "window", None)
+        if window:
+            dec_len = max(len(a) for a in decoded.values())
+            w0, w1 = int(window[0] * SR), min(int(window[1] * SR), dec_len)
+            if not (0 <= w0 < w1):
+                raise RenderError(f"plan.window {window} is malformed (empty or reversed crop)")
+            decoded = {name: arr[w0:w1] for name, arr in decoded.items()}
         length = max(len(s) for s in decoded.values())
         bed = np.zeros((length, 2), dtype=np.float32)
         for name in _BED_STEMS:
@@ -448,7 +464,8 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
                 break
             # Song 1 leads its own vocal here, played as recorded (its natural phrase-end decay is the
             # blend into Song 2 — we don't impose a fade); only an edge fade guards against a click.
-            take = _edge_fade(_vocal_take(s1_vocals, s, max(e - s, 0.0), 1.0))
+            off = window[0] if window else 0.0  # s1 regions are window-relative; the file is not cropped
+            take = _edge_fade(_vocal_take(s1_vocals, s + off, max(e - s, 0.0), 1.0))
             a0 = max(0, int(s * SR))
             bed = _hold(bed, a0 + len(take))
             bed[a0:a0 + len(take)] += take

@@ -651,3 +651,167 @@ def test_chop_pattern_noop_shortfall_when_out_len_exceeds_voc():
     # this assertion flips red on purpose -- delete it and remove the shortfall note from the docstring.
     assert len(r) == len(v) < out_len, (
         f"no-op branch length changed: got {len(r)} (was {len(v)}, out_len {out_len})")
+
+
+# ---------------------------------------------------------------- good-parts window (plan.window crop)
+# MixPlan.window (models.py) is a tuple[float,float] | None already carried by the plan (the planner's
+# good-parts picker already sets it — app/planner/window.py, app/planner/plan.py:409) but render_mix
+# never reads it: today the bed always decodes and plays Song 1's stems in full, regardless of window.
+# These tests were written independently of the implementation, from the acceptance criteria: when
+# plan.window=(win_start, win_end) is set, the rendered WAV must be built only from that span of Song
+# 1's stems (~the window length, not the full track); plan.window=None must stay exactly today's full
+# track render (the "old mixes still work" invariant).
+
+
+def _long_stems(tmp_path, secs=120.0):
+    """Same shape as _stems() but a realistic full-track length -- plan.window cropping only bites on
+    tracks longer than the crop window, so the 8s tones the other render tests use can't exercise it."""
+    paths = {}
+    for name, f in (("drums", 110.0), ("bass", 55.0), ("other", 330.0), ("vocals", 660.0)):
+        p = tmp_path / f"{name}.wav"
+        _tone(p, freq=f, secs=secs)
+        paths[name] = p
+    vocal = tmp_path / "vocal.wav"
+    _tone(vocal, freq=440.0, secs=8.0)  # Song 2's vocal source; short is fine, it is never cropped
+    return paths, vocal
+
+
+def test_render_window_crops_output_to_window_length(tmp_path):
+    """AC1: plan.window=(30.0, 120.0) on a 120s track must crop the render to ~ the 90s window (allow
+    ring-out slack, 88-96s) -- and be clearly shorter than the untouched 120s track. Fails today because
+    render_mix never reads plan.window at all (the bed decodes and plays the FULL track regardless), so
+    dur comes out ~120s, well outside the 88-96s band."""
+    stems, vocal = _long_stems(tmp_path, secs=120.0)
+    out = tmp_path / "mix.wav"
+    plan = _plan(anchor=1.0, vocal_src=(0.0, 1.0))  # a short vocal near the window start; no placements
+    plan.window = (30.0, 120.0)  # a 90s window
+    render.render_mix(plan, stems, vocal, out)
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    dur = len(y) / sr
+    assert 88.0 <= dur <= 96.0, f"window did not crop the render: dur={dur:.2f}s (want ~90s, 88-96s)"
+    assert dur < 110.0, f"render is not clearly shorter than the full 120s track: dur={dur:.2f}s"
+
+
+def test_render_no_window_is_unchanged_full_length(tmp_path):
+    """AC2 (the safety invariant): plan.window=None (the default) must render the FULL track, unaffected
+    by the new crop path -- existing mixes must stay exactly as long as today. Passes now (the engine
+    already ignores window) and must STAY green once the crop is gated on window being set."""
+    stems, vocal = _long_stems(tmp_path, secs=120.0)
+    out = tmp_path / "mix.wav"
+    plan = _plan(anchor=1.0, vocal_src=(0.0, 1.0))  # plan.window defaults to None
+    render.render_mix(plan, stems, vocal, out)
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    dur = len(y) / sr
+    assert dur >= 118.0, f"no-window render was unexpectedly shortened: dur={dur:.2f}s (want >=118s of 120s)"
+
+
+def test_render_window_never_clips(tmp_path):
+    """AC3: the windowed render keeps the same clip-safety guarantee as any other render -- peak stays
+    <= _CEILING. (This guard is already unconditional in the engine, so it is expected to pass both
+    before and after the crop lands; it pins that the new path must not regress it.)"""
+    stems, vocal = _long_stems(tmp_path, secs=120.0)
+    out = tmp_path / "mix.wav"
+    plan = _plan(anchor=1.0, vocal_src=(0.0, 1.0))
+    plan.window = (30.0, 120.0)
+    render.render_mix(plan, stems, vocal, out)
+    y, _ = sf.read(out, dtype="float32", always_2d=True)
+    peak = float(np.max(np.abs(y)))
+    assert 0.0 < peak <= render._CEILING, f"windowed render clipped or went silent: peak={peak:.4f}"
+
+
+def test_render_window_places_vocal_within_the_cropped_output(tmp_path):
+    """AC4: a placement anchored NEAR THE END of the window (window-relative anchor, matching how the
+    planner already emits window-relative placements -- test_plan.py's
+    test_long_song_vocal_spans_its_good_part_window) must still land inside the ~90s windowed output,
+    not be stranded past the end of a still-full 120s render. Fails today on duration alone: the render
+    stays ~120s because window is ignored, so a ~90s-bounded output containing the vocal does not exist."""
+    stems, vocal = _long_stems(tmp_path, secs=120.0)
+    out = tmp_path / "mix.wav"
+    # window (20, 110) -> a 90s window; anchor 85.0 is window-relative, 5s before the window ends.
+    plan = _arr_plan([(85.0, (0.0, 1.5), False)])
+    plan.window = (20.0, 110.0)
+    render.render_mix(plan, stems, vocal, out)
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    dur = len(y) / sr
+    assert dur <= 96.0, f"windowed placement pushed the render past the ~90s window: dur={dur:.2f}s"
+    e = lambda a, b: float(np.mean(np.abs(y[int(a * sr):int(b * sr)])))
+    # the vocal (440Hz) is audible right at its anchor, inside the windowed output
+    assert e(85.0, 86.4) > e(10.0, 11.4), "vocal not landing at its expected position in the windowed output"
+
+
+def test_render_malformed_window_fails_loud(tmp_path):
+    """AC5 (adversarial): a REVERSED window (w1 <= w0) must FAIL LOUD with RenderError, not silently
+    render an empty/garbage crop -- an unguarded empty crop would ship a beat-less mix. Fails today
+    because render_mix never reads plan.window at all: no crop is attempted and no error is raised,
+    so this render succeeds (wrongly) instead of raising."""
+    stems, vocal = _long_stems(tmp_path, secs=120.0)
+    out = tmp_path / "mix.wav"
+    plan = _plan(anchor=1.0, vocal_src=(0.0, 1.0))
+    plan.window = (120.0, 30.0)  # reversed -> w1 <= w0, an empty/negative crop
+    with pytest.raises(render.RenderError):
+        render.render_mix(plan, stems, vocal, out)
+
+
+def test_render_window_with_bed_stretch(tmp_path):
+    """AC6: the window crop must index the POST-bed_stretch (already atempo'd) bed, not the original-
+    tempo one -- the movable-master path. window=(30,120) on 120s stems with bed_stretch=1.05 must
+    still render a sane, clearly-cropped clip (well under the full ~114.3s stretched track: <=96s,
+    allowing for atempo's duration/ratio scaling) and stay clip-safe. Fails today: window is ignored
+    entirely, so the full stretched bed plays through and dur comes out ~114.3s (120/1.05), outside
+    the expected crop."""
+    stems, vocal = _long_stems(tmp_path, secs=120.0)
+    out = tmp_path / "mix.wav"
+    plan = _plan(anchor=1.0, vocal_src=(0.0, 1.0))
+    plan.window = (30.0, 120.0)
+    plan.bed_stretch = 1.05
+    render.render_mix(plan, stems, vocal, out)
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    dur = len(y) / sr
+    assert dur <= 96.0, f"window+bed_stretch not cropped: dur={dur:.2f}s (want <=96s)"
+    peak = float(np.max(np.abs(y)))
+    assert 0.0 < peak <= render._CEILING, f"windowed+stretched render clipped or went silent: peak={peak:.4f}"
+
+
+def _marked_tone_regions(path, secs, regions, sr=44100):
+    """Write a `secs`-long mono WAV: silence everywhere except each (start, end, freq, amp) region,
+    which carries a sine tone. Used to fingerprint WHICH slice of an uncropped file render_mix
+    actually seeks into -- a wrong (un-offset) seek grabs the DECOY tone; the right (window-offset)
+    seek grabs the marked one."""
+    n = int(sr * secs)
+    y = np.zeros(n, dtype="float32")
+    for start, end, freq, amp in regions:
+        s, e = int(start * sr), int(end * sr)
+        t = np.linspace(0, (e - s) / sr, e - s, endpoint=False)
+        y[s:e] = (amp * np.sin(2 * np.pi * freq * t)).astype("float32")
+    sf.write(path, y, sr)
+
+
+def test_render_window_offsets_s1_vocal_regions(tmp_path):
+    """AC7 (the strongest one): plan.s1_vocal_regions are WINDOW-RELATIVE, but Song 1's "vocals" stem
+    file on disk is never cropped -- so the seek into that file must be offset by win_start. Song 1's
+    vocals stem is marked: a DECOY 1000Hz tone at ABSOLUTE 5-7s (what an un-offset seek wrongly grabs)
+    and the REAL 2000Hz tone at ABSOLUTE 35-37s (window(30,120) + region (5,7) window-relative ->
+    intends absolute 35-37s). Fails today: render_mix takes the region literally at s=5.0 with no
+    window offset, so the rendered output's 5-7s segment carries the DECOY 1000Hz tone, not 2000Hz."""
+    stems, vocal = _long_stems(tmp_path, secs=120.0)
+    _marked_tone_regions(stems["vocals"], secs=120.0,
+                          regions=[(5.0, 7.0, 1000.0, 0.4), (35.0, 37.0, 2000.0, 0.4)])
+    out = tmp_path / "mix.wav"
+    plan = _plan(anchor=1.0, vocal_src=(0.0, 1.0))
+    plan.window = (30.0, 120.0)
+    plan.s1_vocal_regions = [(5.0, 7.0)]  # window-relative -> intends absolute 35-37s in the file
+    render.render_mix(plan, stems, vocal, out)
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    seg = y[int(5.0 * sr):int(7.0 * sr)]
+    mono = seg.mean(axis=1)
+    mag = np.abs(np.fft.rfft(mono))
+    freqs = np.fft.rfftfreq(len(mono), d=1.0 / sr)
+
+    def _mag_near(freq):
+        idx = int(np.argmin(np.abs(freqs - freq)))
+        return float(mag[idx])
+
+    m2000, m1000 = _mag_near(2000.0), _mag_near(1000.0)
+    assert m2000 > m1000, (
+        f"5-7s segment not offset by window start: 2000Hz mag={m2000:.1f} vs decoy 1000Hz mag={m1000:.1f} "
+        "(the seek used the region literally instead of offsetting it by win_start)")
