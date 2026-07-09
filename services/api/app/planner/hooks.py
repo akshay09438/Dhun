@@ -18,7 +18,7 @@ HOOKS: dict[str, tuple[float, float]] = {
     # Jee Karda (Badlapur) — "Jee karda!" — first chorus section (55.0-68.7)
     "2294a71524d7b0041a8f1c01f198a1e2ac4af4d1d1d39a6ac6f6ea695d7a6195": (55.0, 68.7),
     # Maula Mere Maula (Anwar) — "Aankhein teri kitni haseen" — verse after the opening refrain
-    # (28.9-51.9). BEST GUESS from the section map — confirm/adjust by ear.
+    # (28.9-51.9). Founder-confirmed by ear (2026-07-10).
     "6608cb4849db314c28a26843adcb94558afebe833020af010a7d8cb8f69d7fcb": (28.9, 51.9),
 }
 
