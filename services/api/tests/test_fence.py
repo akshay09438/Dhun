@@ -726,3 +726,21 @@ def test_breakdown_never_all_muted_by_construction():
                    vocal_stretch=1.0, vocal_src=(0.0, 4.0), anchor=10.0,
                    placements=[Placement(anchor=10.0, vocal_src=(0.0, 4.0))], stem_moves=moves)
     assert not any("mute" in v.lower() for v in validate._stem_move_violations(moves, a1.downbeats))
+
+
+def test_snap_to_phrase_snaps_to_nearest_8bar_line():
+    a = make_analysis(bpm=120.0, n_bars=32)  # downbeats every 2.0s; 8-bar line every 16.0s
+    db = a.downbeats
+    assert fence.snap_to_phrase(15.0, db, 8) == db[8]   # 16.0s
+    assert fence.snap_to_phrase(17.5, db, 8) == db[8]
+    assert fence.snap_to_phrase(db[8], db, 8) == db[8]  # idempotent
+
+
+def test_snap_to_phrase_4bar_grid():
+    db = make_analysis(bpm=120.0, n_bars=32).downbeats
+    assert fence.snap_to_phrase(7.0, db, 4) == db[4]    # 8.0s
+    assert fence.snap_to_phrase(9.0, db, 4) == db[4]
+
+
+def test_snap_to_phrase_empty_grid_returns_input():
+    assert fence.snap_to_phrase(5.0, [], 8) == 5.0

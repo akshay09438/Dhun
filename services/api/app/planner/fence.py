@@ -53,6 +53,18 @@ MIN_VOCAL_SECS = 4.0
 LEAD_XFADE_SECS = 1.2
 
 _BARS_PER_PHRASE = 8  # 4/4 assumed in V1 (matches analysis.phrase_starts = downbeats[::8])
+_BARS_PER_SUBPHRASE = 4  # the finer 4-bar grid for smaller moves (8-bar = _BARS_PER_PHRASE)
+
+
+def snap_to_phrase(t: float, downbeats: list[float], bars: int) -> float:
+    """Snap time `t` to the nearest phrase boundary on the `bars`-bar grid — the nearest of
+    `downbeats[::bars]` (every `bars`-th downbeat). Returns `t` unchanged if there is no such grid
+    (missing/thin analysis), so a mix is never blocked over phrasing. bars=8 -> the 8-bar 'turn of
+    phrase'; bars=4 -> the finer 4-bar grid."""
+    grid = downbeats[::bars] if bars > 0 else downbeats
+    if not grid:
+        return t
+    return min(grid, key=lambda d: abs(d - t))
 
 
 def best_stretch(master_bpm: float, source_bpm: float) -> tuple[float, bool]:
