@@ -202,7 +202,7 @@ git commit -m "feat(planner): window_analysis -- crop + rebase a grid to the goo
 **Interfaces:**
 
 - Consumes: `_grid()` helper from Task 2's test; `TrackAnalysis`.
-- Produces: `choose_window(a1: TrackAnalysis, drops: list[float]) -> tuple[float, float] | None` — the `(win_start, win_end)` (in `a1`'s own seconds) whose end is a short tail after the highest-energy drop and whose start is ~90s earlier snapped to a phrase; `None` when there is no drop, no run-up room, or the track is too short to window.
+- Produces: `choose_window(a1: TrackAnalysis, drops: list[float]) -> tuple[float, float] | None` — the `(win_start, win_end)` (in `a1`'s own seconds) whose end is a short tail after the highest-energy drop and whose start is the lowest-density phrase-boundary CUE POINT in range (60-120s span, real run-up preserved); `None` when there is no drop, no legal cue with run-up, or the track is too short to window.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -231,6 +231,33 @@ def test_choose_window_none_without_a_drop():
 def test_choose_window_none_when_drop_has_no_runup():
     a = _grid()
     assert choose_window(a, [4.0]) is None   # drop at 4s -> < min run-up -> fall back to full track
+
+
+def _grid_with_breakdown():
+    # 0..240s, downbeat every 2s (121 bars), phrase every 8 bars (every 16s). Mostly mid-energy,
+    # with a real BREAKDOWN (low density) at the phrase starting 112s and the main drop from 196s.
+    downs = [round(2.0 * i, 3) for i in range(121)]
+    energy = [0.5] * 121
+    for i, d in enumerate(downs):
+        if 112.0 <= d < 128.0:
+            energy[i] = 0.1        # the breakdown -> the best cue point to start on
+        if d >= 196.0:
+            energy[i] = 0.95       # the main drop region (highest energy)
+    return TrackAnalysis(
+        song_id="s", status="ready", bpm=120.0,
+        beats=[round(1.0 * i, 3) for i in range(241)],
+        downbeats=downs, phrase_starts=downs[::8], energy_curve=energy,
+        sections=[Section(start=0.0, end=240.0, label="verse")], vocal_regions=[],
+    )
+
+
+def test_choose_window_starts_on_the_low_density_cue_point():
+    a = _grid_with_breakdown()
+    win = choose_window(a, [200.0])          # main drop ~200s
+    assert win is not None
+    start, end = win
+    assert start == 112.0                    # starts on the breakdown cue, not a louder phrase
+    assert 60.0 <= end - start <= 120.0
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -268,10 +295,11 @@ def _snap(anchors: list[float], t: float) -> float:
 def choose_window(a1: TrackAnalysis, drops: list[float]) -> tuple[float, float] | None:
     """The ~90s good-part window anchored on the MAIN drop (the highest-energy drop = the payoff).
 
-    Ends a short tail AFTER the main drop (snapped to a phrase, clamped to the track); starts
-    ~90s earlier (snapped to a phrase, clamped to 0 and to the 60-120s band). Returns None when
-    there is no drop, the run-up before the drop is too short (would be a cold cut), or the track
-    is too short to window — in every None case the caller keeps today's full-track arrangement.
+    Ends a short tail AFTER the main drop (snapped to a phrase, clamped to the track). Starts on
+    the best CUE POINT: the lowest-density (lowest-energy) phrase boundary that keeps the span in
+    the 60-120s band and leaves real run-up before the drop — so the mix eases in where a DJ would
+    (a breakdown/quiet spot), not mid-chorus. Returns None when there is no drop, no legal cue with
+    run-up, or the track is too short — in every None case the caller keeps today's full-track mix.
     """
     if not drops or not a1.beats:
         return None
@@ -282,18 +310,21 @@ def choose_window(a1: TrackAnalysis, drops: list[float]) -> tuple[float, float] 
     win_end = min(track_end, _snap(phrases, main + _TAIL_SECS))
     if win_end <= main:                                   # drop at the very end -> tiny tail, no snap
         win_end = min(track_end, main + _TAIL_SECS)
-    win_start = max(0.0, _snap(phrases, win_end - _TARGET_SECS))
 
-    span = win_end - win_start
-    if span > _MAX_SECS:
-        win_start = _snap(phrases, win_end - _MAX_SECS)
-    elif span < _MIN_SECS:
-        win_start = max(0.0, _snap(phrases, win_end - _MIN_SECS))
-
-    if main - win_start < _MIN_RUNUP_SECS:                # not enough build-up -> fall back
+    # Start on the best CUE POINT: among the phrase boundaries that keep the span in the 60-120s
+    # band AND leave real run-up before the drop, pick the LOWEST-density (lowest-energy) one — a
+    # breakdown/quiet spot, where a DJ starts bringing a track in, never mid-chorus. Ties break
+    # toward a ~90s window. (Founder craft note 2026-07-09: cue/switch points sit on phrase
+    # boundaries at points of lower musical density, e.g. right as a breakdown starts.)
+    earliest = max(0.0, win_end - _MAX_SECS)
+    latest = min(win_end - _MIN_SECS, main - _MIN_RUNUP_SECS)
+    if latest < earliest:                                 # no legal start with run-up -> fall back
         return None
-    if win_end - win_start < _MIN_SECS * 0.5:             # degenerate on a very short track -> fall back
+    cues = [p for p in phrases if earliest - 1e-6 <= p <= latest + 1e-6]
+    if not cues:                                          # no phrase boundary in band -> fall back
         return None
+    win_start = min(cues, key=lambda p: (round(_phrase_energy_at(a1, p), 3),
+                                         abs((win_end - p) - _TARGET_SECS)))
     return (round(win_start, 3), round(win_end, 3))
 ```
 
@@ -650,7 +681,7 @@ git commit -m "test(validate): a windowed plan validates clean (single vocal, no
 
 - [ ] **Step 3: implementation-plan.md** — mark the good-parts window feature done; add a drift-log entry dated 2026-07-09 describing the windowed-canvas approach and the fallback-to-full-track invariant.
 
-- [ ] **Step 4: mix-recipe.md** — add the good-window rule: anchor on the main drop, build up to it, aim ~90s (60-120s), fall back to the full track when no confident drop.
+- [ ] **Step 4: mix-recipe.md** — add the good-window rule: anchor on the main drop, start on a low-density **cue point** (a phrase boundary at a breakdown/quiet spot, never mid-chorus), build up to the drop, aim ~90s (60-120s), fall back to the full track when no confident drop.
 
 - [ ] **Step 5: Commit**
 

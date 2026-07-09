@@ -12,6 +12,7 @@ Real DJs never play a whole track — they play the ~1–2 minutes that builds u
 
 - **Anchor:** the beat song's **main drop** (its biggest / most energetic drop — the payoff), where the vocal song's **signature hook** already lands (hook-on-drop, live + founder-confirmed).
 - **Build up to it, don't cut cold:** the window starts with a **run-up before** the drop so the drop feels earned; the vocal's other parts fill the run-up, rising toward the hook.
+- **Cue-in point (founder craft note 2026-07-09):** the window **starts on a proper cue/switch point** — a phrase boundary at a point of _lower_ musical density (a breakdown or quiet spot, or where a build begins), never dropped into the middle of a busy chorus. Among the legal phrase boundaries in range, the app picks the **lowest-energy** one.
 - **Window length:** aim **~90s, flexible 60–120s**, snapped to clean phrase boundaries.
 - **Method:** automatic selection anchored on signals the app already reads reliably (the beat's main drop + the marked hook), with the founder **hearing the final render** before it's locked (the existing ear-confirm loop — no manual marking).
 - **Out of scope for this build:** the multi-song set / auto-transition feature (separate, next build); auto good-part detection on arbitrary uploads (V2); any change to Song 2 vocal-selection philosophy (hooks stay hand-marked; vocal parts as today).
@@ -23,11 +24,11 @@ The key move is to **crop and re-base Song 1's grid to the chosen window, then r
 ### New / changed units
 
 1. **`app/planner/window.py` (NEW — pure, isolated, testable).**
-   - `choose_window(a1g, drops, opts) -> tuple[float, float] | None`
-   - Picks the **main drop** = the highest-energy drop in `drops` (ranked via the existing per-bar energy curve; ties → the later one, so there's runway before it). Falls back to the loudest phrase anchor only if `drops` is non-empty but unranked.
-   - Window = `[drop - runup, drop + tail]` targeting ~90s (clamped to 60–120s), snapped to Song 1 phrase-start downbeats (`a1g.phrase_starts`), clamped to `[0, track_end]`.
-   - Runup takes the majority of the window (build-up dominant); tail is a short resolve after the drop.
-   - Returns **`None`** when there is no confident main drop (empty `drops`, or low grid confidence) → caller keeps today's full-track behavior.
+   - `choose_window(a1g, drops) -> tuple[float, float] | None`
+   - Picks the **main drop** = the highest-energy drop in `drops` (ranked via the existing per-bar energy curve) — the payoff the window ends on.
+   - The window **end** is a short tail after the main drop, snapped to a phrase boundary, clamped to `[0, track_end]`.
+   - The window **start** is a real **cue point**: the lowest-density (lowest-energy) phrase boundary within the 60–120s length band that still leaves real run-up before the drop — so the mix eases in at a breakdown/quiet spot, never mid-chorus (founder craft note). Ties break toward a ~90s window.
+   - Returns **`None`** when there is no confident main drop (empty `drops`, or low grid confidence) or no legal cue with run-up → caller keeps today's full-track behavior.
    - Constants (`_TARGET_SECS=90`, `_MIN_SECS=60`, `_MAX_SECS=120`, tail bars) live here, tunable by ear.
 
 2. **`window_analysis(a1g, win_start, win_end) -> TrackAnalysis` (NEW — pure).**
