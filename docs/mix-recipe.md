@@ -22,6 +22,14 @@ _The single, plain-English rulebook for how the app turns two songs into a DJ mi
 - **If two songs are too far apart to blend** (past the safe stretch limit), the app **refuses the pair** rather than ship something that sounds bad.
 - Close-tempo pairs aren't touched at all — they play at their natural speed.
 
+## Step 1b — Find the good part first (crop to ~90 seconds)
+
+- Real DJs don't play a whole track — they play the ~1–2 minutes that builds up to and lands on the song's big moment. Before deciding where the vocal goes, the app now picks the beat song's **best ~90 seconds (60–120s, flexible)** and arranges everything inside that window instead of the whole track.
+- **The window is anchored on the beat's main drop** — its biggest, most energetic drop (the payoff) — and ends with a short **wind-down outro** so the mix eases out instead of stopping cold right on the hook.
+- **It starts on a proper cue point** — a phrase boundary at a spot of _lower_ musical density (a breakdown, a quiet moment, or where a build begins), never dropped into the middle of a busy chorus. This is exactly where a real DJ would start bringing a track in.
+- **Long songs collapse to their tight good part.** A 7–9 minute song no longer makes a 7–9 minute mix with long empty beat-only stretches in between — the whole arrangement (Steps 2–6 below) now plays out inside the ~90s window.
+- **If the app can't confidently find a main drop**, it plays it safe and falls back to arranging the **whole track**, exactly like before — never worse than not having this feature.
+
 ## Step 2 — Decide WHERE the vocal goes (the arc)
 
 - The vocal doesn't play the whole time and doesn't clump in one place. It's **spread across the song like an arc**: a moment early, a moment in the middle, and a **strong entry saved for near the end** — with **beat-only stretches** in between so the mix breathes.
@@ -72,6 +80,7 @@ Around each big drop, the app performs the beat like a DJ would:
 
 ## Lessons — what we tried and decided
 
+- **Good-parts window:** BUILT + founder-confirmed (Anchor Point × Maula Mere). Cropping to the best ~90s fixed the "long songs feel empty" problem directly.
 - **Hook-on-drop:** BUILT + founder-confirmed. The drop plays the signature line.
 - **Natural hand-off (not muting the beat's vocal):** CONFIRMED correct — the fade-underneath is more musical than a hard mute.
 - **Vocal chops** (stuttering the hook on the drop): BUILT then **PARKED** — it re-fired the vocal's first split-second, which was sometimes a breath, so the drop went dead. Revive only if it grabs a punchy syllable.
