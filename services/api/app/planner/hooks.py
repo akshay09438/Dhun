@@ -13,8 +13,9 @@ on the strongest anchor (the drop) and uses the other vocal parts for the setup 
 from __future__ import annotations
 
 HOOKS: dict[str, tuple[float, float]] = {
-    # Dil Ye Bekarar Kyun Hai (Players) — "Dil ye bekaraar kyun hai" — first chorus section (35.5-56.9)
-    "73431441fb8cae90e084ca78b18c213fe7c58d7a51cfa39b786c9eceac0a9e5e": (35.5, 56.9),
+    # Dil Ye Bekarar Kyun Hai (Players) — "Dil ye bekaraar kyun hai" starts at 42.0s
+    # (founder-confirmed by ear 2026-07-10; the section boundary at 35.5 landed mid-phrase on "…kyun ye…").
+    "73431441fb8cae90e084ca78b18c213fe7c58d7a51cfa39b786c9eceac0a9e5e": (42.0, 56.9),
     # Jee Karda (Badlapur) — "Jee karda!" — first chorus section (55.0-68.7)
     "2294a71524d7b0041a8f1c01f198a1e2ac4af4d1d1d39a6ac6f6ea695d7a6195": (55.0, 68.7),
     # Maula Mere Maula (Anwar) — "Aankhein teri kitni haseen" — verse after the opening refrain
