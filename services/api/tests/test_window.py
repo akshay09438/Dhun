@@ -33,6 +33,15 @@ def test_window_analysis_crops_and_rebases_to_zero():
     assert a.bpm == 120.0                             # tempo untouched
 
 
+def test_window_analysis_stays_aligned_when_energy_curve_is_shorter():
+    """energy_curve can come back shorter than downbeats (Handbook 9.4 fallback data); downbeats
+    and energy_curve must still be filtered by the SAME kept-index set, so they stay the same
+    length after windowing (not just within the crop window separately)."""
+    a = _grid().model_copy(update={"energy_curve": _grid().energy_curve[:45]})  # shorter than downbeats
+    windowed = window_analysis(a, 40.0, 100.0)
+    assert len(windowed.energy_curve) == len(windowed.downbeats)
+
+
 from app.planner.window import choose_window
 
 
@@ -103,3 +112,52 @@ def test_windowed_options_regrids_onto_the_window():
     assert all(0.0 <= d <= 60.0 + 1e-6 for d in w["drops"])
     assert w["vocal_stretch"] == opts["vocal_stretch"]   # Song-2 fields untouched
     assert w["a1_grid"].downbeats[0] == 0.0              # rebased grid
+
+
+def _late_drop_grid(track_secs: float = 240.0) -> TrackAnalysis:
+    # low energy early, a clear low->high rise near the end (a real, late main drop)
+    downs = [round(2.0 * i, 3) for i in range(int(track_secs // 2) + 1)]
+    energy = [0.2] * len(downs)
+    for i, d in enumerate(downs):
+        if d >= 196.0:
+            energy[i] = 0.9
+    return TrackAnalysis(song_id="beat", status="ready", bpm=120.0,
+                         beats=[round(1.0 * i, 3) for i in range(int(track_secs) + 1)],
+                         downbeats=downs, phrase_starts=downs[::8], energy_curve=energy,
+                         sections=[Section(start=0.0, end=track_secs, label="verse")],
+                         vocal_regions=[])
+
+
+def _compatible_vocal_song() -> TrackAnalysis:
+    return TrackAnalysis(song_id="voc", status="ready", bpm=120.0,
+                         beats=[round(0.5 * i, 3) for i in range(480)],
+                         downbeats=[round(2.0 * i, 3) for i in range(120)],
+                         vocal_regions=[(20.0, 60.0), (120.0, 150.0)])
+
+
+def test_main_drop_survives_windowing():
+    """The drop choose_window anchors on must still be present in windowed_options's recomputed
+    drops -- otherwise the hook it was chosen for no longer lands on a drop after the crop."""
+    a1 = _late_drop_grid()
+    a2 = _compatible_vocal_song()
+    opts = fence.arrangement_options(a1, a2)
+    assert opts["mixable"]
+    win = choose_window(opts["a1_grid"], opts["drops"])
+    assert win is not None
+    w = windowed_options(opts, *win)
+    assert w["drops"]                                             # the payoff drop survived the crop
+    assert any(d >= w["track_end"] * 0.5 for d in w["drops"])      # and sits in the LATE portion
+
+
+def test_choose_window_handles_drop_near_end():
+    """A drop within a few seconds of the track's end must never crash or return an
+    inverted/empty window -- either a valid (possibly clamped) window, or a clean None."""
+    a = _grid()                                   # 120s track
+    drop = a.beats[-1] - 4.0                      # a drop just before the very end
+    win = choose_window(a, [drop])
+    if win is not None:
+        start, end = win
+        assert start < end
+        assert end <= a.beats[-1] + 1e-6
+        assert 60.0 <= end - start <= 120.0 + 1e-6
+        assert drop - start >= 16.0 - 1e-6         # real run-up preserved, even this close to the end

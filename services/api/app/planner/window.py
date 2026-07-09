@@ -22,8 +22,10 @@ def window_analysis(a1: TrackAnalysis, win_start: float, win_end: float) -> Trac
     def shift(times: list[float]) -> list[float]:
         return [round(t - win_start, 4) for t in times if lo <= t <= hi]
 
-    kept = [i for i, d in enumerate(a1.downbeats) if lo <= d <= hi]
-    energy = [a1.energy_curve[i] for i in kept if i < len(a1.energy_curve)]
+    n_energy = len(a1.energy_curve)
+    kept = [i for i, d in enumerate(a1.downbeats)
+            if lo <= d <= hi and (n_energy == 0 or i < n_energy)]
+    energy = [a1.energy_curve[i] for i in kept] if n_energy else []
     sections = [
         s.model_copy(update={"start": round(max(s.start, win_start) - win_start, 4),
                              "end": round(min(s.end, win_end) - win_start, 4)})
