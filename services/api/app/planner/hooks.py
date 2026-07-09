@@ -1,0 +1,28 @@
+"""Per-song HOOK markers for the curated catalog — the signature line to land on the drop.
+
+The app can't hear audio, so *which* vocal slice is "the hook" (the recognizable payoff a DJ drops
+on) is a per-song judgment, not something the loudness/energy math can find (it kept grabbing the
+wrong bit). For the small curated catalog we mark it ONCE — the slice is read off the song's own
+section map (which chorus holds the hook) plus knowledge of the song, then confirmed by ear — keyed
+by the song's content id. A song with no entry falls back to the old loudest-peak pick, so this is
+purely additive.
+
+Each value is (start_secs, end_secs): the sung stretch that contains the hook. The planner lands it
+on the strongest anchor (the drop) and uses the other vocal parts for the setup entries.
+"""
+from __future__ import annotations
+
+HOOKS: dict[str, tuple[float, float]] = {
+    # Dil Ye Bekarar Kyun Hai (Players) — "Dil ye bekaraar kyun hai" — first chorus section (35.5-56.9)
+    "73431441fb8cae90e084ca78b18c213fe7c58d7a51cfa39b786c9eceac0a9e5e": (35.5, 56.9),
+    # Jee Karda (Badlapur) — "Jee karda!" — first chorus section (55.0-68.7)
+    "2294a71524d7b0041a8f1c01f198a1e2ac4af4d1d1d39a6ac6f6ea695d7a6195": (55.0, 68.7),
+    # Maula Mere Maula (Anwar) — "Aankhein teri kitni haseen" — verse after the opening refrain
+    # (28.9-51.9). BEST GUESS from the section map — confirm/adjust by ear.
+    "6608cb4849db314c28a26843adcb94558afebe833020af010a7d8cb8f69d7fcb": (28.9, 51.9),
+}
+
+
+def hook_for(song_id: str) -> tuple[float, float] | None:
+    """The signature-hook slice to land on the drop for this vocal song, or None (fall back)."""
+    return HOOKS.get(song_id)

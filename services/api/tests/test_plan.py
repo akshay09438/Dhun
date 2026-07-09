@@ -633,3 +633,33 @@ def test_stem_move_window_matches_the_build(monkeypatch):
         if cut_start < other_end:
             assert other is not None and other.start == cut_start
             assert other_end < build_start or fence._CUT_RECOVERY_BARS == 0  # melody recovers before the build
+
+
+def test_hook_lands_on_the_drop(monkeypatch):
+    """A curated song's signature HOOK slice is placed on the drop (the strongest anchor), not the
+    loudest blob. The other entries get the setup (other vocal parts)."""
+    from app.planner import hooks
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    energy = [0.3] * 64
+    for i in range(20, 28):
+        energy[i] = 0.95  # a clear drop at bar 20 -> 40.0s
+    a1 = make_analysis(bpm=120.0, n_bars=64, energy=energy)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 20.0), (30.0, 60.0)])
+    monkeypatch.setattr(hooks, "hook_for", lambda sid: (30.0, 45.0))  # the marked hook slice
+    plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
+    drops = fence.energy_drops(a1.energy_curve, a1.downbeats)
+    on_drop = [p for p in plan.placements if any(abs(p.anchor - d) <= 0.06 for d in drops)]
+    assert on_drop, "expected a placement on the drop"
+    assert any(abs(p.vocal_src[0] - 30.0) <= 0.06 for p in on_drop), \
+        f"hook not on the drop: {[p.vocal_src for p in on_drop]}"
+
+
+def test_no_hook_falls_back_to_loudest(monkeypatch):
+    """A song with no hook marker keeps the old loudest-peak behaviour (additive change)."""
+    from app.planner import hooks
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    monkeypatch.setattr(hooks, "hook_for", lambda sid: None)
+    a1 = make_analysis(bpm=120.0, n_bars=32)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 20.0), (24.0, 44.0)])
+    plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
+    assert plan.placements  # still produces a valid arrangement

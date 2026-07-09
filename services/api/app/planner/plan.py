@@ -15,7 +15,7 @@ import json
 import os
 
 from app.models import MixPlan, Placement, TrackAnalysis
-from app.planner import fence, llm
+from app.planner import fence, hooks, llm
 
 _MAX_PLACEMENTS = 3
 _ENTRY_MARGIN = 1.0  # secs of beat-only breathing room between one vocal's end and the next entry
@@ -199,7 +199,8 @@ def _default_arrangement(opts: dict, take: int) -> list[Placement]:
     drops = opts.get("drops", [])
     stretch = opts["vocal_stretch"]
     if len(anchors_ranked) < 2:
-        return [Placement(anchor=anchors_ranked[0] if anchors_ranked else 0.0, vocal_src=peaks[0])]
+        return [Placement(anchor=anchors_ranked[0] if anchors_ranked else 0.0,
+                          vocal_src=opts.get("hook") or peaks[0])]
 
     n = min(_MAX_PLACEMENTS, len(anchors_ranked))
     chosen = fence.synced_anchors(anchors_ranked, drops, opts["track_end"], count=n, take=take)  # drop-aware arc
@@ -214,7 +215,17 @@ def _default_arrangement(opts: dict, take: int) -> list[Placement]:
         except ValueError:
             return (0, -10_000)
     by_strength = sorted(range(len(chosen)), key=lambda i: _strength(chosen[i]), reverse=True)
-    slice_for = {idx: peaks[(rank + take - 1) % len(peaks)] for rank, idx in enumerate(by_strength)}
+    hook = opts.get("hook")
+    if hook:
+        # Land the signature HOOK on the strongest anchor (the drop); the other entries get the SETUP
+        # — the song's other vocal parts, never the hook again, rotated by `take` for regenerate variety.
+        drop_idx = by_strength[0]
+        setup = [p for p in peaks if p != hook] or peaks
+        slice_for = {drop_idx: hook}
+        for rank, idx in enumerate(by_strength[1:]):
+            slice_for[idx] = setup[(rank + take - 1) % len(setup)]
+    else:
+        slice_for = {idx: peaks[(rank + take - 1) % len(peaks)] for rank, idx in enumerate(by_strength)}
 
     placements: list[Placement] = []
     for i, anc in enumerate(chosen):
@@ -331,6 +342,8 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     opts = fence.arrangement_options(a1, a2)
     if not opts["mixable"]:
         raise MixDeclined(opts["reason"])
+    # The signature HOOK to land on the drop (curated per song; None -> fall back to loudest peak).
+    opts["hook"] = hooks.hook_for(a2.song_id)
     # Plan against the (possibly retimed) grid the movable master chose — warp, flourishes and
     # drops all key off Song 1's downbeats, which move when the house bed is stretched. a1g is
     # a1 on the native path (bed_stretch == 1.0), so nothing changes for today's pairs.
