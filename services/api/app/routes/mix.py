@@ -99,7 +99,13 @@ _S1_STEMS = ("drums", "bass", "other")
 #        (render._chop_pattern) re-fires the hook onset over that entry's FIRST bar ("dum-da-ra-dum").
 #        Replaces bar 1 only, so the placement's length — and the referee's overlap math — are
 #        unchanged; validate.py UNTOUCHED. A plan with no chop flag renders as before.
-ENGINE_VERSION = "m5n.0"
+# m5o.0: PHRASING — every change lands on the phrase grid. Vocal entries + drops snap to the 8-bar
+#        grid (fence.energy_drops / plan._default_arrangement, via fence.snap_to_phrase; ties round up
+#        to the upcoming turn); the auto beat moves beat-up + breakdown snap to the 4-bar grid
+#        (fence._best_energy_window). The drop's build + cut ramps are gradual fades into the already-
+#        8-bar-aligned slam, so left as-is. Planner-only; render.py/validate.py UNCHANGED (phrase
+#        lines are downbeats, already accepted by R3). Re-renders differ where a change was mid-phrase.
+ENGINE_VERSION = "m5o.0"
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.

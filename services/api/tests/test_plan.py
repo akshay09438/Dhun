@@ -651,3 +651,26 @@ def test_vocal_anchors_land_on_8bar_phrase_lines(monkeypatch):
     phrase = a1.downbeats[::8]
     assert plan.placements
     assert all(any(abs(p.anchor - ps) <= 0.06 for ps in phrase) for p in plan.placements)
+
+
+def test_phrasing_all_entries_8bar_and_beat_moves_4bar(monkeypatch):
+    """Integration guard: every vocal entry lands on the 8-bar grid, and the phrase-level beat moves
+    (beat-up / breakdown) land on the 4-bar grid. The drop's gradual cut ramps are not grid-bound."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    energy = [0.3] * 96
+    for i in range(26, 34):
+        energy[i] = 0.95   # a drop on a non-phrase bar
+    for i in range(58, 66):
+        energy[i] = 0.9
+    a1 = make_analysis(bpm=120.0, n_bars=96, energy=energy)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 20.0), (40.0, 70.0)])
+    plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
+    assert plan.placements
+    eight = a1.downbeats[::8]
+    for p in plan.placements:
+        assert any(abs(p.anchor - ps) <= 0.06 for ps in eight), f"anchor {p.anchor} off the 8-bar grid"
+    four = a1.downbeats[::4]
+    for m in getattr(plan, "stem_moves", []):
+        if m.gain_to in (fence._BEAT_UP_TARGET, fence._BREAKDOWN_FLOOR):  # a phrase-level beat move
+            for t in (m.start, m.end):
+                assert any(abs(t - d) <= 0.06 for d in four), f"{m.stem} beat-move edge {t} off the 4-bar grid"
