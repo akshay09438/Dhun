@@ -45,11 +45,15 @@ Returns the nearest downbeat that is on the n-bar grid (n=8 → an 8-bar phrase 
 | ---------------------------------- | ----- | ----------------------------------------------------------------------------------- |
 | Vocal entry anchors                | 8-bar | `energy_drops` → `synced_anchors` → `_default_arrangement`; AI path already aligned |
 | The drop moment (placement anchor) | 8-bar | anchor snap (item 1/2)                                                              |
-| "Drop to just the beat" cut window | 4-bar | `stem_moves_for_drops` (cut_start / other_end)                                      |
 | Beat-up window                     | 4-bar | `_best_energy_window` via `beat_up_moves`                                           |
 | Breakdown window                   | 4-bar | `_best_energy_window` via `breakdown_moves`                                         |
 
-**Not snapped (deliberately):** the produced-drop **build** (the multi-bar filter/volume climb) is a _gradual ramp_ rendered in `render.py` (a dangerous file) that leads INTO the drop anchor. A ramp is not an abrupt change, and the abrupt moment — the drop/slam at the anchor — is already 8-bar-aligned. So we align the anchor and leave the ramp, which keeps the whole change on safe surfaces (no `render.py` touch). Same audible result: nothing lands abruptly mid-phrase.
+**Not snapped (deliberately) — the gradual ramps:** two moves are *gradual fades into an already-aligned hard edge*, so they need no snapping:
+
+1. The produced-drop **build** (the multi-bar filter/volume climb, rendered in `render.py`) ramps up INTO the drop anchor.
+2. The **"drop to just the beat" cut** (`stem_moves_for_drops`) ramps the bass and melody *down* — a genuine decline, per the standing "lower, never cut" rule — with its only hard change being the bass **slam at the anchor**.
+
+In both, the abrupt moment is the drop/slam at the anchor, which is already 8-bar-aligned (item 1/2). The ramps themselves are not abrupt, so aligning their starts to the 4-bar grid buys nothing audible and, for the 2-bar cut, would collapse it under the grid. Leaving them also keeps the change off `render.py`. Same result: nothing lands abruptly mid-phrase.
 
 ### The phrase-wins rule (founder-approved)
 
@@ -61,10 +65,8 @@ Snapping `energy_drops` upstream propagates through `synced_anchors` and `_defau
 
 1. `fence.energy_drops` — snap each returned drop to the nearest 8-bar phrase start.
 2. `fence.synced_anchors` / `plan._default_arrangement` — ensure the final `Placement.anchor` is on the 8-bar grid (inherited once #1 lands; add a guaranteed re-snap).
-3. **The "drop to just the beat" CUT window** (`fence.stem_moves_for_drops` — the `cut_start` and melody `other_end` boundaries): snap to the **4-bar grid**. The bass move already ends at the drop anchor (8-bar); only its start (`cut_start`) and the melody move's edges need the 4-bar snap. After snapping, re-apply the existing clamps (never before the previous vocal's end; start < end) — if a snap collapses the window, fall back to the current unsnapped behavior.
-4. **Beat-up and breakdown windows** (`fence._best_energy_window` via `beat_up_moves` / `breakdown_moves`): only consider windows whose start downbeat is on the **4-bar grid** (index a multiple of 4). Since the widths are 4 and 8 bars, both edges then land on the 4-bar grid — so the duck AND the return (the beat kicking back in) sit on phrase lines.
-5. **The produced-drop build ramp is left as-is** (see "Not snapped" above) — no `render.py` change.
-6. **Keep every move window valid after snapping:** start < end, never reach back over a prior vocal (the existing clamps stay; snapping happens before/within them). If a snap would collapse or invalidate a window, fall back to that move's current (unsnapped) behavior rather than dropping it.
+3. **Beat-up and breakdown windows** (`fence._best_energy_window` via `beat_up_moves` / `breakdown_moves`): only consider windows whose start downbeat is on the **4-bar grid** (index a multiple of 4). Since the widths are 4 and 8 bars, both edges then land on the 4-bar grid — so the duck AND the return (the beat kicking back in) sit on phrase lines.
+4. **The produced-drop build ramp and the drop's cut ramps are left as-is** (see "Not snapped" above) — gradual fades into the already-8-bar-aligned slam; no `render.py` change and no `stem_moves_for_drops` snapping.
 
 ### Safe surface
 
