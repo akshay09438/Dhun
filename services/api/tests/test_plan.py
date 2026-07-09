@@ -663,3 +663,45 @@ def test_no_hook_falls_back_to_loudest(monkeypatch):
     a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 20.0), (24.0, 44.0)])
     plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
     assert plan.placements  # still produces a valid arrangement
+
+
+from app.models import Section, TrackAnalysis
+from app.planner import plan as planmod
+
+
+def _beat_song(track_secs=240.0):
+    downs = [round(2.0 * i, 3) for i in range(int(track_secs // 2) + 1)]
+    # energy low early, a clear high onset near ~200s (the main drop), so a window exists
+    energy = [0.2] * len(downs)
+    for i, d in enumerate(downs):
+        if d >= 196.0:
+            energy[i] = 0.9
+    return TrackAnalysis(song_id="beat", status="ready", bpm=120.0, bpm_confidence=0.9,
+                         beats=[round(1.0 * i, 3) for i in range(int(track_secs) + 1)],
+                         downbeats=downs, phrase_starts=downs[::8], energy_curve=energy,
+                         sections=[Section(start=0.0, end=track_secs, label="verse")],
+                         vocal_regions=[])
+
+
+def _vocal_song():
+    return TrackAnalysis(song_id="voc", status="ready", bpm=120.0, bpm_confidence=0.9,
+                         beats=[round(0.5 * i, 3) for i in range(480)],
+                         downbeats=[round(2.0 * i, 3) for i in range(120)],
+                         vocal_regions=[(20.0, 60.0), (120.0, 150.0)])
+
+
+def test_build_mix_plan_windows_a_long_song(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)     # force the deterministic path
+    p = planmod.build_mix_plan("m1", _beat_song(240.0), _vocal_song())
+    assert p.window is not None
+    ws, we = p.window
+    assert 60.0 <= we - ws <= 120.0                            # ~90s good part, not 4 minutes
+    assert all(pl.anchor <= (we - ws) + 1e-6 for pl in p.placements)  # window-relative anchors
+
+
+def test_build_mix_plan_falls_back_full_track_without_a_drop(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    flat = _beat_song(240.0)
+    flat = flat.model_copy(update={"energy_curve": [0.2] * len(flat.downbeats)})  # no drop
+    p = planmod.build_mix_plan("m2", flat, _vocal_song())
+    assert p.window is None                                    # today's full-track behaviour

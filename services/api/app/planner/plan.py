@@ -15,7 +15,7 @@ import json
 import os
 
 from app.models import MixPlan, Placement, TrackAnalysis
-from app.planner import fence, hooks, llm
+from app.planner import fence, hooks, llm, window
 
 _MAX_PLACEMENTS = 3
 _ENTRY_MARGIN = 1.0  # secs of beat-only breathing room between one vocal's end and the next entry
@@ -349,6 +349,15 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     # a1 on the native path (bed_stretch == 1.0), so nothing changes for today's pairs.
     a1g = opts.get("a1_grid", a1)
 
+    # Good-parts window: build the mix on the beat's best ~90s (the run-up into its main drop)
+    # instead of the whole track. Only on a confident grid with a real drop; else keep the full
+    # track (today's behaviour). windowed_options re-grids the menu onto the 0-based window, so the
+    # entire arrangement below runs unchanged on the window.
+    window_span = window.choose_window(a1g, opts.get("drops", [])) if _confident(a1g) else None
+    if window_span:
+        opts = window.windowed_options(opts, *window_span)
+        a1g = opts["a1_grid"]
+
     placements = _ai_arrange(opts, prompt, take)
     source = "ai" if placements else "rules"
     if not placements:
@@ -397,6 +406,7 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         bed_stretch=opts.get("bed_stretch", 1.0),  # movable master: how much Song 1's bed is stretched
         vocal_src=first.vocal_src, anchor=first.anchor,  # scalar mirrors first (M3 back-compat)
         placements=placements, s1_vocal_regions=s1_regions, stem_moves=stem_moves, take=take,
+        window=window_span,
         notes=_describe_arrangement(placements, s1_regions),
         confidence=0.75 if source == "ai" else 0.6, source=source,
     )
