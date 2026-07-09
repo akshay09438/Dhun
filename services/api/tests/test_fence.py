@@ -452,7 +452,10 @@ def test_energy_drops_finds_two_drops_across_a_breakdown():
     energy = [0.25] * 4 + [0.9] * 6 + [0.2] * 6 + [0.95] * 6
     downbeats = [round(i * 2.0, 3) for i in range(len(energy))]
     drops = fence.energy_drops(energy, downbeats)
-    assert drops == [downbeats[4], downbeats[16]]
+    # Phrasing: the two onsets (bar 4, bar 16) snap to 8-bar phrase lines. Bar 4 is midway between
+    # lines 0 and 8, so it rounds UP to bar 8 (the upcoming turn, never back to the song start); bar
+    # 16 is already a phrase line. Two distinct drops, both phrase-aligned.
+    assert drops == [downbeats[8], downbeats[16]]
 
 
 def test_energy_drops_ignores_an_energetic_intro_with_no_rise():
@@ -744,3 +747,13 @@ def test_snap_to_phrase_4bar_grid():
 
 def test_snap_to_phrase_empty_grid_returns_input():
     assert fence.snap_to_phrase(5.0, [], 8) == 5.0
+
+
+def test_energy_drops_land_on_phrase_lines():
+    energy = [0.2] * 32
+    for i in range(10, 16):
+        energy[i] = 0.9  # a rise starting at bar 10 (a NON-phrase downbeat, 20.0s)
+    a = make_analysis(bpm=120.0, n_bars=32, energy=energy)
+    drops = fence.energy_drops(a.energy_curve, a.downbeats)
+    phrase = a.downbeats[::8]
+    assert drops and all(d in phrase for d in drops)  # snapped to an 8-bar line

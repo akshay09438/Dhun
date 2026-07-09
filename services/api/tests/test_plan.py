@@ -89,7 +89,10 @@ def test_regenerate_yields_a_different_arrangement(monkeypatch):
     t1 = planner.build_mix_plan("m" * 64, a1, a2, take=1)
     t2 = planner.build_mix_plan("m" * 64, a1, a2, take=2)
 
-    assert [p.anchor for p in t1.placements] != [p.anchor for p in t2.placements]
+    # A different take must yield a genuinely different arrangement. With phrasing, anchors are
+    # locked to the 8-bar grid (so two takes can share phrase lines), so the variety shows up in the
+    # placements as a whole — a different anchor OR different vocal content at a spot.
+    assert [(p.anchor, p.vocal_src) for p in t1.placements] != [(p.anchor, p.vocal_src) for p in t2.placements]
 
 
 def test_regenerate_varies_vocal_content_not_just_anchor(monkeypatch):
@@ -633,3 +636,18 @@ def test_stem_move_window_matches_the_build(monkeypatch):
         if cut_start < other_end:
             assert other is not None and other.start == cut_start
             assert other_end < build_start or fence._CUT_RECOVERY_BARS == 0  # melody recovers before the build
+
+
+def test_vocal_anchors_land_on_8bar_phrase_lines(monkeypatch):
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)  # force rules path
+    energy = [0.3] * 96
+    for i in range(26, 34):
+        energy[i] = 0.95   # a drop starting on a non-phrase bar (26)
+    for i in range(66, 74):
+        energy[i] = 0.98
+    a1 = make_analysis(bpm=120.0, n_bars=96, energy=energy)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 20.0), (40.0, 70.0)])
+    plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
+    phrase = a1.downbeats[::8]
+    assert plan.placements
+    assert all(any(abs(p.anchor - ps) <= 0.06 for ps in phrase) for p in plan.placements)

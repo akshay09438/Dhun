@@ -64,7 +64,9 @@ def snap_to_phrase(t: float, downbeats: list[float], bars: int) -> float:
     grid = downbeats[::bars] if bars > 0 else downbeats
     if not grid:
         return t
-    return min(grid, key=lambda d: abs(d - t))
+    # Nearest grid line; on an exact tie prefer the LATER line (round half up) so a drop midway
+    # between two phrase lines resolves to the upcoming turn — never backward to the song's start.
+    return min(grid, key=lambda d: (abs(d - t), -d))
 
 
 def best_stretch(master_bpm: float, source_bpm: float) -> tuple[float, bool]:
@@ -341,7 +343,14 @@ def energy_drops(energy_curve: list[float], downbeats: list[float],
         if rose and not in_drop:
             drops.append(downbeats[i])
         in_drop = True
-    return drops
+    # Phrasing: a drop IS the turn of phrase, so pin each to the nearest 8-bar phrase line (phrase
+    # wins over a slightly-off detected downbeat). Dedupe drops that snap to the same line.
+    snapped: list[float] = []
+    for d in drops:
+        s = snap_to_phrase(d, downbeats, _BARS_PER_PHRASE)
+        if s not in snapped:
+            snapped.append(s)
+    return snapped
 
 
 def synced_anchors(anchors_ranked: list[float], drops: list[float], track_end: float,

@@ -203,6 +203,10 @@ def _default_arrangement(opts: dict, take: int) -> list[Placement]:
 
     n = min(_MAX_PLACEMENTS, len(anchors_ranked))
     chosen = fence.synced_anchors(anchors_ranked, drops, opts["track_end"], count=n, take=take)  # drop-aware arc
+    # Phrasing belt-and-suspenders: guarantee every anchor sits on an 8-bar phrase line, even on the
+    # thin-analysis fallback path where synced_anchors could return a raw downbeat.
+    _db = opts["a1_grid"].downbeats
+    chosen = sorted({fence.snap_to_phrase(t, _db, fence._BARS_PER_PHRASE) for t in chosen})
     # Pair Song 2's loudest peak onto the strongest anchor (a real drop beats a mere loud phrase),
     # rotating the pairing by `take` so regenerate pulls different vocal content (R1 + variety).
     drops_set = set(drops)
