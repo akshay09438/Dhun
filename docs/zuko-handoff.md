@@ -4,43 +4,47 @@ _The single source of truth for "where things stand" between sessions. `/handoff
 
 ## Last updated
 
-2026-07-10 (**Hook-on-drop BUILT + founder-confirmed; phrasing tried & reverted; master mix-recipe written. Next: make the mixes "less plain" — root cause diagnosed, not yet built**). All work on branch **`feat/house-bollywood-energy-sync`**, **NOT merged to main**. Everything committed + pushed. Suite green: **302 backend + 39 web, typecheck clean** (re-run fresh at handoff).
+2026-07-09 (**TWO big features landed to near-complete: (1) GOOD-PARTS WINDOW — done + in the app, founder-ear-confirmed; (2) MULTI-SONG SETS — stitcher engine done + unlimited chaining proven, app-wiring pending. Plus a drop-detection fix + per-take VARIATION, both ear-confirmed.**) All work on branch **`feat/house-bollywood-energy-sync`**, **NOT merged to main** (~140 commits ahead). Everything committed + pushed. Suite green: **332 backend + 39 web, typecheck clean** (re-run fresh at handoff).
 
 ## Where things stand (one breath)
 
-This was a long, iterative "DJ-judgment" session, all validated by the founder's ear on the real Anchor Point / Bollywood pairs (their benchmark: these pairs have great real YouTube remixes). Landed: **hook-on-drop** — the drop now plays each song's **signature line** (not the loudest blob), marked per-song in `app/planner/hooks.py`, founder-confirmed. Along the way, two things were tried and rejected: **phrasing** (snap every change to a fixed 8/4-bar grid) was BUILT then **REVERTED** — it pulled vocals 1–3 bars off the real drop; and **strip-the-beat's-vocal** was **rejected** — the founder confirmed the natural fade-underneath hand-off is correct, not clutter. Also wrote the **master mix-recipe** ([docs/mix-recipe.md](mix-recipe.md)) — one plain-English rulebook for how a mix is made. The founder's **#1 open quality gap: the mixes feel "too plain"** — and we measured exactly why (see "Do first").
+This session built the founder's two headline features. **Good-parts window** (the "part-songs" idea): every mix is now the beat's best **~90 seconds** — a window anchored on the main drop, starting on a low-density **cue point**, building up to the drop with the **hook on the loudest drop**, then a **wind-down outro**. It's live in the app's normal mix flow (not just direct renders) and founder-ear-confirmed (v4). **Multi-song sets**: a new stitcher (`workers/set_render.py`) joins any number of mashups with wind-down→cue-in crossfade transitions — the engine is done, tested, and **unlimited chaining is proven** (a 3-mashup demo), but the app screen/API around it is NOT built yet. Along the way, two founder ear-notes were fixed: the **main-drop ranking** (Father Ocean's 3:56 drop was being buried by phrase-averaging — now ranked by the hit) and **variation** (each take lands on a different strong drop — "never the same mix").
 
-## In flight
+## In flight — done vs left
 
-- **Nothing is half-built.** Everything is committed, pushed, and green. No dangerous surface is mid-edit.
-- **The "too plain" fix is DIAGNOSED but NOT started** — this is the agreed next build (see below).
-- Engine version bumped **m5n.0 → m5o.0** for hook-on-drop (the reverted phrasing briefly used m5o.0 but never shipped).
+- **Nothing is half-built or red.** Everything committed, pushed, green. No dangerous surface mid-edit.
+- **Good-parts window: DONE + IN THE APP.** `plan.build_mix_plan` windows the mix; `render.render_mix` crops the bed to `plan.window` (with a fail-loud guard); `validate.validate_plan` re-derives the windowed grid so windowed plans validate. The two dangerous-surface edits (`workers/render.py`, `services/api/app/planner/validate.py`) were adversarially reviewed SAFE + founder-confirmed (`.zuko/approve.js`) + applied this session.
+- **Multi-song sets: ENGINE DONE, APP-WIRING LEFT.** `workers/set_render.py::assemble_set(mix_wavs, out, xfade_secs=4.0)` — equal-power crossfade join, peak/clip-safe, any number of mixes (7 tests; 3-mashup demo rendered). **Left:** a `/set` API (render each pair → assemble), a **set-builder screen** (queue mixes in order, "Make my set", play, export). Design: [docs/superpowers/specs/2026-07-09-multi-song-sets-design.md](superpowers/specs/2026-07-09-multi-song-sets-design.md). **Unlimited chaining is supported** (the "~2-4" in the design was only a testing suggestion — no code cap).
+- **Variation: ENGINE DONE, APP-DEFAULT + LOCK LEFT.** `window.choose_window(a1, drops, take)` rotates the window across the genuinely-strong drops by `take`; vocal-slice variety already keyed off `take`. Regenerate already varies in the app. **Left:** make the **first** play fresh by default (app currently calls take=1), and a **"keep / lock this one"** button + persistence (founder decision: always-fresh + a lock for keepers).
+- **Drop-intensity fix: DONE.** `window._drop_intensity` ranks a drop by post-onset energy (the hit), not the phrase average that buried dramatic drops. Father Ocean 3:56 went 0.37 → 0.885.
 
 ## Do first next session
 
-**Build the "less plain" fix: scale the number of vocal entries to the song's length.** Root cause (measured this session): the app always places a **fixed 3 vocal entries** (`plan._MAX_PLACEMENTS = 3`) regardless of song length. On a SHORT song (Adore You, 3.5 min) 3 entries fill it (gaps ~1 min → founder loved it); on LONG songs the same 3 entries leave huge empty stretches — **Anchor Point (5.8 min) → 1.9-min gaps; Innerbloom (9.2 min) → 3.0-min gaps of just beat, no vocal** → the "plain" feeling. **Fix:** place a vocal moment roughly **every ~60–75s** (more entries for longer songs) so the vocal keeps weaving back in like Adore You; hook still on the drops, other parts in between. Safe surface (`plan.py`/`fence.py`; the referee already guards one-voice-at-a-time). Founder agreed this is the next build.
+The founder chose **"pause + handoff"** here. On resume, recommended order (founder-agreed direction):
 
-**Then / bigger:** the fuzzier half of "too plain" — **vocal "play"/production** (roughen/energize the vocal to match the beat, e.g. Maula Mere's soft voice). This **brushes the non-goals** (autotune / style-transfer are out; light DSP energy/EQ may be in) — **scope it with the founder before building.**
+1. **Variation in the app** (small): first play fresh by default + the "keep/lock this one" button. NOTE: variation changed the DEFAULT take — the founder-loved Anchor Point v4 window (3:55 drop) is now `take=2`, not `take=1` (take=1 is the 1:24 drop). Expected; the lock lets them freeze a favorite.
+2. **The set-builder** (big): `/set` API + the screen (queue mixes, "Make my set", play, export). The stitcher already exists.
+3. **Polish** (pre-existing M6): loudness mastering + short 15–30s clip export.
+4. **Drive the RUNNING app end-to-end** to confirm in-app "Make my mix" produces the good windowed mixes with no surprises (verified via renders + tests this session, NOT yet by clicking through the live app).
+5. The **~50 real-creator validation test**.
 
 ## Verification evidence (which checks ran, what they returned)
 
-- **Ran fresh at this handoff:** `services/api` → `.venv/Scripts/python -m pytest -q` → **302 passed in ~23s**. Root → `npm run typecheck` → **clean (tsc --noEmit)**. Root → `npm test` → **web green (39; unchanged — no web files touched this session)**. `git status` → **clean**; HEAD after doc commit.
-- **Hook-on-drop verified on the REAL pairs (local/cached, no cloud cost):** the drop placement's `vocal_src` starts exactly on the marked hook — 05 Dil Ye Bekarar → 42.0s ("Dil ye bekaraar kyun hai"), 10 Maula Mere → 28.9s ("Aankhein teri kitni haseen"); `validate_plan`/`validate_render` CLEAN. Founder ear-confirmed all marked hooks. New "(new Anchor Point x …)" renders are in `Desktop/DJAI SONGS`.
-- **"Too plain" root cause measured:** entry counts + gaps — Adore You 3.5min/3-entries/max-gap 1.3min; Anchor Point 5.8min/3/1.9min; Innerbloom 9.2min/3/3.0min; Father Ocean 7.9min/3/2.9min.
-- **Phrasing revert confirmed:** `snap_to_phrase` gone; 300→302 suite green after revert + hook-on-drop.
+- **Ran fresh at handoff:** `services/api` → `.venv/Scripts/python -m pytest -q` → **332 passed** (~42s). Root → `npm run typecheck` → **clean (tsc --noEmit)**. Root → `npm test` → **39 passed (7 files)**. `git status` clean; all pushed to `origin/feat/house-bollywood-energy-sync`.
+- **Founder ear-confirmed (real cached pairs, no cloud cost):** good-parts v4 (Anchor Point × Maula Mere — hook on main drop + wind-down ending); variation take 2 (Father Ocean × Der Lagi, 3:56 drop) — "the perfect one"; the 2-mashup and 3-mashup sets (transitions "pretty well"). Renders in `Desktop/DJAI SONGS`.
+- **Drop fix verified on real data:** Father Ocean drops by hit — 6:17 (0.891), 3:56 (0.885), 1:02 (0.885), 7:20 (0.796); take 1→6:17, take 2→3:56, take 3→1:02.
 
 ## Open escalations
 
-- **⚠️ RE-VERIFY BEFORE MERGE (carried forward, unchanged): the pre-existing R1 relaxation is still NOT cleanly adversarially cleared.** `validate.py` R1 allows a bounded hand-off overlap (Song 1's tail ≤ `LEAD_XFADE_SECS`=1.2s past Song 2's entry) without an engine-guaranteed fade. A fresh adversarial pass MUST run before this branch merges to main. Untouched this session.
-- **Vocal chop still PARKED** (`plan._flag_chop_on_biggest_drop` commented out); machinery + tests dormant. Revive only if it grabs a punchy syllable, not the raw first slice.
-- **Hooks are keyed by song_id (content hash)** in `app/planner/hooks.py`. If a song is re-normalized/re-ingested and its hash changes, its hook mark won't match — re-key it. To add a song's hook: read its section map, mark the chorus slice, confirm by ear. Current marks: Dil Ye Bekarar 42.0, Jee Karda 55.0, Maula Mere 28.9 (all founder-confirmed).
-- **Anchor Point × Jee Karda pairing dropped** (founder: doesn't work). Jee Karda's hook kept for other pairings.
-- **Branch not merged; `main` behind.** Merge needs the R1 re-verify + lock CORS in `config.py` to the real origin if deploying.
-- **Data cache present** at `services/api/data/` (gitignored) — all catalog songs' stems+analyses cached, so re-renders are FREE. Source MP3s in `song-dropbox/`. (Earlier this session I mistakenly checked the wrong path; the cache is at `services/api/data/`, not root `data/`.)
-- **Environment truths (unchanged):** Windows-ARM can't run PyTorch locally — split/analyze via Replicate; local DSP is FFmpeg + numpy/scipy.
+- **⚠️ RE-VERIFY BEFORE MERGE — this session's two dangerous-surface edits.** `workers/render.py` (window bed-crop + fail-loud guard) and `services/api/app/planner/validate.py` (windowed-grid re-derivation) were adversarially reviewed **SAFE** and founder-confirmed this session — but per protocol those verdicts are CLAIMS; run a fresh adversarial pass before merging to main.
+- **⚠️ Pre-existing, carried forward, UNCHANGED (block merge to main):** (a) the R1 relaxation in `validate.py` (Song-1 tail ≤ `LEAD_XFADE_SECS` overlap) is still NOT cleanly adversarially cleared; (b) lock **CORS** in `config.py` to the real origin before deploy.
+- **Branch ~140 commits ahead of main; `gh` CLI NOT installed here.** Open the PR via GitHub web: https://github.com/akshay09438/Dhun/compare/main...feat/house-bollywood-energy-sync?expand=1
+- **Key-compatibility is informational, NOT a blocker** (corrected this session — an earlier claim that it "auto-rejected" pairs was wrong; the app only declines on TEMPO). `camelot_fit` ±2 flags Anchor Point 8A × Maula Mere 5A as incompatible, but the pair builds and sounds fine. Optional future tweak; not a bug.
+- **Data cache** at `services/api/data/` (gitignored) — all catalog stems + analyses cached, re-renders FREE. Source MP3s in `song-dropbox/`. **Name ↔ content-hash map** (song_id = sha256 of the normalized WAV): Anchor Point=`2c17fc64`, Father Ocean=`ac59f8c4`, Innerbloom=`2471e18e`, Dooriyan=`c4b28366`, Maula Mere=`6608cb48`, Der Lagi=`bbab7b9f`, Don't Start Now=`c0c6ab91`, Tere Bina=`6ad69035`, Jee Karda=`2294a715`, Dil Ye Bekarar=`73431441`.
+- **Windows filename gotcha:** no `>` in filenames (the `->` in a set filename failed to write).
 
 ## How to run the app
 
 **Local dev:** backend `.venv/Scripts/python -m uvicorn app.main:app --port 8000` (from `services/api`), web `npm run dev` (from root), open http://localhost:5173.
-**Founder ear-test loop (no cloud cost — cache is present):** render the real pair via the deterministic pipeline (`os.environ.pop("ANTHROPIC_API_KEY")` forces the free rules path; `build_mix_plan` → `render_mix`), open from the Desktop under a **fresh distinct filename** (same-name overwrites get served from the OS/OneDrive cache — always name new renders distinctly, e.g. "new … .wav", per the founder's request). The scratchpad has reusable render scripts (`render_hooks.py`, `goodnight_batch.py`). Engine now at **`m5o.0`**.
+**Founder ear-test loop (no cloud cost — cache present):** `os.environ.pop("ANTHROPIC_API_KEY")` (forces the free rules path), `build_mix_plan(a1, a2, take=N)` → `render_mix(plan, {drums/bass/other/vocals}, song2_vocal, out)`. For a SET: render each pair's WAV, then `set_render.assemble_set([wav1, wav2, ...], out, xfade_secs=4.0)`. Save to `Desktop/DJAI SONGS` under a **fresh distinct filename** (same-name overwrites serve from the OS/OneDrive cache). Analysis JSON in `data/` is missing the `status` field — inject `status="ready"` when loading via `TrackAnalysis.model_validate`.
 **Where mixes are saved:** `C:\Users\Akshay\OneDrive\Desktop\DJAI SONGS`.
