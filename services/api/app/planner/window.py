@@ -99,3 +99,26 @@ def choose_window(a1: TrackAnalysis, drops: list[float]) -> tuple[float, float] 
     win_start = min(cues, key=lambda p: (round(_phrase_energy_at(a1, p), 3),
                                          abs((win_end - p) - _TARGET_SECS)))
     return (round(win_start, 3), round(win_end, 3))
+
+
+def windowed_options(opts: dict, win_start: float, win_end: float) -> dict:
+    """Re-derive the arrangement menu on the windowed grid, keeping every Song-2/tempo field.
+
+    The whole downstream engine (plan.build_mix_plan) reads these opts + a1_grid, so recomputing
+    just the grid-derived fields on the 0-based windowed grid makes the existing arrangement run
+    on the window with no other change.
+    """
+    from app.planner import fence  # local import: window.py <- plan.py <- fence.py cycle guard
+
+    a1w = window_analysis(opts["a1_grid"], win_start, win_end)
+    need = min(e - s for s, e in opts["vocal_slices"]) * opts["vocal_stretch"]
+    anchors = fence.candidate_drops(a1w, need)
+    track_end = a1w.beats[-1] if a1w.beats else (max(anchors) + need if anchors else need)
+    return {
+        **opts,
+        "a1_grid": a1w,
+        "anchors_ranked": anchors,
+        "drops": fence.energy_drops(a1w.energy_curve, a1w.downbeats),
+        "track_end": track_end,
+        "sections": [(s.start, s.label) for s in a1w.sections],
+    }

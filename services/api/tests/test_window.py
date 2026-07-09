@@ -83,3 +83,23 @@ def test_choose_window_starts_on_the_low_density_cue_point():
     start, end = win
     assert start == 112.0                    # starts on the breakdown cue, not a louder phrase
     assert 60.0 <= end - start <= 120.0
+
+
+from app.planner import fence
+from app.planner.window import windowed_options
+
+
+def test_windowed_options_regrids_onto_the_window():
+    a1 = _grid()
+    a2 = TrackAnalysis(song_id="v", status="ready", bpm=120.0,
+                       beats=[round(0.5 * i, 3) for i in range(240)],
+                       downbeats=[round(2.0 * i, 3) for i in range(60)],
+                       vocal_regions=[(4.0, 30.0)])
+    opts = fence.arrangement_options(a1, a2)
+    assert opts["mixable"]
+    w = windowed_options(opts, 40.0, 100.0)
+    assert w["track_end"] <= 60.0 + 1e-6                 # canvas is the 60s window, not 120s
+    assert all(0.0 <= x <= 60.0 + 1e-6 for x in w["anchors_ranked"])
+    assert all(0.0 <= d <= 60.0 + 1e-6 for d in w["drops"])
+    assert w["vocal_stretch"] == opts["vocal_stretch"]   # Song-2 fields untouched
+    assert w["a1_grid"].downbeats[0] == 0.0              # rebased grid
