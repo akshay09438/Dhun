@@ -76,3 +76,12 @@ def test_stem_moves_are_additive_and_default_empty():
     old = ('{"mix_id":"m","song1_id":"a","song2_id":"b","master_bpm":120.0,'
            '"vocal_stretch":1.0,"vocal_src":[16.0,40.0],"anchor":16.0}')
     assert MixPlan.model_validate_json(old).stem_moves == []
+
+
+def test_mixplan_window_defaults_none_and_roundtrips():
+    base = dict(mix_id="m", song1_id="a", song2_id="b", master_bpm=122.0,
+                vocal_stretch=1.0, vocal_src=(0.0, 8.0), anchor=4.0)
+    assert MixPlan(**base).window is None                      # additive default
+    p = MixPlan(**base, window=(30.0, 120.0))
+    assert p.window == (30.0, 120.0)
+    assert MixPlan.model_validate(p.model_dump()).window == (30.0, 120.0)  # JSON round-trip

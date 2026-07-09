@@ -124,6 +124,7 @@ class MixPlan(BaseModel):
     notes: str = ""  # DJ-language explanation of the move
     confidence: float = 0.0
     source: str = "rules"  # "ai" | "rules" — which brain picked it (honesty/debug)
+    window: tuple[float, float] | None = None  # good-parts: Song-1 retimed-grid span the bed is cropped to; None = full track
 
 
 class Mix(BaseModel):
