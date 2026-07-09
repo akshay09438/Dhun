@@ -196,23 +196,26 @@ def test_declines_when_unmixable():
     assert "tempo" in str(exc.value).lower()
 
 
-def test_long_song_vocal_spans_the_whole_song(monkeypatch):
-    """The arc fix: on a long song with its loud sections in the middle, the vocal must
-    still reach the first half AND the final third — not clump in the middle (the
-    founder's actual complaint on a 7-minute song)."""
+def test_long_song_vocal_spans_its_good_part_window(monkeypatch):
+    """The arc fix, now at WINDOW scale. A long song with a real mid-song drop is cropped to its
+    ~90s good-part window (founder decision 2026-07-09: tighter, best-parts mixes replace the old
+    'span the whole 4+ minutes' behaviour). Within that window the vocal must STILL reach the first
+    half AND the final third — the anti-clustering guarantee holds, just on the window not the full
+    track."""
     monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)  # deterministic
     energy = [0.3] * 128
-    for i in range(56, 72):  # loudest sections are in the middle — the clustering trap
+    for i in range(56, 72):  # loud sections mid-song — a real drop, so the song gets windowed
         energy[i] = 0.9
     a1 = make_analysis(bpm=120.0, n_bars=128, energy=energy)  # ~256s (~4.3 min)
     a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 30.0), (40.0, 70.0)])
 
     plan = planner.build_mix_plan("m" * 64, a1, a2)
 
-    track_end = a1.beats[-1]
-    anchors = [p.anchor for p in plan.placements]
-    assert min(anchors) <= track_end / 2       # a vocal in the first half (no empty start)
-    assert max(anchors) >= track_end * 2 / 3    # a strong entry in the final third
+    assert plan.window is not None              # a long song with a drop is cropped to its good part
+    win_len = plan.window[1] - plan.window[0]
+    anchors = [p.anchor for p in plan.placements]  # window-relative (start at 0)
+    assert min(anchors) <= win_len / 2          # a vocal in the first half of the window (no empty start)
+    assert max(anchors) >= win_len * 2 / 3      # a strong entry in the window's final third
 
 
 def test_clustered_ai_arrangement_is_spread_by_the_guard(monkeypatch):
