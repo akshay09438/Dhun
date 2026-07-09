@@ -736,6 +736,8 @@ def _best_energy_window(a1: TrackAnalysis, placements, s1_regions: list[tuple[fl
         # the downbeat indices that fall inside this gap (with a little slack for float rounding)
         idxs = [i for i, d in enumerate(downbeats) if gap_start - 1e-6 <= d <= gap_end + 1e-6]
         for j in range(len(idxs) - bars):  # every bars-wide window that stays fully inside the gap
+            if idxs[j] % _BARS_PER_SUBPHRASE != 0:  # phrasing: window start must sit on the 4-bar grid
+                continue
             start_i, end_i = idxs[j], idxs[j + bars]
             start, end = downbeats[start_i], downbeats[end_i]
             if overlaps(start, end):

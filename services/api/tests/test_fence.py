@@ -640,14 +640,14 @@ def test_beat_up_finds_the_loudest_window_anywhere_in_a_gap():
     # across the whole gap to find it, not just check the ends.
     a1 = make_analysis(bpm=120.0, n_bars=64)  # downbeats every 2.0s, 0..126
     energy = [0.3] * 64
-    for i in range(6, 10):  # bars 12-18s — well inside the gap [6.0, 40.0], nowhere near either edge
+    for i in range(8, 12):  # bars 16-22s — mid-gap AND on the 4-bar grid (bar index 8)
         energy[i] = 0.9
     a1.energy_curve = energy
-    placements = [Placement(anchor=2.0, vocal_src=(0.0, 4.0)),    # ends 6.0 -> gap A: [6.0, 40.0]
+    placements = [Placement(anchor=2.0, vocal_src=(0.0, 4.0)),    # ends ~6.0 -> gap A: [6.0, 40.0]
                   Placement(anchor=40.0, vocal_src=(0.0, 4.0))]   # ends 44.0 -> gap B: [44.0, track_end]
     moves = fence.beat_up_moves(a1, placements, [], [])
     assert len(moves) == 1
-    assert moves[0].start == 12.0 and moves[0].end == 20.0  # exactly the loud stretch, mid-gap
+    assert moves[0].start == 16.0 and moves[0].end == 24.0  # the loud stretch, mid-gap, 4-bar-aligned
 
 
 def test_beat_up_clamped_away_from_song1s_own_vocal():
@@ -660,12 +660,12 @@ def test_beat_up_clamped_away_from_song1s_own_vocal():
 def test_beat_up_shifts_away_from_a_partial_song1_vocal_block():
     # A block that covers only PART of the gap must not suppress beat-up entirely — the search finds
     # a valid window elsewhere in the same gap instead.
-    a1 = make_analysis(bpm=120.0, n_bars=32)  # downbeats 0,2,...,62.0
-    placements = [Placement(anchor=10.0, vocal_src=(0.0, 4.0))]  # gap [14.0, 63.5]
+    a1 = make_analysis(bpm=120.0, n_bars=48)  # downbeats 0,2,...,94.0 — a long tail after the block
+    placements = [Placement(anchor=10.0, vocal_src=(0.0, 4.0))]  # gap [~14.0, track_end]
     s1_regions = [(14.0, 50.0)]  # blocks the first part of the gap, leaves the tail clear
     moves = fence.beat_up_moves(a1, placements, s1_regions, [])
     assert len(moves) == 1
-    assert moves[0].start >= 50.0  # landed clear of the blocked span
+    assert moves[0].start >= 50.0  # landed clear of the blocked span, on the 4-bar grid
 
 
 def test_beat_up_clamped_away_from_an_existing_stem_move():
@@ -757,3 +757,16 @@ def test_energy_drops_land_on_phrase_lines():
     drops = fence.energy_drops(a.energy_curve, a.downbeats)
     phrase = a.downbeats[::8]
     assert drops and all(d in phrase for d in drops)  # snapped to an 8-bar line
+
+
+def test_best_energy_window_starts_on_4bar_grid():
+    # one loud 4-bar run STARTING at a non-grid bar (index 9) must be rejected for a 4-grid start
+    energy = [0.5] * 48
+    for i in range(9, 13):
+        energy[i] = 0.99
+    a = make_analysis(bpm=120.0, n_bars=48, energy=energy)
+    lead = Placement(anchor=a.downbeats[2], vocal_src=(0.0, 3.0))  # a placement early, leaving a big gap after
+    win = fence._best_energy_window(a, [lead], [], [], 1.0, 4, 0.3)
+    assert win is not None
+    start_i = a.downbeats.index(win[0])
+    assert start_i % fence._BARS_PER_SUBPHRASE == 0
