@@ -20,6 +20,8 @@ from app.planner import fence, hooks, llm, window
 _MAX_PLACEMENTS = 3
 _ENTRY_MARGIN = 1.0  # secs of beat-only breathing room between one vocal's end and the next entry
 _WINDOW_STEP = 8.0  # ~a phrase; min spare room in a region worth sliding the vocal window for regenerate variety
+_OUTRO_SECS = 12.0  # good-parts: beat runway kept AFTER the last vocal ends, so the windowed mix winds
+                    # DOWN into an outro (a downward hand-off point) instead of stopping on the hook
 
 _ARRANGE_SYSTEM = (
     "You are a DJ arranging Song 2's vocal over Song 1's (house) beat. ENERGY SYNC is the goal: "
@@ -207,13 +209,23 @@ def _default_arrangement(opts: dict, take: int) -> list[Placement]:
     # Pair Song 2's loudest peak onto the strongest anchor (a real drop beats a mere loud phrase),
     # rotating the pairing by `take` so regenerate pulls different vocal content (R1 + variety).
     drops_set = set(drops)
-    def _strength(t: float) -> tuple[int, int]:
+    a1g = opts.get("a1_grid")
+    def _drop_energy(t: float) -> float:
+        """Energy at drop `t` on the (windowed) grid — so the LOUDEST drop is picked, not just any."""
+        if not (a1g and a1g.downbeats and a1g.energy_curve):
+            return 0.0
+        i = min(range(len(a1g.downbeats)), key=lambda k: abs(a1g.downbeats[k] - t))
+        return a1g.energy_curve[i] if i < len(a1g.energy_curve) else 0.0
+    def _strength(t: float) -> tuple[float, float]:
         if t in drops_set:
-            return (1, 0)  # a real drop is the strongest place to land the peak
+            # A real drop wins; among several drops the LOUDEST (the MAIN drop the window is built
+            # around) wins the hook — founder ear-test 2026-07-09: the signature line must land on the
+            # big beat drop, not merely the first drop in time.
+            return (1.0, _drop_energy(t))
         try:
-            return (0, -anchors_ranked.index(t))  # else louder = earlier in the energy-ranked list
+            return (0.0, float(-anchors_ranked.index(t)))  # else louder = earlier in the energy-ranked list
         except ValueError:
-            return (0, -10_000)
+            return (0.0, -10_000.0)
     by_strength = sorted(range(len(chosen)), key=lambda i: _strength(chosen[i]), reverse=True)
     hook = opts.get("hook")
     if hook:
@@ -348,6 +360,7 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     # drops all key off Song 1's downbeats, which move when the house bed is stretched. a1g is
     # a1 on the native path (bed_stretch == 1.0), so nothing changes for today's pairs.
     a1g = opts.get("a1_grid", a1)
+    full_end = a1g.beats[-1] if a1g.beats else 0.0  # pre-window track end (abs), to clamp the outro extension
 
     # Good-parts window: build the mix on the beat's best ~90s (the run-up into its main drop)
     # instead of the whole track. Only on a confident grid with a real drop; else keep the full
@@ -399,6 +412,18 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         # and tested, so reviving is a one-line change — but only after the chop grabs a punchy syllable
         # instead of the raw first slice (see the drift log, 17th/18th entries).
         # _flag_chop_on_biggest_drop(placements, a1g)  # <- re-enable here to revive
+
+    # Good-parts ending: extend the beat past the last vocal so the windowed mix winds DOWN into a
+    # short outro (a downward hand-off / transition point) instead of stopping on the hook. The extra
+    # beat is plain Song-1 audio after the arrangement, clamped to the real track end. window-relative
+    # placements are unchanged; only plan.window (the render's bed crop) grows. (Founder ear-test 2026-07-09.)
+    if window_span and placements:
+        ws, we = window_span
+        last_end = max(fence.placement_end(p.anchor, p.vocal_src, opts["vocal_stretch"], getattr(p, "warp", None))
+                       for p in placements)
+        we = max(we, min(ws + last_end + _OUTRO_SECS, full_end))  # never shrink; never past the real track
+        window_span = (round(ws, 3), round(we, 3))
+
     first = placements[0]
     return MixPlan(
         mix_id=mix_id, song1_id=a1.song_id, song2_id=a2.song_id,

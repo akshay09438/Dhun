@@ -212,10 +212,37 @@ def test_long_song_vocal_spans_its_good_part_window(monkeypatch):
     plan = planner.build_mix_plan("m" * 64, a1, a2)
 
     assert plan.window is not None              # a long song with a drop is cropped to its good part
-    win_len = plan.window[1] - plan.window[0]
-    anchors = [p.anchor for p in plan.placements]  # window-relative (start at 0)
-    assert min(anchors) <= win_len / 2          # a vocal in the first half of the window (no empty start)
-    assert max(anchors) >= win_len * 2 / 3      # a strong entry in the window's final third
+    anchors = sorted(p.anchor for p in plan.placements)  # window-relative (start at 0)
+    assert anchors[0] <= 40.0                   # a vocal enters early (no long empty intro)
+    assert anchors[-1] - anchors[0] >= 40.0     # ...and the vocal spans a real stretch, not clustered
+
+
+def test_hook_lands_on_the_loudest_drop():
+    """The signature HOOK must land on the LOUDEST drop (the MAIN drop the window is built around),
+    not merely the first drop in time. Founder ear-test 2026-07-09: 'aankhein teri kitni haseen' has
+    to hit the big beat drop. Tested directly on the arranger with two drops of different energy."""
+    from app.models import Section, TrackAnalysis
+
+    downs = [round(2.0 * i, 3) for i in range(61)]   # a downbeat every 2s, 0..120s
+    energy = [0.3] * 61
+    energy[25] = 0.6                                  # a MODERATE drop at ~50s
+    energy[45] = 0.95                                 # the LOUDEST drop at ~90s
+    a1g = TrackAnalysis(song_id="beat", status="ready", bpm=120.0,
+                        beats=[round(1.0 * i, 3) for i in range(121)], downbeats=downs,
+                        phrase_starts=downs[::8], energy_curve=energy,
+                        sections=[Section(start=0.0, end=120.0, label="verse")])
+    opts = {
+        "anchors_ranked": [10.0, 50.0, 90.0], "drops": [50.0, 90.0],
+        "vocal_slices": [(0.0, 20.0), (40.0, 60.0)], "vocal_peaks": [(0.0, 20.0), (40.0, 60.0)],
+        "vocal_stretch": 1.0, "hook": (10.0, 30.0), "track_end": 120.0,
+        "a1_grid": a1g, "master_bpm": 120.0,
+    }
+
+    placements = planner._default_arrangement(opts, take=1)
+
+    hookp = [p for p in placements if abs(p.vocal_src[0] - 10.0) < 0.6]  # the entry carrying the hook slice
+    assert hookp, "the hook slice was not placed"
+    assert hookp[0].anchor == 90.0                                       # the loudest drop, not the 50s one
 
 
 def test_clustered_ai_arrangement_is_spread_by_the_guard(monkeypatch):

@@ -49,7 +49,8 @@ def window_analysis(a1: TrackAnalysis, win_start: float, win_end: float) -> Trac
 _TARGET_SECS = 90.0      # the window we aim for
 _MIN_SECS = 60.0         # ...flexible down to here
 _MAX_SECS = 120.0        # ...and up to here
-_TAIL_SECS = 12.0        # how long the window rings on AFTER the main drop (the resolve)
+_TAIL_SECS = 30.0        # beat time AFTER the main drop — long enough for the hook that lands ON the
+                         # drop to keep playing OVER the beat (not sing on over silence), plus a resolve
 _MIN_RUNUP_SECS = 16.0   # need at least this much build-up before the drop, else no window
 
 
