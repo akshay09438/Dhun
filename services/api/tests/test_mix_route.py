@@ -148,7 +148,7 @@ def test_mix_rejects_bad_song_id(tmp_path, monkeypatch):
 
 def test_engine_version_is_current():
     # bumped when the engine/plan changes so a stale cached mix is never served
-    assert mix_route.ENGINE_VERSION == "m6.0"  # Phase 0 Slice 1: rules-by-default + camelot log + chain-hash cache
+    assert mix_route.ENGINE_VERSION == "m6.1"  # m6.1: section map dropped from the decision path (planner change)
 
 
 def test_mix_id_folds_the_chain_config_hash(monkeypatch):

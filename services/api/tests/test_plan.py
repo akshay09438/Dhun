@@ -294,6 +294,59 @@ def test_regenerate_varies_vocal_window_from_a_single_region(monkeypatch):
     assert starts1 != starts2  # a different chunk of the region, not the same start every take
 
 
+def test_section_labels_do_not_affect_a_populated_regions_plan(monkeypatch):
+    """B.2 evidence (2026-07-10): with vocal_regions populated (every catalog song), the RULES plan is
+    IDENTICAL whether the analysis carries accurate section labels, garbage labels, or none — proving
+    the ~23%-precise section map is out of the drop / hook / vocal-slice decision path."""
+    from app.models import Section
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    energy = [0.3] * 48
+    for i in range(40, 48):
+        energy[i] = 0.95  # a real energy drop the plan should find (from ENERGY, not a label)
+    a1 = make_analysis(bpm=120.0, n_bars=48, energy=energy)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 16.0), (24.0, 44.0)])
+    base = planner.build_mix_plan("x" * 64, a1, a2, take=1)
+    # the SAME pair, but both songs carry GARBAGE section labels spanning the whole track
+    a1g = a1.model_copy(update={"sections": [Section(start=0.0, end=999.0, label="chorus")]})
+    a2g = a2.model_copy(update={"sections": [Section(start=0.0, end=999.0, label="drop")]})
+    garbled = planner.build_mix_plan("x" * 64, a1g, a2g, take=1)
+    assert [(p.anchor, p.vocal_src) for p in base.placements] == \
+           [(p.anchor, p.vocal_src) for p in garbled.placements]
+    assert base.stem_moves == garbled.stem_moves and base.s1_vocal_regions == garbled.s1_vocal_regions
+
+
+# Deliberately baselined 2026-07-10 (section map dropped): verified via
+# test_section_labels_do_not_affect_a_populated_regions_plan that this plan comes from ENERGY (the
+# drop at bars 40-47) + vocal_regions, not section labels. Re-baseline ONLY after diffing + eyeballing.
+_GATE_B_PLAN_SIG = "b55f68d228c0294b"
+
+
+def test_gate_b_plan_determinism_on_a_fixed_analysis(monkeypatch):
+    """GATE B — plan determinism GIVEN A FIXED ANALYSIS (complements Gate A = render determinism, in
+    test_render.py). A planner or analyzer change is SUPPOSED to break this: re-baseline DELIBERATELY
+    — diff the old plan against the new, eyeball that the drops sit where the energy actually jumps —
+    never blind-update the signature."""
+    import hashlib
+    import json
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    energy = [0.3] * 48
+    for i in range(36, 40):
+        energy[i] = 0.2
+    for i in range(40, 48):
+        energy[i] = 0.95
+    a1 = make_analysis(bpm=120.0, n_bars=48, energy=energy)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 16.0), (24.0, 44.0)])
+    plan = planner.build_mix_plan("g" * 64, a1, a2, take=1)
+    sig = hashlib.sha256(json.dumps({
+        "placements": [(round(p.anchor, 3), list(p.vocal_src), p.beat_breath, getattr(p, "build_bars", 0))
+                       for p in plan.placements],
+        "stem_moves": [(m.stem, round(m.start, 3), round(m.end, 3), m.gain_from, m.gain_to)
+                       for m in plan.stem_moves],
+        "s1_vocal_regions": [list(r) for r in plan.s1_vocal_regions], "source": plan.source,
+    }).encode()).hexdigest()[:16]
+    assert sig == _GATE_B_PLAN_SIG, f"plan changed vs the pinned baseline — RE-BASELINE DELIBERATELY: {sig}"
+
+
 def test_declines_when_unmixable():
     a1 = make_analysis(bpm=120.0)
     a2 = make_analysis(bpm=150.0, vocal_regions=[(16.0, 40.0)])

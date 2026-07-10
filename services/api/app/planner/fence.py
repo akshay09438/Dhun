@@ -206,15 +206,16 @@ def best_vocal_slice(a2: TrackAnalysis) -> tuple[float, float]:
     regions = [(s, e) for s, e in a2.vocal_regions if e - s >= MIN_VOCAL_SECS]
     if regions:
         start, end = max(regions, key=lambda r: r[1] - r[0])
+    elif a2.beats:
+        # No detected vocal regions -> the track's middle third. The section map is NO LONGER consulted
+        # here (dropped from the decision path 2026-07-10): its drop labels were measured ~23% precise
+        # and UNCORRELATED with energy clarity (the sharpest-drop song scored 0.00), so it added false
+        # confidence, not information. vocal_regions is the trusted signal (11% blob rate; populated on
+        # every catalog song), so this fallback fires on no real song today.
+        span = a2.beats[-1]
+        start, end = span / 3, span / 3 + MAX_VOCAL_SECS
     else:
-        chorus = [s for s in a2.sections if s.label.lower() in ("chorus", "drop")]
-        if chorus:
-            start, end = chorus[0].start, chorus[0].end
-        elif a2.beats:
-            span = a2.beats[-1]
-            start, end = span / 3, span / 3 + MAX_VOCAL_SECS
-        else:
-            start, end = 0.0, MAX_VOCAL_SECS
+        start, end = 0.0, MAX_VOCAL_SECS
     return _snap_and_cap(a2, start, end)  # single source of truth for snap-to-downbeat + cap
 
 
@@ -359,29 +360,19 @@ def legal_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
     }
 
 
-_SUNG_LABELS = {"verse", "chorus", "prechorus", "pre-chorus", "bridge", "solo", "hook"}
-
-
 def vocal_slices(a2: TrackAnalysis, limit: int = 4) -> list[tuple[float, float]]:
     """Song 2's strongest sung stretches — longest first, snapped to a downbeat, each
-    capped to MAX_VOCAL_SECS.
+    capped to MAX_VOCAL_SECS. When vocal-region detection came up empty, falls back to one
+    best-guess slice (`best_vocal_slice`).
 
-    Falls back to the song's own labelled sections (verse/chorus/bridge/solo — never
-    an intro/outro/instrumental) when vocal-region detection came up empty, which real
-    analyses do surprisingly often (confirmed on 3 of the 4 real catalog vocal tracks).
-    Without this, every placement — and every regenerate take — reused the exact same
-    single fallback slice, since there was nothing else to choose from. Only when BOTH
-    are unavailable does this fall back to one best-guess slice."""
+    NOTE (2026-07-10): the section-map fallback here was REMOVED — the section labels are ~23%
+    precise and uncorrelated with anything usable (diagnostic A.1), so consulting them added false
+    confidence. vocal_regions is the trusted signal (populated on every catalog song), so this only
+    reaches the best-guess fallback when the vocal stem produced no regions at all (no catalog song)."""
     regions = sorted(
         ((s, e) for s, e in a2.vocal_regions if e - s >= MIN_VOCAL_SECS),
         key=lambda r: r[1] - r[0], reverse=True,
     )[:limit]
-    if not regions:
-        regions = sorted(
-            ((s.start, s.end) for s in a2.sections
-             if s.label.lower() in _SUNG_LABELS and s.end - s.start >= MIN_VOCAL_SECS),
-            key=lambda r: r[1] - r[0], reverse=True,
-        )[:limit]
     if not regions:
         return [best_vocal_slice(a2)]
     return [_snap_and_cap(a2, s, e) for s, e in regions]
@@ -456,13 +447,10 @@ def _region_energy(a2: TrackAnalysis, s: float, e: float) -> float:
 
 def vocal_peaks(a2: TrackAnalysis, limit: int = 4) -> list[tuple[float, float]]:
     """Song 2's most POWERFUL sung stretches — loudest first, snapped to a downbeat and capped.
-    This is what lands on the house drop (recipe R1). Same fallback ladder as `vocal_slices`
-    (labelled sung sections, then a single best-guess slice) when vocal regions are missing —
-    but ranked by loudness (power), not length."""
+    This is what lands on the house drop (recipe R1). Falls back to a single best-guess slice when
+    vocal regions are missing (the section-map fallback was removed 2026-07-10 — see `vocal_slices`).
+    Ranked by loudness (power), not length."""
     regions = [(s, e) for s, e in a2.vocal_regions if e - s >= MIN_VOCAL_SECS]
-    if not regions:
-        regions = [(sec.start, sec.end) for sec in a2.sections
-                   if sec.label.lower() in _SUNG_LABELS and sec.end - sec.start >= MIN_VOCAL_SECS]
     if not regions:
         return [best_vocal_slice(a2)]
     ranked = sorted(regions, key=lambda r: _region_energy(a2, r[0], r[1]), reverse=True)[:limit]
@@ -514,7 +502,11 @@ def arrangement_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
         "vocal_peaks": vocal_peaks(a2),  # Song 2's strongest slices, loudest first (recipe R1)
         "drops": energy_drops(a1g.energy_curve, a1g.downbeats),  # the house track's real drops
         "track_end": track_end,  # the whole song's length, so the arrangement can span it
-        "sections": [(s.start, s.label) for s in a1g.sections],  # Song 1's shape, for the AI
+        # Song 1's section labels — fed ONLY to the DISABLED AI arranger (a future menu-selection seat).
+        # The active RULES decision path does NOT read this: drops are energy-first (`energy_drops`),
+        # hooks are hand-marked, cropping is off. The section map is ~23% precise (diagnostic A.1) and
+        # is deliberately kept out of every drop/hook/crop decision.
+        "sections": [(s.start, s.label) for s in a1g.sections],
     }
 
 

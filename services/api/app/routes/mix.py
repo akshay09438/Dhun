@@ -107,7 +107,13 @@ _S1_STEMS = ("drums", "bass", "other")
 #        gated); and the vocal-chain config hash joins the cache id (mix_id_for) so tuning-week dial
 #        changes invalidate cleanly. Bumped so cached AI-path mixes re-plan on the rules path. Stems +
 #        analysis are keyed by song_id, NOT this version, so the bump triggers ZERO Replicate calls.
-ENGINE_VERSION = "m6.0"
+# m6.1: SECTION MAP dropped from the decision path (diagnostic A.1 — ~23% precise, uncorrelated with
+#        energy clarity). fence.py removes the section-map fallbacks from vocal-slice selection; drops
+#        stay energy-first (already were), hooks hand-marked, cropping off. NOTE: this is a PLANNER
+#        change, so ENGINE_VERSION (the mix cache) is the right lever — NOT LOCAL_ANALYSIS_VERSION (the
+#        analysis output — energy/regions/sections — is UNCHANGED). The removed fallback fires only on
+#        empty vocal_regions (no catalog song), so catalog mixes re-render byte-identical. Zero Replicate.
+ENGINE_VERSION = "m6.1"
 
 # Phase 0 (T1.4): a stable hash of the vocal-chain config, folded into the mix cache id. Default (off)
 # config today; during the tuning week each dial change yields a fresh hash -> a fresh render, so the

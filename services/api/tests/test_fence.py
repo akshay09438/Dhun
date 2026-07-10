@@ -138,10 +138,16 @@ def test_best_vocal_slice_caps_length():
     assert end - start <= fence.MAX_VOCAL_SECS + 1e-6
 
 
-def test_best_vocal_slice_falls_back_to_chorus():
-    a2 = make_analysis(vocal_regions=[], sections=[Section(start=8.0, end=24.0, label="chorus")])
+def test_best_vocal_slice_ignores_sections_falls_back_to_track_middle():
+    """B.2 (2026-07-10): the section-map fallback was REMOVED (diagnostic A.1 — ~23% precise,
+    uncorrelated with anything). With no vocal_regions, `best_vocal_slice` now falls back to the
+    track's MIDDLE THIRD, and does NOT use the labelled chorus section (which it used to grab)."""
+    a2 = make_analysis(n_bars=64, vocal_regions=[],
+                       sections=[Section(start=8.0, end=24.0, label="chorus")])
     start, end = fence.best_vocal_slice(a2)
-    assert start == 8.0 and end == 24.0
+    span = a2.beats[-1]
+    assert abs(start - span / 3) < 2.0          # the middle third, not the chorus at 8-24s
+    assert not (start == 8.0 and end == 24.0)   # the section map is no longer consulted
 
 
 def test_camelot_fit():
@@ -186,24 +192,18 @@ def test_vocal_slices_ranked_and_capped():
     assert len(slices) >= 2 and slices[0][0] == 20.0  # longest first, snapped to a downbeat
 
 
-def test_vocal_slices_falls_back_to_sections_when_regions_missing():
-    """Real analyses sometimes detect ZERO vocal_regions even on a song that clearly has
-    sung sections (confirmed on 3 of the 4 real catalog vocal tracks). Without this
-    fallback, `vocal_slices` returned a single slice (`best_vocal_slice`'s one chorus),
-    so every placement AND every regenerate reused the exact same short vocal excerpt —
-    the real "vocals are always short and never unique" complaint."""
+def test_vocal_slices_ignores_sections_when_regions_missing():
+    """B.2 (2026-07-10): the section-map fallback was REMOVED (diagnostic A.1). With zero
+    vocal_regions, `vocal_slices` now returns a single best-guess slice (`best_vocal_slice`'s track
+    middle) and does NOT mine the labelled sections. (This fallback fires on no catalog song —
+    vocal_regions is populated everywhere; the m5c.1 empty-regions trap was fixed at ingest.)"""
     a2 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[], sections=[
-        Section(start=4.0, end=20.0, label="intro"),   # not sung — must be excluded
         Section(start=20.0, end=36.0, label="verse"),
         Section(start=36.0, end=52.0, label="chorus"),
         Section(start=52.0, end=68.0, label="chorus"),
-        Section(start=68.0, end=84.0, label="bridge"),
-        Section(start=84.0, end=90.0, label="outro"),  # not sung — must be excluded
     ])
     slices = fence.vocal_slices(a2)
-    assert len(slices) >= 3  # multiple real candidates, not a single fallback slice
-    starts = {s for s, _ in slices}
-    assert not any(4.0 <= s < 20.0 for s in starts)  # the intro is never offered as vocal
+    assert slices == [fence.best_vocal_slice(a2)]  # one best-guess slice, sections not consulted
 
 
 def test_arrangement_options_happy():
@@ -476,13 +476,13 @@ def test_vocal_peaks_ranks_regions_by_loudness():
     assert peaks[0][0] == 32.0  # the louder region (bars 16..23 -> 32..48s) ranks first
 
 
-def test_vocal_peaks_falls_back_to_sections_when_no_regions():
+def test_vocal_peaks_ignores_sections_when_no_regions():
+    """B.2 (2026-07-10): the section-map fallback was REMOVED. With no vocal_regions, `vocal_peaks`
+    returns a single best-guess slice and does NOT mine labelled sections."""
     a2 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[], sections=[
         Section(start=20.0, end=36.0, label="chorus"),
-        Section(start=4.0, end=20.0, label="intro"),  # never a vocal peak
     ])
-    peaks = fence.vocal_peaks(a2)
-    assert peaks and all(s >= 20.0 for s, _ in peaks)  # the sung section, not the intro
+    assert fence.vocal_peaks(a2) == [fence.best_vocal_slice(a2)]  # sections not consulted
 
 
 def test_synced_anchors_prefers_a_drop_over_a_louder_plateau_in_the_same_band():
