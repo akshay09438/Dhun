@@ -158,6 +158,43 @@ def chain_config_hash(cfg: VocalChainConfig) -> str:
     return hashlib.sha256(cfg.model_dump_json().encode()).hexdigest()[:16]
 
 
+class VocalProcessMove(BaseModel):
+    """A written vocal-processing instruction on the timeline — the renderer OBEYS it, it does
+    not decide (Phase 0 G5). This is the `StemMove` pattern extended to vocal DSP: each dial is
+    anchored to a bar range, so the same instruction a batch renderer runs today a live engine can
+    edit tomorrow (a "more grit" command becomes: raise `saturate_wet` on the moves ahead of the
+    playhead). Empty defaults ⇒ a no-op move (the stage does nothing)."""
+
+    placement_id: str  # which vocal placement this applies to
+    start_bar: int  # anchored to Song 1's grid, like StemMove
+    end_bar: int
+
+    pitch_semitones: float = 0.0
+    deess: float = 0.0
+    highpass_hz: int = 0
+    compress_ratio: float = 1.0
+    saturate_wet: float = 0.0
+    presence_gain_db: float = 0.0
+    reverb_wet: float = 0.0
+
+    # WHY the dial was set — arithmetic (Phase 0), energy-curve (Phase 3), or genre recipe. Not
+    # decoration: cross-adaptive processing later keys off this to know a value's source.
+    reason: str = ""  # e.g. "key_correction: 8A->9A"
+
+
+class DuckMove(BaseModel):
+    """Stage 9 — a BED-side instruction, keyed by the placed vocal (NOT a vocal stage). The bed
+    stems duck under the vocal's presence; runs at mix time, after placement, using the placed
+    vocal as the sidechain key. Only ducks (never boosts) — mirrors the StemMove no-boost rule, so
+    it can never push the master toward clipping (referee P4)."""
+
+    target_stems: list[str] = ["drums", "bass", "other"]
+    key_placement_id: str
+    depth_db: float
+    attack_ms: int
+    release_ms: int
+
+
 class MixPlan(BaseModel):
     """The recipe for one mix — what the brain decided, for the engine to run.
 
@@ -188,6 +225,8 @@ class MixPlan(BaseModel):
     window: tuple[float, float] | None = None  # good-parts: Song-1 retimed-grid span the bed is cropped to; None = full track
     camelot_fit: CamelotFit | None = None  # Phase 0: informational key-fit (logged, never gates the mix)
     chain_config_hash: str = ""  # Phase 0: the vocal-chain config this mix was rendered under (cache + reproducibility)
+    vocal_moves: list[VocalProcessMove] = []  # Phase 0 G5: vocal-processing instructions; [] = today's plain vocal
+    duck_moves: list[DuckMove] = []  # Phase 0 stage 9: bed ducks under the vocal; [] = no ducking (today)
 
 
 class Mix(BaseModel):

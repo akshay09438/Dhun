@@ -726,3 +726,47 @@ def test_breakdown_never_all_muted_by_construction():
                    vocal_stretch=1.0, vocal_src=(0.0, 4.0), anchor=10.0,
                    placements=[Placement(anchor=10.0, vocal_src=(0.0, 4.0))], stem_moves=moves)
     assert not any("mute" in v.lower() for v in validate._stem_move_violations(moves, a1.downbeats))
+
+
+# ---------------------------------------------------------------- Phase 0 pitch repair (Slice 2a)
+
+
+def test_compute_pitch_repair_no_shift_when_already_compatible():
+    from app.models import VocalChainConfig
+    r = fence.compute_pitch_repair(make_analysis(key="8A"), make_analysis(key="8A"), VocalChainConfig())
+    assert isinstance(r, fence.PitchRepair) and r.semitones == 0.0
+
+
+def test_compute_pitch_repair_finds_a_small_fixing_shift():
+    """A same-letter clash is repairable within a couple of semitones; the returned shift genuinely
+    lands the vocal in a key that IS compatible with the bed."""
+    from app.models import VocalChainConfig
+    r = fence.compute_pitch_repair(make_analysis(key="8A"), make_analysis(key="1A"), VocalChainConfig())
+    assert isinstance(r, fence.PitchRepair)
+    assert 0 < abs(r.semitones) <= 2
+    pc, letter = fence._camelot_pc("1A")
+    shifted = fence._pc_to_camelot(int(pc + r.semitones) % 12, letter)
+    assert fence.camelot_fit("8A", shifted)          # the shift really fixes it
+    assert "key_correction" in r.reason
+
+
+def test_compute_pitch_repair_declines_a_cross_letter_clash():
+    """Pitch-shifting can't change major<->minor, so a bed-minor/vocal-major clash whose only
+    compatible landing (the relative) is 6 semitones away is DECLINED (> the ±3 cap)."""
+    from app.models import VocalChainConfig
+    r = fence.compute_pitch_repair(make_analysis(key="8A"), make_analysis(key="2B"), VocalChainConfig())
+    assert isinstance(r, fence.Decline)
+
+
+def test_compute_pitch_repair_is_a_noop_without_a_key():
+    from app.models import VocalChainConfig
+    voc = make_analysis(key="8A")
+    voc.key = None
+    r = fence.compute_pitch_repair(make_analysis(key="8A"), voc, VocalChainConfig())
+    assert isinstance(r, fence.PitchRepair) and r.semitones == 0.0
+
+
+def test_camelot_pitch_class_roundtrips():
+    for code in ("8A", "8B", "9A", "3B", "1A", "12B"):
+        pc, letter = fence._camelot_pc(code)
+        assert fence._pc_to_camelot(pc, letter) == code

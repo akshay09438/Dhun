@@ -121,3 +121,29 @@ def test_camelot_fit_and_chain_hash_are_additive_on_the_plan():
            '"vocal_stretch":1.0,"vocal_src":[16.0,40.0],"anchor":16.0}')
     assert MixPlan.model_validate_json(old).camelot_fit is None
     assert MixPlan.model_validate_json(old).chain_config_hash == ""
+
+
+def test_vocal_process_move_dials_default_to_a_noop():
+    from app.models import VocalProcessMove
+    m = VocalProcessMove(placement_id="p", start_bar=0, end_bar=4)
+    assert m.pitch_semitones == 0.0 and m.saturate_wet == 0.0 and m.reverb_wet == 0.0
+
+
+def test_vocal_and_duck_moves_roundtrip_and_are_additive_on_the_plan():
+    from app.models import DuckMove, VocalProcessMove
+    plan = MixPlan(
+        mix_id="m" * 64, song1_id="a" * 64, song2_id="b" * 64,
+        master_bpm=120.0, vocal_stretch=1.0, vocal_src=(16.0, 40.0), anchor=16.0,
+        vocal_moves=[VocalProcessMove(placement_id="p0", start_bar=8, end_bar=24,
+                                      pitch_semitones=-1.0, saturate_wet=0.3,
+                                      reason="key_correction: 1A->6A")],
+        duck_moves=[DuckMove(key_placement_id="p0", depth_db=1.5, attack_ms=5, release_ms=120)],
+    )
+    r = MixPlan.model_validate_json(plan.model_dump_json())
+    assert r.vocal_moves[0].pitch_semitones == -1.0 and r.vocal_moves[0].saturate_wet == 0.3
+    assert r.duck_moves[0].target_stems == ["drums", "bass", "other"]
+    # an old plan with neither field still parses -> [] (chain off, today's plain vocal)
+    old = ('{"mix_id":"m","song1_id":"a","song2_id":"b","master_bpm":120.0,'
+           '"vocal_stretch":1.0,"vocal_src":[16.0,40.0],"anchor":16.0}')
+    assert MixPlan.model_validate_json(old).vocal_moves == []
+    assert MixPlan.model_validate_json(old).duck_moves == []

@@ -10,7 +10,9 @@ and needs no AI — it is pure, testable arithmetic over the analysis.
 
 from __future__ import annotations
 
-from app.models import CamelotFit, StemMove, TrackAnalysis
+from dataclasses import dataclass
+
+from app.models import CamelotFit, StemMove, TrackAnalysis, VocalChainConfig
 
 # Small stretches sound clean; big ones warble. Song 2's vocal is kept within this band
 # of Song 1's tempo (atempo stays acceptable here); outside it we decline rather than ship
@@ -243,6 +245,78 @@ def camelot_detail(a1: TrackAnalysis, a2: TrackAnalysis) -> CamelotFit:
     c2 = a2.key.camelot if a2.key else None
     compatible = camelot_fit(c1, c2) if (c1 and c2) else None
     return CamelotFit(song1_camelot=c1, song2_camelot=c2, compatible=compatible)
+
+
+@dataclass
+class PitchRepair:
+    """The semitone shift to move Song 2's vocal into key-compatibility with Song 1.
+    `semitones == 0.0` means already compatible (no shift needed)."""
+
+    semitones: float
+    low_confidence: bool = False  # True at ±3 st — allowed, but audibly a stretch (attach pitch_confidence: low)
+    reason: str = ""
+
+
+@dataclass
+class Decline:
+    """The pair can't be key-repaired within the safe pitch band (> the config's cap)."""
+
+    reason: str
+
+
+def _camelot_pc(code: str) -> tuple[int, str] | None:
+    """(tonic pitch-class 0–11, letter) for a Camelot code, or None if unparseable. Reference:
+    8B = C major (pc 0), 8A = A minor (pc 9); +1 Camelot number = +7 semitones (a fifth)."""
+    try:
+        n, letter = _parse_camelot(code)
+    except (ValueError, IndexError):
+        return None
+    if not (1 <= n <= 12) or letter not in ("A", "B"):
+        return None
+    base = 9 if letter == "A" else 0
+    return (base + 7 * (n - 8)) % 12, letter
+
+
+def _pc_to_camelot(pc: int, letter: str) -> str:
+    """Inverse of `_camelot_pc`: the Camelot code for a tonic pitch-class + letter (7⁻¹ ≡ 7 mod 12)."""
+    base = 9 if letter == "A" else 0
+    n0 = (7 * ((pc - base) % 12)) % 12
+    return f"{((n0 + 8 - 1) % 12) + 1}{letter}"
+
+
+def compute_pitch_repair(bed: TrackAnalysis, voc: TrackAnalysis,
+                         cfg: VocalChainConfig) -> PitchRepair | Decline:
+    """Return the semitone shift required to move `voc`'s key into compatibility with `bed`'s key,
+    or a `Decline` if the nearest fix is outside the safe band.
+
+    NOTE (this docstring is load-bearing — do not remove it): this is ARITHMETIC, not judgment. It
+    returns the single mathematically-shortest shift. It does NOT know that pitching DOWN darkens
+    and thickens a voice, and pitching UP brightens and thins it. A shortest-distance shift can be
+    musically correct and emotionally wrong. Treating key as a constraint with several legal
+    solutions — and choosing among them by what the shift does to the vocal's character — is later
+    (Phase 3) work. Do not add that here.
+
+    Safe band (mirrors the tempo stretch band): 0–±2 clean; ±3 allowed but flagged `low_confidence`;
+    beyond the config's `pitch_max_semitones` cap → `Decline`. Written for Slice 2d; NOT called yet.
+    A mode (major/minor) is fixed by pitch-shifting, so a bare pitch shift can only reach same-letter
+    Camelot compatibility — never the relative major/minor (a different letter)."""
+    if not (bed.key and voc.key):
+        return PitchRepair(semitones=0.0, reason="key unknown -> no repair")
+    bed_c, voc_c = bed.key.camelot, voc.key.camelot
+    vpc = _camelot_pc(voc_c)
+    if _camelot_pc(bed_c) is None or vpc is None:
+        return PitchRepair(semitones=0.0, reason="unparseable key -> no repair")
+    pc, letter = vpc
+    cap = int(round(cfg.pitch_max_semitones))
+    for s in sorted(range(-3, 4), key=lambda x: (abs(x), x)):  # nearest first: 0,-1,+1,-2,+2,-3,+3
+        if camelot_fit(bed_c, _pc_to_camelot((pc + s) % 12, letter)):
+            if abs(s) > cap:  # the nearest fix already exceeds this engine's cap -> decline
+                break
+            shifted = _pc_to_camelot((pc + s) % 12, letter)
+            return PitchRepair(
+                semitones=float(s), low_confidence=abs(s) >= 3,
+                reason=(f"key_correction: {voc_c}->{shifted}" if s else "keys already compatible"))
+    return Decline(reason=f"keys clash and can't be pitched into the safe band (> {cap} semitones)")
 
 
 def legal_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:

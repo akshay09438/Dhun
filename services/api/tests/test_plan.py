@@ -174,6 +174,19 @@ def test_camelot_fit_flags_a_clash_but_does_not_gate(monkeypatch):
     assert plan.placements                       # ...but not declined — the mix builds anyway
 
 
+def test_plan_emits_no_vocal_moves_while_the_chain_is_disabled(monkeypatch):
+    """Phase 0 Slice 2a: the vocal-chain ships OFF, so the plan emits no timeline processing
+    instructions — the render stays today's plain vocal (byte-identical), exactly like an empty
+    stem_moves. The instruction machinery exists; it just isn't fired yet."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(16.0, 40.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    assert plan.vocal_moves == [] and plan.duck_moves == []
+
+
 def test_plan_carries_the_chain_config_hash(monkeypatch):
     """Phase 0 T1.4: the plan records the (default, off) vocal-chain config hash for reproducibility."""
     from app.models import VocalChainConfig, chain_config_hash

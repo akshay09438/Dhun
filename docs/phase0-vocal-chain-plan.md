@@ -51,7 +51,9 @@ Resolves the standing #1 product problem immediately; the founder can judge by e
 - **Acceptance (met):** every fresh mix reports `source: "rules"` + `_ai_arrange` never called; `MixPlan.camelot_fit` present + logged; `mix_id` folds the chain hash; suite green; the render is unchanged for a given plan.
 - **Risk:** low. Reversible (flip the flag). No dangerous file.
 
-### Slice 2a — Declarative scaffolding (LIGHT, no dangerous surface, zero behavior change)
+### Slice 2a — Declarative scaffolding (LIGHT, no dangerous surface, zero behavior change) ✅ DONE
+
+✅ **DONE (2026-07-10, 349 backend green).** `VocalProcessMove` + `DuckMove` models + `MixPlan.vocal_moves`/`duck_moves` (default `[]`); `fence.compute_pitch_repair` written-not-called (with the "arithmetic, not taste" docstring); plan emits no moves while disabled → render byte-identical. Emission wiring (which dials each placement gets) intentionally deferred to Slice 2b, where the config is threaded and dials become moves.
 
 Lay the timeline instructions and config, all OFF, so nothing changes yet.
 
