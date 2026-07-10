@@ -4,47 +4,36 @@ _The single source of truth for "where things stand" between sessions. `/handoff
 
 ## Last updated
 
-2026-07-09 (**GOOD-PARTS WINDOW DISABLED — mixes are FULL-SONG again (founder decision, ear-confirmed). Safe surface only: `plan.py` flag `_GOOD_PARTS_WINDOW_ENABLED=False`; `render.py`/`validate.py` UNTOUCHED. Committed + pushed (`1819072`). Also this session: built an isolated EXPERIMENT SANDBOX at `C:\DJ-AI-Experiment`, and wrote a full backend walkthrough doc. Suite green: 332 backend + 39 web, typecheck clean — re-run fresh at handoff.**) All work remains on branch **`feat/house-bollywood-energy-sync`**, **NOT merged to main**.
+2026-07-10 (**PHASE 0 — the vocal chain — is BUILT and shipped DISABLED; the "fix the ears" diagnostic work is DONE. Everything is committed on branch `feat/house-bollywood-energy-sync`, NOT merged to main. Suite: 384 backend green (fresh run at handoff). The founder is in the tuning week — enabling the chain in the `C:\DJ-AI-Experiment` sandbox and turning dials by ear; that is his work, not a code task.**)
 
 ## Where things stand (one breath)
 
-The founder chose **full-song mixes over the ~90s good-parts window**. Prototyped the change in the new sandbox first, the founder ear-confirmed the 4 full-song renders, then it was ported to main: `build_mix_plan` now gates the window on `_GOOD_PARTS_WINDOW_ENABLED = False`, so `window_span` is always `None` and every mix arranges across the whole track. The window machinery (`window.py` + the render/validate window-handling) is **kept dormant + tested** (one-line re-enable), matching the parked-vocal-chop convention — so `render.py`/`validate.py` never had to be touched. The still-open **#1 product decision from last handoff stands: the app should probably DEFAULT to the RULES arrangement path, not the AI path** (the AI arrangement is the one the founder dislikes).
+Phase 0 turned the mixer from a _placement_ engine into a _production_ engine — a nine-stage vocal chain (de-ess → high-pass → pitch → stretch → compress → saturate → presence EQ → reverb → bed-duck) plus referee rules P1–P5, **all shipped OFF** (`VocalChainConfig.enabled=False`). A golden-file gate proves the disabled render is **byte-identical to the pre-Phase-0 `m6.0` baseline** (verified on real audio). Slice 1 also switched the app to the **loved rules arrangement** by default (the disliked AI arranger is gated off). Then, working around the founder's tuning week (different files), a diagnostic pass ("fix the ears") **killed four theories with measurement** and dropped the ~23%-accurate **section map** out of the decision path — the app now decides from measured energy + hand-marked hooks, not a guess.
 
 ## In flight — done vs left
 
-- **Nothing is half-built or red.** The window-disable is committed + pushed (`1819072`), suite green.
-- **Good-parts window: DONE (disabled).** Flag off; full-song mixes; tests updated (`..._uses_the_full_song`, `..._spans_the_full_song`; the validate windowed-plan test flips the flag on to keep the referee's window path covered). Living docs updated (functional-spec, technical-spec, mix-recipe, backend-explained, implementation-plan drift log #26).
-- **Experiment sandbox: DONE.** A lean (1.7 GB) fully-working, **isolated** copy of the project at `C:\DJ-AI-Experiment` (own data folder, no git link to the real repo, off OneDrive), with a Desktop shortcut "DJ-AI-Experiment (sandbox)". Has all 28 songs' cached stems + analyses (re-render free), the venv, and the keys. It excludes the 5 GB of regenerable big WAVs. Verified: 332 tests pass inside it. **The sandbox's `plan.py` is synced to the same window-off flag as main.** Use it for any risky experiment, then "copy back" what works.
-- **Backend walkthrough doc: DONE.** `docs/reference/backend-explained.md` — a plain-but-complete end-to-end explanation of the engine (for a technical helper), with a ranked "where to improve" section.
-- **Phrasing:** confirmed already fully removed (reverted in a prior session; re-verified this session — no action needed).
-- **Carried forward, UNCHANGED:** variation-in-app (first play fresh + keep/lock button); the set-builder API+screen (the shipped `set_render.py` is still a plain crossfade, no beatmatch); loudness master + short-clip export (M6).
+- **Nothing is half-built or red.** Every slice below is committed, tests green, and either shipped-disabled or behaviour-neutral.
+- **Phase 0 Slices 1, 2a, 2b, 2c: DONE, chain shipped DISABLED.** Nine stages + referee P1–P5 built; golden gate green; independent adversarial review returned **SAFE for the disabled ship** (8 attack vectors held). Close-out refinements done: reverb IR L2-normalized (song-independent `reverb_wet`), a **crest-factor mush backstop**, the level/crest guards in a standalone `workers/chain_guards.py`, duck envelope confirmed smoothed. FFmpeg pinned (`8.1.1`, fails loudly on drift). Tuning harness ready: `scripts/tune_chain.py` + `docs/tuning-guide.md`.
+- **The GPL question: DECIDED — keep it.** The FFmpeg build is GPL (`--enable-librubberband`); the founder chose to stay on it (server-side MVP, GPL triggers on distribution not use). Exit plan written in `docs/ffmpeg.md`. Revisit only if on-device rendering ever ships.
+- **"Fix the ears": DONE.** Analysis cache split (cloud by `song_id`, local by `LOCAL_ANALYSIS_VERSION`, zero-cloud proven). Section map **dropped** from the decision path (`ENGINE_VERSION m6.1`) — measured 23% precise, and it was already influencing zero catalog mixes. Gate B added. Diagnostics recorded in the drift log (entries 31–33).
+- **Left / next (all AFTER the founder's tuning week):** flip `enabled=True` (founder decision, in the sandbox first); **Slice 2d** (pitch repair — turn `fence.py` from bouncer to repairman, `compute_pitch_repair` is written-not-called); then the carried-forward M6 (loudness master + short-clip export) and the ~50-creator test.
 
 ## Do first next session
 
-1. **⭐ Product decision (still #1): should the app DEFAULT to the RULES arrangement path?** The app uses the AI arrangement whenever `ANTHROPIC_API_KEY` is set, and that is the arrangement the founder consistently dislikes (the loved mixes are all rules-path; proven by sample-correlation last session). Options: default to rules; fix the AI path; or a toggle.
-2. Whatever the founder wants to try next — **do it in the sandbox first** (that's what it's for), confirm by ear, then port to main.
-3. The carried-forward roadmap: variation-in-app → set-builder → mastering/clip-export → the ~50-creator test.
+1. **Ask the founder where the tuning week landed.** The winning dial positions become the first `bollywood_vocal_over_house` recipe. If he has numbers, wire them as the default `VocalChainConfig` and prep the `enabled=True` flip (in the sandbox first, confirm by ear).
+2. **Before enabling:** the two must-fixes are already built (GPL decided; crest-mush backstop in). Re-confirm the golden gate is green and re-read `docs/tuning-guide.md` (exclude the 3 key-clashing pairs from tuning; keep them as the Slice 2d evidence set).
+3. **Whatever the founder wants next** — do risky/audible work in the `C:\DJ-AI-Experiment` sandbox first, ear-confirm, then port.
 
 ## Verification evidence (which checks ran, what they returned)
 
-- **Ran fresh at handoff:** `services/api` → `.venv/Scripts/python -m pytest -q` → **332 passed** (~52 s). Root → `npm run typecheck` → **clean (tsc --noEmit)**. Root → `npm test` → **39 passed (7 files)**.
-- **Window-off proven on the real engine:** `build_mix_plan` on Father Ocean × Tere Bina (rules path) → `window = None`, 3 placements across the full **472 s** track.
-- **Sandbox proven working + isolated:** 332 tests pass inside `C:\DJ-AI-Experiment`; its `settings.data_dir` resolves to its OWN folder (isolation confirmed); no `.git` (no link to the real repo).
-- **Founder ear-confirmed** the 4 full-song sandbox renders before the main-folder change.
-- `git` clean after commit `1819072`; pushed to `origin/feat/house-bollywood-energy-sync`.
+- **Ran fresh at handoff:** `cd services/api && ./.venv/Scripts/python.exe -m pytest -q` → **384 passed in ~64s.** (Includes: golden gate `test_golden_enabled_false_is_byte_identical_to_m6_0` + determinism; referee P1–P5; chain-guard synthetic tests; ffmpeg-pin; reverb linearity; Gate B; the section-map-out evidence test; the zero-cloud re-analysis test.)
+- **`git status` → clean.** Latest commit `a671c6c` (section map dropped, m6.1). 8 commits this arc, all on `feat/house-bollywood-energy-sync`.
+- **Zero cloud proven** for the engine/analysis bumps (stems/analysis keyed by `song_id`; diagnostics built 56 plans with `replicate.run` rigged to crash — none fired).
+- **Web suite:** not run this session (no web/TS files touched; last known 39 web green).
 
-## Open escalations
+## Open escalations / RE-VERIFY next session (claims, not settled facts)
 
-- **⭐ PRODUCT DECISION (founder): default the app to the RULES arrangement path** (see Do-first #1).
-- **ℹ️ Good-parts window is now DISABLED (dormant flag).** Anyone expecting ~90s "best-part" mixes should know: it's off by default; re-enable = flip `_GOOD_PARTS_WINDOW_ENABLED` to `True` in `plan.py`.
-- **⚠️ Pre-existing, carried forward, UNCHANGED (block merge to main):** (a) the R1 relaxation in `validate.py` (Song-1 tail ≤ `LEAD_XFADE_SECS` overlap) still NOT cleanly adversarially cleared; (b) lock **CORS** in `config.py` to the real origin before deploy. Also re-verify (claims, not facts) the earlier good-parts dangerous-surface edits before merge — though the window being OFF now means `render.py`/`validate.py` run their pre-window paths.
-- **Branch NOT merged to main; `gh` CLI NOT installed here.** PR via web: https://github.com/akshay09438/Dhun/compare/main...feat/house-bollywood-energy-sync?expand=1
-
-## Reference — sandbox, song id map, how to run
-
-- **Experiment sandbox:** `C:\DJ-AI-Experiment` (Desktop shortcut "DJ-AI-Experiment (sandbox)"). Fully isolated, off OneDrive. Run its engine with `C:\DJ-AI-Experiment\services\api\.venv\Scripts\python.exe`. Do risky experiments here; copy back what works.
-- **song_id = sha256 of the normalized WAV.** Cached ids: Anchor Point=`2c17fc64`, Father Ocean=`ac59f8c4`, Innerbloom=`2471e18e`, Dooriyan=`c4b28366`, Maula Mere=`6608cb48`, Der Lagi=`bbab7b9f`, Don't Start Now=`c0c6ab91`, Tere Bina=`6ad69035`, Jee Karda=`2294a715`, Dil Ye Bekarar=`73431441`, Tujhe Bhula Diya=`fedc95c9`, I Adore You=`b8696c4d`, Rapture=`7f0b66c9`, How Deep Is Your Love=`4e246293`.
-- **Data cache** at `services/api/data/` (gitignored) — stems + analyses cached, re-renders FREE. Big source/output WAVs (~5 GB) are regenerable and NOT in the sandbox.
-- **Founder ear-test loop (no cloud cost):** **pop `ANTHROPIC_API_KEY`** → forces the **RULES path, the arrangement the founder likes** (the AI path arranges differently). Then `build_mix_plan(a1, a2, take=N)` → `render_mix(plan, {drums/bass/other/vocals}, song2_vocal, out)`. Analysis JSON in `data/` lacks the `status` field — inject `status="ready"` when loading via `TrackAnalysis.model_validate`.
-- **Where mixes are saved:** `C:\Users\Akshay\OneDrive\Desktop\DJAI SONGS`. Fresh distinct filenames (same-name can serve from the OS/OneDrive cache). **Windows gotcha:** no `>` in filenames.
-- **Local dev:** backend `.venv/Scripts/python -m uvicorn app.main:app --port 8000` (from `services/api`), web `npm run dev` (root), open http://localhost:5173.
+- **Dangerous surfaces `workers/render.py` + `services/api/app/planner/validate.py`** carry the Phase-0 vocal chain + referee P1–P5, **shipped DISABLED**. CLAIM to re-verify: the golden gate proves disabled == `m6.0` byte-for-byte — **re-run `test_golden_enabled_false_is_byte_identical_to_m6_0` next session** before trusting it. Independent adversarial review said SAFE _for the disabled ship_; the ENABLED path is _not-proven-safe_ until the tuning week + a live ear-check.
+- **`enabled` is FALSE and must STAY false** until the founder explicitly flips it after tuning. **Do not enable it.** Slice 2d (pitch repair) is parked — pitch is pinned to 0 in the planner, so `rubberband` (GPL) is never called at mix time today.
+- **Branch not merged to main.** The whole Phase-0 arc lives on `feat/house-bollywood-energy-sync`. A merge would need the standard pre-merge review (and the still-owed R1-crossfade-relaxation adversarial re-verify noted in `technical-spec.md` "Known follow-ups").
+- **The founder is tuning against `render.py`.** Do NOT change `render.py`/`validate.py` under his feet — a change there invalidates his ear-time.
