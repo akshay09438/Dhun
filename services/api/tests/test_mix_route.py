@@ -148,4 +148,22 @@ def test_mix_rejects_bad_song_id(tmp_path, monkeypatch):
 
 def test_engine_version_is_current():
     # bumped when the engine/plan changes so a stale cached mix is never served
-    assert mix_route.ENGINE_VERSION == "m5o.0"  # hook-on-drop: the drop plays the signature hook
+    assert mix_route.ENGINE_VERSION == "m6.0"  # Phase 0 Slice 1: rules-by-default + camelot log + chain-hash cache
+
+
+def test_mix_id_folds_the_chain_config_hash(monkeypatch):
+    """Phase 0 T1.4: the vocal-chain config hash is part of the mix cache id, so a tuning-week
+    dial change invalidates the cache (never serves a stale render)."""
+    base = mix_route.mix_id_for(SONG1, SONG2, "")
+    monkeypatch.setattr(mix_route, "_CHAIN_CONFIG_HASH", "deadbeefdeadbeef")
+    assert mix_route.mix_id_for(SONG1, SONG2, "") != base
+
+
+def test_mix_carries_camelot_fit(tmp_path, monkeypatch):
+    """Phase 0 T1.2: the informational key-fit flows through the route onto the served plan."""
+    _use_tmp(monkeypatch, tmp_path)
+    _setup_pair(tmp_path)
+    r = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2})
+    body = _poll(r.json()["mix_id"], "ready")
+    assert body["status"] == "ready"
+    assert body["plan"]["camelot_fit"] is not None  # attached, logged, never gated

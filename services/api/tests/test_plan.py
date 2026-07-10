@@ -116,6 +116,7 @@ def test_regenerate_varies_vocal_content_not_just_anchor(monkeypatch):
 
 
 def test_ai_arrangement_is_used_when_available(monkeypatch):
+    monkeypatch.setattr(planner, "USE_AI_ARRANGEMENT", True)  # Phase 0 T1: AI path is opt-in now
     a1 = make_analysis(bpm=120.0)
     a2 = make_analysis(bpm=118.0, vocal_regions=[(16.0, 40.0)])
     from app.models import Placement
@@ -127,6 +128,62 @@ def test_ai_arrangement_is_used_when_available(monkeypatch):
     mix = planner.build_mix_plan("m" * 64, a1, a2, prompt="build it up")
     assert mix.source == "ai"
     assert len(mix.placements) == 2 and mix.placements[1].beat_breath is True
+
+
+def test_ai_arrangement_is_off_by_default(monkeypatch):
+    """Phase 0 T1: the disliked AI arranger no longer activates on API-key presence. By default
+    the mix uses the loved rules path and _ai_arrange is not even called — even when it WOULD
+    return a valid AI arrangement."""
+    from app.models import Placement
+    called: list[int] = []
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: (
+        called.append(1) or [Placement(anchor=16.0, vocal_src=(16.0, 24.0))]))
+    a1 = make_analysis(bpm=120.0)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(16.0, 40.0)])
+
+    mix = planner.build_mix_plan("m" * 64, a1, a2, prompt="build it up")
+
+    assert planner.USE_AI_ARRANGEMENT is False  # ships off
+    assert mix.source == "rules"                # the loved arrangement
+    assert called == []                         # the AI path was never invoked
+
+
+def test_camelot_fit_is_attached_and_compatible(monkeypatch):
+    """Phase 0 T1.2: every plan carries the informational key-fit. Same key (8A/8A) -> compatible."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0, key="8A")
+    a2 = make_analysis(bpm=118.0, key="8A", vocal_regions=[(16.0, 40.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    assert plan.camelot_fit is not None
+    assert plan.camelot_fit.compatible is True
+    assert plan.camelot_fit.song1_camelot == "8A" and plan.camelot_fit.song2_camelot == "8A"
+
+
+def test_camelot_fit_flags_a_clash_but_does_not_gate(monkeypatch):
+    """Phase 0 T1.2: a clashing key is OBSERVED (compatible=False) but never gates — the mix
+    still builds. This slice is read-only observation, not a new decline reason (that's Slice 2d)."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0, key="8A")
+    a2 = make_analysis(bpm=118.0, key="3B", vocal_regions=[(16.0, 40.0)])  # a clashing key
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    assert plan.camelot_fit.compatible is False  # flagged...
+    assert plan.placements                       # ...but not declined — the mix builds anyway
+
+
+def test_plan_carries_the_chain_config_hash(monkeypatch):
+    """Phase 0 T1.4: the plan records the (default, off) vocal-chain config hash for reproducibility."""
+    from app.models import VocalChainConfig, chain_config_hash
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(16.0, 40.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    assert plan.chain_config_hash == chain_config_hash(VocalChainConfig())
 
 
 def test_contrast_and_sweep_on_a_confident_pair(monkeypatch):
@@ -248,6 +305,7 @@ def test_hook_lands_on_the_loudest_drop():
 def test_clustered_ai_arrangement_is_spread_by_the_guard(monkeypatch):
     """Even if the AI clusters every vocal in the middle, the arc guard rebuilds a spread
     arrangement so the song never has an empty half."""
+    monkeypatch.setattr(planner, "USE_AI_ARRANGEMENT", True)  # Phase 0 T1: AI path is opt-in now
     from app.models import Placement
     monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: [
         Placement(anchor=120.0, vocal_src=(0.0, 20.0)),   # all three bunched
@@ -297,6 +355,7 @@ def test_no_warp_when_grid_is_missing(monkeypatch):
 def test_ai_midbar_starts_still_pass_the_referee(monkeypatch):
     """F1 regression: an AI arrangement whose vocal slices start mid-bar must NOT be rejected
     by the referee (R7). The warp map re-locks cleanly instead of shifting off the grid."""
+    monkeypatch.setattr(planner, "USE_AI_ARRANGEMENT", True)  # Phase 0 T1: AI path is opt-in now
     from app.models import Placement
     a1 = make_analysis(bpm=120.0, n_bars=64)
     a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 40.0)])
@@ -470,6 +529,7 @@ def test_produce_drops_echoes_when_nothing_follows():
 def test_both_vocals_trade_when_song1_has_a_real_passage(monkeypatch):
     """Step 1: when Song 1 (the house track) has a substantial sung passage in a gap between
     Song 2's placements, it LEADS there — both vocals are present and trade (not Song 1 stripped)."""
+    monkeypatch.setattr(planner, "USE_AI_ARRANGEMENT", True)  # Phase 0 T1: AI path is opt-in now
     from app.models import Placement
     a1 = make_analysis(bpm=120.0, n_bars=96, vocal_regions=[(60.0, 92.0)])  # FO sings a real 32s passage
     a2 = make_analysis(bpm=120.0, vocal_regions=[(0.0, 20.0)])

@@ -14,8 +14,15 @@ from __future__ import annotations
 import json
 import os
 
-from app.models import MixPlan, Placement, TrackAnalysis
+from app.models import MixPlan, Placement, TrackAnalysis, VocalChainConfig, chain_config_hash
 from app.planner import fence, hooks, llm, window
+
+# Phase 0 (T1): the AI arrangement engine is OFF by default. The founder prefers the
+# deterministic rules arrangement (`_default_arrangement`) — a note-for-note match to the loved
+# reference; the disliked AI path used to activate on mere ANTHROPIC_API_KEY presence. It is kept
+# in the tree (not deleted) as the seat for constrained menu-selection later (Phase 5), just not
+# driving. Flip on via this flag or the USE_AI_ARRANGEMENT env var (key presence must NOT trigger it).
+USE_AI_ARRANGEMENT = os.environ.get("USE_AI_ARRANGEMENT", "").strip().lower() in {"1", "true", "yes", "on"}
 
 _MAX_PLACEMENTS = 3
 # Good-parts window: crop the mix to the beat's best ~90s. DISABLED (founder decision 2026-07-09:
@@ -376,7 +383,7 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         opts = window.windowed_options(opts, *window_span)
         a1g = opts["a1_grid"]
 
-    placements = _ai_arrange(opts, prompt, take)
+    placements = _ai_arrange(opts, prompt, take) if USE_AI_ARRANGEMENT else None
     source = "ai" if placements else "rules"
     if not placements:
         placements = _default_arrangement(opts, take)
@@ -437,6 +444,8 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         vocal_src=first.vocal_src, anchor=first.anchor,  # scalar mirrors first (M3 back-compat)
         placements=placements, s1_vocal_regions=s1_regions, stem_moves=stem_moves, take=take,
         window=window_span,
+        camelot_fit=fence.camelot_detail(a1, a2),  # Phase 0: informational key-fit (logged, never gates)
+        chain_config_hash=chain_config_hash(VocalChainConfig()),  # the (default, off) chain config in effect
         notes=_describe_arrangement(placements, s1_regions),
         confidence=0.75 if source == "ai" else 0.6, source=source,
     )

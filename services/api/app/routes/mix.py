@@ -28,7 +28,7 @@ from pydantic import BaseModel
 from app.audio.analysis import analysis_path
 from app.audio.stems import stem_path
 from app.config import settings
-from app.models import Mix, MixPlan, TrackAnalysis
+from app.models import Mix, MixPlan, TrackAnalysis, VocalChainConfig, chain_config_hash
 from app.planner import validate
 from app.planner import name as name_planner
 from app.planner.plan import MixDeclined, build_mix_plan
@@ -102,7 +102,17 @@ _S1_STEMS = ("drums", "bass", "other")
 # m5o.0: HOOK-ON-DROP — the drop plays each curated song's signature hook (app/planner/hooks.py),
 #        not the loudest blob; other entries get the setup. plan.py only (additive, safe); no marker
 #        -> old loudest pick. (An earlier m5o.0 "phrasing" attempt was reverted the same day.)
-ENGINE_VERSION = "m5o.0"
+# m6.0:  PHASE 0 (Slice 1) — the AI arrangement engine is gated OFF by default (plan.USE_AI_ARRANGEMENT),
+#        so every mix now uses the loved RULES arrangement; camelot_fit is attached + logged (never
+#        gated); and the vocal-chain config hash joins the cache id (mix_id_for) so tuning-week dial
+#        changes invalidate cleanly. Bumped so cached AI-path mixes re-plan on the rules path. Stems +
+#        analysis are keyed by song_id, NOT this version, so the bump triggers ZERO Replicate calls.
+ENGINE_VERSION = "m6.0"
+
+# Phase 0 (T1.4): a stable hash of the vocal-chain config, folded into the mix cache id. Default (off)
+# config today; during the tuning week each dial change yields a fresh hash -> a fresh render, so the
+# app never serves a stale cached mix and concludes a dial does nothing.
+_CHAIN_CONFIG_HASH = chain_config_hash(VocalChainConfig())
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.
@@ -123,7 +133,7 @@ class MixNameRequest(BaseModel):
 
 
 def mix_id_for(song1_id: str, song2_id: str, prompt: str, take: int = 1) -> str:
-    raw = f"{ENGINE_VERSION}:{song1_id}:{song2_id}:{prompt}:{take}".encode()
+    raw = f"{ENGINE_VERSION}:{_CHAIN_CONFIG_HASH}:{song1_id}:{song2_id}:{prompt}:{take}".encode()
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -170,6 +180,11 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int) 
     try:
         a1, a2 = _load_analysis(song1_id), _load_analysis(song2_id)
         plan = build_mix_plan(mix_id, a1, a2, prompt, take=take)
+        # Phase 0 (T1.2): log the key-fit on every render — informational only, never gated. Lets us
+        # look at the log and find how many "good" pairs were quietly key-clashing.
+        cf = plan.camelot_fit
+        log.info("mix %s source=%s camelot_fit=%s", mix_id, plan.source,
+                 cf.model_dump() if cf else None)
         validate.assert_plan(plan, a1, a2)
 
         stems = {s: stem_path(song1_id, s) for s in _S1_STEMS}

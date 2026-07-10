@@ -2,7 +2,8 @@
 M3-era single-placement plans cached on disk.
 """
 
-from app.models import MixPlan, Placement, StemMove
+from app.models import (CamelotFit, MixPlan, Placement, StemMove, VocalChainConfig,
+                        chain_config_hash)
 
 
 def test_placement_and_arrangement_roundtrip():
@@ -85,3 +86,38 @@ def test_mixplan_window_defaults_none_and_roundtrips():
     p = MixPlan(**base, window=(30.0, 120.0))
     assert p.window == (30.0, 120.0)
     assert MixPlan.model_validate(p.model_dump()).window == (30.0, 120.0)  # JSON round-trip
+
+
+# ---------------------------------------------------------------- Phase 0 (Slice 1 / 2a scaffolding)
+
+
+def test_vocal_chain_config_ships_off_with_bounded_defaults():
+    cfg = VocalChainConfig()
+    assert cfg.enabled is False                       # ships off
+    assert cfg.saturate_wet == 0.25                   # under the 0.5 hard cap
+    assert cfg.presence_gain_db == 2.5                # under the 6.0 hard cap
+    assert cfg.pitch_max_semitones == 3.0 and cfg.pitch_engine == "rubberband"
+
+
+def test_chain_config_hash_is_stable_and_dial_sensitive():
+    assert chain_config_hash(VocalChainConfig()) == chain_config_hash(VocalChainConfig())  # stable
+    # any dial change yields a different hash -> a fresh render (no stale cache during tuning)
+    assert chain_config_hash(VocalChainConfig(saturate_wet=0.30)) != chain_config_hash(VocalChainConfig())
+    assert chain_config_hash(VocalChainConfig(enabled=True)) != chain_config_hash(VocalChainConfig())
+
+
+def test_camelot_fit_and_chain_hash_are_additive_on_the_plan():
+    plan = MixPlan(
+        mix_id="m" * 64, song1_id="a" * 64, song2_id="b" * 64,
+        master_bpm=120.0, vocal_stretch=1.0, vocal_src=(16.0, 40.0), anchor=16.0,
+        camelot_fit=CamelotFit(song1_camelot="8A", song2_camelot="9A", compatible=True),
+        chain_config_hash="deadbeef",
+    )
+    r = MixPlan.model_validate_json(plan.model_dump_json())
+    assert r.camelot_fit.compatible is True and r.camelot_fit.song2_camelot == "9A"
+    assert r.chain_config_hash == "deadbeef"
+    # an old plan with neither field still parses -> None / "" defaults
+    old = ('{"mix_id":"m","song1_id":"a","song2_id":"b","master_bpm":120.0,'
+           '"vocal_stretch":1.0,"vocal_src":[16.0,40.0],"anchor":16.0}')
+    assert MixPlan.model_validate_json(old).camelot_fit is None
+    assert MixPlan.model_validate_json(old).chain_config_hash == ""

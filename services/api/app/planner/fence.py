@@ -10,7 +10,7 @@ and needs no AI — it is pure, testable arithmetic over the analysis.
 
 from __future__ import annotations
 
-from app.models import StemMove, TrackAnalysis
+from app.models import CamelotFit, StemMove, TrackAnalysis
 
 # Small stretches sound clean; big ones warble. Song 2's vocal is kept within this band
 # of Song 1's tempo (atempo stays acceptable here); outside it we decline rather than ship
@@ -234,6 +234,15 @@ def camelot_fit(c1: str, c2: str) -> bool:
         return True
     dist = min(abs(n1 - n2), 12 - abs(n1 - n2))  # circular distance on the 12-clock
     return l1 == l2 and dist in (1, 2)
+
+
+def camelot_detail(a1: TrackAnalysis, a2: TrackAnalysis) -> CamelotFit:
+    """The informational key-fit for a pair (Phase 0: attached to the plan and logged, never
+    gated). Reuses `camelot_fit`; `compatible` is None when either key is unknown."""
+    c1 = a1.key.camelot if a1.key else None
+    c2 = a2.key.camelot if a2.key else None
+    compatible = camelot_fit(c1, c2) if (c1 and c2) else None
+    return CamelotFit(song1_camelot=c1, song2_camelot=c2, compatible=compatible)
 
 
 def legal_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:

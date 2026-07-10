@@ -1,3 +1,6 @@
+import hashlib
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -97,6 +100,64 @@ class StemMove(BaseModel):
     gain_to: float = 0.0  # … ramping to this at end (the stem is at 1.0 outside the window)
 
 
+class CamelotFit(BaseModel):
+    """Informational key-compatibility read for a pair (Phase 0: attached to the plan and
+    LOGGED, never gated — we want to see how many 'good' pairs were quietly key-clashing).
+    `compatible` is None when either song's key is unknown."""
+
+    song1_camelot: str | None = None
+    song2_camelot: str | None = None
+    compatible: bool | None = None
+
+
+class VocalChainConfig(BaseModel):
+    """Global defaults for the nine-stage vocal processing chain (Phase 0). Ships OFF
+    (`enabled=False`) — every stage independently toggleable, every dial bounded. The hard
+    caps noted here are ENFORCED by the referee (validate.py rules P1–P5), not just documented.
+    Lives here (not in the dangerous `config.py`) on purpose."""
+
+    enabled: bool = False  # ships off; the tuning week flips this behind founder approval
+
+    deess_enabled: bool = True
+    deess_intensity: float = 0.4  # 0..1
+
+    highpass_enabled: bool = True
+    highpass_hz: int = 90  # 80..120
+
+    pitch_enabled: bool = True
+    pitch_max_semitones: float = 3.0  # hard cap; rubberband present + formant=preserved (Phase-0 check)
+    pitch_engine: Literal["rubberband", "librosa"] = "rubberband"
+
+    compress_enabled: bool = True
+    compress_ratio: float = 3.0
+    compress_threshold_db: float = -18.0
+
+    saturate_enabled: bool = True
+    saturate_drive: float = 2.0  # tanh input gain
+    saturate_wet: float = 0.25  # 🔒 hard-capped at 0.5 (referee P3)
+
+    presence_enabled: bool = True
+    presence_hz: int = 3000
+    presence_gain_db: float = 2.5  # 🔒 hard-capped at 6.0 (referee P3)
+    presence_q: float = 0.8
+
+    reverb_enabled: bool = True
+    reverb_wet: float = 0.12
+
+    duck_enabled: bool = True
+    duck_depth_db: float = 1.5  # bed reduction under the vocal; 1..2 typical, cap 6 (referee P4)
+    duck_attack_ms: int = 5
+    duck_release_ms: int = 120
+
+
+def chain_config_hash(cfg: VocalChainConfig) -> str:
+    """A short, stable hash of the vocal-chain config. Folded into the mix cache id so that a
+    tuning-week dial change produces a FRESH render instead of serving a stale cached one (a
+    day-of-debugging-a-non-bug trap). Default config → a fixed hash, so a no-op config never
+    churns the cache."""
+    return hashlib.sha256(cfg.model_dump_json().encode()).hexdigest()[:16]
+
+
 class MixPlan(BaseModel):
     """The recipe for one mix — what the brain decided, for the engine to run.
 
@@ -125,6 +186,8 @@ class MixPlan(BaseModel):
     confidence: float = 0.0
     source: str = "rules"  # "ai" | "rules" — which brain picked it (honesty/debug)
     window: tuple[float, float] | None = None  # good-parts: Song-1 retimed-grid span the bed is cropped to; None = full track
+    camelot_fit: CamelotFit | None = None  # Phase 0: informational key-fit (logged, never gates the mix)
+    chain_config_hash: str = ""  # Phase 0: the vocal-chain config this mix was rendered under (cache + reproducibility)
 
 
 class Mix(BaseModel):
