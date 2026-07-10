@@ -88,6 +88,19 @@ def _golden_hash(tmp_path):
     return hashlib.sha256(y.tobytes()).hexdigest()
 
 
+def test_ffmpeg_is_the_pinned_version():
+    """The golden-file byte-identity guarantee rests on a KNOWN FFmpeg binary. If this fails, the
+    running FFmpeg drifted from the one the golden hash was measured against — investigate the BINARY
+    before assuming a code regression (the golden test would also fail, but for a hidden reason).
+    Build string recorded in docs/ffmpeg.md; bump ffmpeg_pin.PINNED_FFMPEG_VERSION only with a
+    deliberate golden re-capture."""
+    from workers import ffmpeg_pin
+    assert ffmpeg_pin.matches_pinned_version(), (
+        f"FFmpeg drifted from the pinned {ffmpeg_pin.PINNED_FFMPEG_VERSION}: running "
+        f"'{ffmpeg_pin.ffmpeg_version_line()}'. Byte-identity (the golden gate) is only guaranteed "
+        "against the pinned build.")
+
+
 def test_golden_render_is_deterministic(tmp_path):
     """The golden render must be bit-stable run-to-run (FFmpeg decode/stretch is deterministic on a
     fixed build), or the byte-identity gate below would be meaningless."""
@@ -233,6 +246,21 @@ def test_reverb_is_peak_neutral_across_signals():
         out = render._reverb(sig, 0.12, render.SR)
         peak_gain = float(np.max(np.abs(out))) / float(np.max(np.abs(sig)))
         assert peak_gain < 1.2, f"reverb inflated the peak ({freq} Hz): x{peak_gain:.2f}"
+
+
+def test_reverb_gain_is_input_independent():
+    """Step 4: the IR is normalized ONCE at generation, so the reverb is a FIXED LINEAR operation ->
+    reverb(a) + reverb(b) == reverb(a+b). A per-render normalization (dividing the wet by the incoming
+    signal's own peak) is NONLINEAR and breaks additivity — and would silently reintroduce the
+    song-dependence bug, where reverb_wet=0.12 stops meaning the same thing across songs. This fails
+    the instant that regression comes back."""
+    sr = render.SR
+    rng = np.random.default_rng(3)
+    a = (0.3 * rng.standard_normal((sr, 2))).astype("float32")
+    b = (0.3 * rng.standard_normal((sr, 2))).astype("float32")
+    lhs = render._reverb(a, 0.5, sr) + render._reverb(b, 0.5, sr)
+    rhs = render._reverb((a + b).astype("float32"), 0.5, sr)
+    assert float(np.max(np.abs(lhs - rhs))) < 1e-4  # additive -> input-independent gain (fixed IR)
 
 
 def test_duck_envelope_is_smoothed_not_stepped():

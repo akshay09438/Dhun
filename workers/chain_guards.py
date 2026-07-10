@@ -27,19 +27,22 @@ import numpy as np
 P2_MAX_GAIN_DB = 3.0
 _P2_MAX_GAIN = 10.0 ** (P2_MAX_GAIN_DB / 20.0)
 
-# Crest-factor (peak/RMS) MUSH guard. tanh saturation is a compressor: drive a signal hard and its
-# PEAK squashes toward +-1 while RMS climbs, so a peak guard (P2) is structurally BLIND to mush — a
+# Crest-factor (peak/RMS) guard. tanh saturation is a compressor: drive a signal hard and its PEAK
+# squashes toward +-1 while RMS climbs, so a peak guard (P2) is structurally BLIND to mush — a
 # destroyed vocal can have a LOWER peak than a clean one. Crest factor collapses under distortion —
-# that is the signature. This is self-calibrating as a DELTA: the chain may not collapse the crest
-# factor below CREST_MIN_RATIO x the input's, so there is no absolute number to guess.
+# that is the signature. Self-calibrating as a DELTA: the chain may not collapse the crest factor
+# below CREST_MIN_RATIO x the input's, so there is no absolute number to guess.
 #
-# THRESHOLD found empirically (2026-07-10, real Der Lagi vocal through the full chain):
-#   input crest factor 5.52 (clean).
-#   LEGAL processing (every dial in P3 range, saturate_wet<=0.5): output crest ratio 0.83-0.95.
-#   MUSH (distortion beyond the caps): tanh drive 8 -> 0.37; drive 16 -> 0.31; hard-clip square -> 0.26.
-# The cliff is a WIDE gap (0.5 .. 0.83). 0.60 sits centered in it: clears all legal processing with
-# margin, catches all measured mush with margin. Within the P3 caps this guard cannot fire; it is
-# defense-in-depth against a future dial/stage or a bug that pushes distortion past the caps.
+# ⚠️ THIS GUARD IS A BACKSTOP, NOT THE PRIMARY MUSH DEFENCE. P3's saturate_wet cap (<= 0.5) prevents
+# severe mush BY CONSTRUCTION. Measured (2026-07-10, real Der Lagi vocal through the full chain,
+# input crest 5.52): LEGAL processing (every dial in P3 range) keeps crest at 0.83-0.95x input, while
+# MUSH (distortion PAST the caps) collapses it to 0.26-0.37x (tanh drive 8 -> 0.37, drive 16 -> 0.31,
+# hard-clip square -> 0.26). The cliff is a WIDE gap (0.5 .. 0.83); 0.60 sits centered in it. So within
+# the P3 caps this guard CANNOT fire — it only fires if a future dial change or a bug escapes P3.
+#
+# ⚠️ THESE RULES ARE LAYERED, NOT REDUNDANT. Do NOT loosen P3's saturate_wet cap on the assumption
+# that this crest guard will catch the result — it is calibrated to sit BELOW the legal floor, so it
+# will NOT catch what P3 was preventing. P3 is the wall; this is the net behind it.
 CREST_MIN_RATIO = 0.60
 
 
