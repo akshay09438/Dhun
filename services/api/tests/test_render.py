@@ -224,6 +224,36 @@ def test_duck_bed_only_ducks_never_boosts():
     assert float(np.mean(np.abs(out[-sr // 4:]))) > 0.99 * 0.5  # bed restored where the vocal is absent
 
 
+def test_reverb_is_peak_neutral_across_signals():
+    """Step 2: the IR is L2-normalized ONCE at generation, so convolution is peak-neutral as a FIXED
+    property (no per-render normalization) — the +7 dB peak-inflation bug is gone, for ANY input. This
+    is what makes reverb_wet song-independent."""
+    for freq in (150.0, 1000.0, 4000.0):
+        sig = _voc_tone(render.SR, freq=freq, amp=0.6)
+        out = render._reverb(sig, 0.12, render.SR)
+        peak_gain = float(np.max(np.abs(out))) / float(np.max(np.abs(sig)))
+        assert peak_gain < 1.2, f"reverb inflated the peak ({freq} Hz): x{peak_gain:.2f}"
+
+
+def test_duck_envelope_is_smoothed_not_stepped():
+    """Step 5: stage 9's duck must ramp (a smoothed envelope), never a hard gain step at the vocal
+    onset — a step on a downbeat clicks, and a click survives the master's peak-normalize + clip
+    completely untouched. On a constant bed, any sample-to-sample jump IS the duck envelope, so a
+    smooth ramp gives a tiny max jump; a hard step would give ~0.15."""
+    sr = render.SR
+    bed = np.full((3 * sr, 2), 0.3, dtype=np.float32)     # constant bed -> any jump is the duck
+    voc = np.zeros((3 * sr, 2), dtype=np.float32)
+    voc[sr:2 * sr] = 0.8                                    # vocal present 1-2s, HARD raw edges
+    prepared = [(types.SimpleNamespace(anchor=0.0), voc)]
+    dm = [types.SimpleNamespace(target_stems=["drums", "bass", "other"], key_placement_id="p0",
+                                depth_db=6.0, attack_ms=5, release_ms=120)]
+    out = render._duck_bed(bed, dm, prepared, sr)
+    max_jump = float(np.max(np.abs(np.diff(out[:, 0]))))
+    assert max_jump < 0.01, f"duck has a hard step (click risk): max sample jump {max_jump:.4f}"
+    # ...and it genuinely ducked (the middle is pulled below the 0.3 bed)
+    assert float(np.mean(np.abs(out[int(1.4 * sr):int(1.6 * sr)]))) < 0.28
+
+
 def test_render_produces_valid_wav(tmp_path):
     stems, vocal = _stems(tmp_path)
     out = tmp_path / "mix.wav"

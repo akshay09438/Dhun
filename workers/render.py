@@ -28,6 +28,8 @@ import numpy as np
 import soundfile as sf
 from scipy.signal import butter, sosfilt
 
+from workers import chain_guards  # standalone level/crest guards (P2 + mush); render never mutates it
+
 SR = 44100  # everything renders at CD rate, stereo
 _TARGET_PEAK = 10 ** (-1.0 / 20)  # -1 dBFS headroom
 _CEILING = 0.999  # brickwall safety — must stay below the validator's clip ceiling
@@ -381,25 +383,9 @@ _PRESENCE_Q = 0.8
 _REVERB_SECS = 0.6             # convolution IR length; the wet tail is TRUNCATED to the dry length
 _REVERB_DECAY = 6.0            # exponential decay of the synthetic IR
 _REVERB_SEED = 20260710        # 🔒 FIXED seed -> the IR (and every render) is deterministic (golden-safe)
-# Referee P2 (enforced HERE, render-side — it needs the intermediate audio the plan-referee can't see).
-# INTENT (founder): catch a vocal distorted into mush at stage 6 that the master would faithfully
-# normalize and hand back looking legal ("we can't clip" is a false sense of safety about the output).
-#
-# ⚠️ DEVIATION FROM THE BRIEF, FLAGGED (rule 6): the brief specified an ABSOLUTE ceiling — "any stage's
-# output peak > -3 dBFS". That is INCOMPATIBLE with our signal levels: our separated vocal stems
-# legitimately peak near/above 0 dBFS (measured 1.14 on the real Der Lagi vocal), and the whole
-# pre-master signal is DESIGNED to exceed unity (build/sweep overshoot already "folds into the peak-
-# normalize"). A literal -3 dBFS ceiling rejects EVERY real mix, so the chain could never be tuned.
-# Instead P2 here is a RELATIVE guard: the chain must not push the vocal's PEAK up by more than
-# _P2_MAX_GAIN_DB — i.e. it can't blow the level up. This catches gross over-EQ / over-drive before the
-# master hides it, while letting a naturally-loud clean vocal through.
-#
-# ⚠️ KNOWN LIMIT, FLAGGED: a PEAK guard (this one, or the brief's literal one) does NOT catch saturation
-# mush that stays under the peak — tanh actually LOWERS the peak. The faithful mush-detector is a
-# crest-factor (peak/RMS) floor, which must be ear-calibrated during the tuning week. Deferred, on
-# purpose, to that week — noted here so nobody mistakes this peak guard for a full mush check.
-_P2_MAX_GAIN_DB = 3.0
-_P2_MAX_GAIN = 10 ** (_P2_MAX_GAIN_DB / 20)
+# Referee P2 (pre-master ceiling) AND the crest-factor mush guard live in the standalone
+# `workers.chain_guards` module (imported above) — deliberately NOT inline here, so the guard cannot
+# silently drift when this chain code changes. render_mix calls it after the chain; it never mutates it.
 
 
 def _fit_length(y: np.ndarray, n: int) -> np.ndarray:
@@ -440,37 +426,38 @@ def _saturate(x: np.ndarray, drive: float, wet: float) -> np.ndarray:
 
 
 def _reverb_ir(sr: int) -> np.ndarray:
-    """A short, DETERMINISTIC exponentially-decaying-noise impulse response.
+    """A short, DETERMINISTIC exponentially-decaying-noise impulse response, L2-normalized.
 
     FFmpeg has no native algorithmic reverb (only `aecho`, a delay, and `afir`, which needs an IR
     asset). This is a small deterministic convolution reverb chosen for testability and zero binary
     assets — NOT because convolution is the ideal reverb here. Placeholder-grade. Revisit if it sounds
-    thin. The FIXED seed makes the IR — and therefore every render — reproducible (golden-file safe)."""
+    thin. The FIXED seed makes the IR — and therefore every render — reproducible (golden-file safe).
+
+    ⭐ The IR is normalized ONCE HERE, by its L2 (energy) norm, so convolution is peak-neutral as a
+    FIXED PROPERTY of the IR (measured -0.9 dB peak gain on a real vocal; energy-preserving, so the
+    reverb is audible). That is what makes `reverb_wet` a TRANSFERABLE, SONG-INDEPENDENT number — the
+    tuning week's winning value must mean the same thing on every pair. (Normalizing the WET per render
+    instead — the first fix — made the effect signal-dependent: a spiky vocal got less reverb than a
+    squashed one at the same dial. That is exactly the property we must NOT have while a dial is tuned.)"""
     rng = np.random.default_rng(_REVERB_SEED)
     n = int(_REVERB_SECS * sr)
     t = np.linspace(0.0, _REVERB_SECS, n, endpoint=False)
     ir = (rng.standard_normal(n).astype(np.float32)) * np.exp(-_REVERB_DECAY * t).astype(np.float32)
-    ir[0] = 1.0  # a dry spike so the wet path keeps the direct sound
-    return (ir / float(np.max(np.abs(ir)))).astype(np.float32)
+    l2 = float(np.sqrt(np.sum(np.square(ir))))
+    return (ir / l2).astype(np.float32) if l2 > 0 else ir
 
 
 def _reverb(voc: np.ndarray, wet: float, sr: int) -> np.ndarray:
     """Stage 8 — a convolution-reverb SEND (dry/wet blend). Length-preserving: the wet tail is
-    truncated to the dry length so the vocal's length (and R1 overlap math) is unchanged."""
+    truncated to the dry length so the vocal's length (and R1 overlap math) is unchanged. The IR is
+    L2-normalized at generation (`_reverb_ir`), so the wet is peak-neutral and `reverb_wet` is
+    song-independent — there is deliberately NO per-render normalization here."""
     from scipy.signal import fftconvolve
 
     ir = _reverb_ir(sr)
     wetsig = np.empty_like(voc)
     for ch in range(voc.shape[1]):
         wetsig[:, ch] = fftconvolve(voc[:, ch], ir)[: len(voc)]
-    # Convolution SUMS many delayed IR taps, so the wet peak balloons well above the dry — normalize
-    # the wet back to the dry peak so the reverb adds AMBIENCE, not LEVEL (otherwise a small wet blend
-    # inflates the peak ~7 dB and trips P2). The blend is then a convex mix of two same-peak signals,
-    # so it can't exceed the dry peak.
-    wp = float(np.max(np.abs(wetsig)))
-    dp = float(np.max(np.abs(voc)))
-    if wp > 0.0:
-        wetsig *= dp / wp
     return ((1.0 - wet) * voc + wet * wetsig).astype(np.float32)
 
 
@@ -640,13 +627,11 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
                 voc = _edge_fade(_vocal_take(song2_vocal, start, max(end - start, 0.0), plan.vocal_stretch))
             vm = vmoves.get(f"p{i}")
             if vm is not None:  # Phase 0 vocal chain (stages 1-8); no move -> skipped -> byte-identical
-                pk_in = float(np.max(np.abs(voc))) if voc.size else 0.0
+                before = voc
                 voc = _apply_vocal_chain(voc, vm, SR)
-                pk_out = float(np.max(np.abs(voc))) if voc.size else 0.0  # referee P2 (relative peak-gain)
-                if pk_in > 0.0 and pk_out > pk_in * _P2_MAX_GAIN:
-                    raise RenderError(
-                        f"vocal chain raised the peak {20 * np.log10(pk_out / pk_in):.1f} dB "
-                        f"(> {_P2_MAX_GAIN_DB:.0f} dB, P2) — over-processed; the master would normalize the mush")
+                bad = chain_guards.check_vocal_chain_output(before, voc)  # P2 peak-gain + crest mush guard
+                if bad is not None:
+                    raise RenderError(bad)
             if getattr(p, "chop", False):  # Step 4: re-fire the hook onset over this entry's FIRST bar
                 k = min(bar, len(voc))       # (a vocal chop). Replaces bar 1 -> voc length is unchanged,
                 if k > 0:                    # so placement_end / the referee's overlap math don't move.
