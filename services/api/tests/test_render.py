@@ -4,6 +4,8 @@ click-free-length-correct, and never clipping. workers/ lives at the repo root, 
 we put it on the path before importing.
 """
 
+import hashlib
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -51,6 +53,175 @@ def _arr_plan(placements, breath=False):
         placements=[types.SimpleNamespace(anchor=a, vocal_src=v, beat_breath=b)
                     for a, v, b in placements],
     )
+
+
+# ---------------------------------------------------------------- Phase 0: the vocal chain, DISABLED
+# GOLDEN-FILE GATE (written FIRST, against main, before the chain exists). With the vocal chain OFF
+# (plan.vocal_moves == [] and plan.duck_moves == []), render_mix must produce a BYTE-IDENTICAL result
+# to the pre-chain m6.0 engine. The hash below is captured on main; after the chain lands it MUST still
+# match. This is what makes the tuning week's A/B honest: any difference heard is the chain, not an
+# incidental change in the signal path. We hash the decoded SAMPLES (not the file) so WAV-header
+# metadata can't cause a spurious mismatch.
+
+# Captured on main (pre-chain). If this test fails after the chain lands, the enabled=False path is
+# NOT byte-identical — a real regression, do not "update" the hash to make it pass.
+_GOLDEN_ENABLED_FALSE = "0483b03e1214bad0e5175bd4962c772e84b780f53cf0062324b7da2ef928d475"
+
+
+def _golden_plan():
+    """A deterministic, feature-rich plan exercising the main render paths (two placements, a
+    beat-breath, a produced build+echo, a bass stem-move, a Song-1 contrast region) — so any
+    accidental change to the enabled=False path shifts the hash."""
+    p = _arr_plan([(1.0, (0.0, 2.0), False), (5.0, (0.0, 1.5), True)])
+    p.placements[1].build_bars = 2
+    p.placements[1].echo = True
+    p.stem_moves = [_stem_move("bass", 3.0, 5.0, 1.0, 0.0)]
+    p.s1_vocal_regions = [(3.2, 4.8)]
+    return p
+
+
+def _golden_hash(tmp_path):
+    stems, vocal = _stems(tmp_path)
+    out = tmp_path / "golden.wav"
+    render.render_mix(_golden_plan(), stems, vocal, out)
+    y, _ = sf.read(out, dtype="float32", always_2d=True)
+    return hashlib.sha256(y.tobytes()).hexdigest()
+
+
+def test_golden_render_is_deterministic(tmp_path):
+    """The golden render must be bit-stable run-to-run (FFmpeg decode/stretch is deterministic on a
+    fixed build), or the byte-identity gate below would be meaningless."""
+    da, db = tmp_path / "a", tmp_path / "b"
+    da.mkdir()
+    db.mkdir()
+    assert _golden_hash(da) == _golden_hash(db), (
+        "golden render is not deterministic run-to-run — the byte-identity gate can't hold")
+
+
+def test_golden_enabled_false_is_byte_identical_to_m6_0(tmp_path):
+    """THE GATE: with the vocal chain disabled, the render is byte-identical to the captured m6.0
+    baseline. Fails loudly if the chain code ever alters the enabled=False path."""
+    h = _golden_hash(tmp_path)
+    assert h == _GOLDEN_ENABLED_FALSE, (
+        f"enabled=False render changed vs m6.0 baseline!\n  got:      {h}\n  expected: {_GOLDEN_ENABLED_FALSE}")
+
+
+def _has_rubberband():
+    """rubberband is FFmpeg's GPL `librubberband` filter. The commercial build MUST stay LGPL (see
+    CLAUDE.md), which does NOT link it — so the pitch tests skip rather than hard-require a GPL build.
+    The pitch STAGE ships inert in Phase 0 (the planner pins pitch_semitones to 0), so nothing in the
+    live pipeline depends on it; the licensing decision is owed before Slice 2d turns pitch on."""
+    try:
+        out = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True, timeout=30)
+        return "rubberband" in out.stdout
+    except Exception:
+        return False
+
+
+_HAS_RUBBERBAND = _has_rubberband()
+_needs_rubberband = pytest.mark.skipif(not _HAS_RUBBERBAND, reason="rubberband (GPL) not linked in this FFmpeg")
+
+
+def _vm(pid="p0", **k):
+    """A duck-typed VocalProcessMove (neutral dials by default -> a no-op stage set)."""
+    d = dict(placement_id=pid, start_bar=0, end_bar=4, pitch_semitones=0.0, deess=0.0,
+             highpass_hz=0, compress_ratio=1.0, saturate_wet=0.0, presence_gain_db=0.0, reverb_wet=0.0)
+    d.update(k)
+    return types.SimpleNamespace(**d)
+
+
+def test_saturate_is_a_bounded_soft_clip():
+    x = np.linspace(-1.0, 1.0, 2000, dtype=np.float32).reshape(-1, 2)
+    out = render._saturate(x, drive=2.0, wet=0.4)
+    assert np.all(np.abs(out) <= 1.0 + 1e-6)          # tanh soft-clip stays bounded
+    assert float(np.max(np.abs(out - x))) > 1e-3      # ...and it actually changed the signal
+
+
+def test_saturate_wet_is_hard_capped_at_half():
+    x = np.full((100, 2), 0.5, dtype=np.float32)
+    assert np.allclose(render._saturate(x, 2.0, 0.9), render._saturate(x, 2.0, 0.5))  # 0.9 clamped to 0.5
+
+
+def test_reverb_ir_is_deterministic():
+    a, b = render._reverb_ir(render.SR), render._reverb_ir(render.SR)
+    assert np.array_equal(a, b)                       # fixed seed -> identical IR every call (golden-safe)
+
+
+def test_reverb_is_length_preserving_and_wet():
+    voc = _voc_tone(render.SR)                         # 1s
+    out = render._reverb(voc, wet=0.3, sr=render.SR)
+    assert out.shape == voc.shape                      # tail truncated to dry length -> length unchanged
+    assert float(np.max(np.abs(out - voc))) > 1e-4     # the wet path changed it
+
+
+@_needs_rubberband
+def test_pitch_shift_preserves_length_and_raises_pitch():
+    voc = _voc_tone(render.SR, freq=300.0)
+    out = render._pitch_shift(voc, semitones=4.0, sr=render.SR)
+    assert out.shape == voc.shape                       # pitch-only -> length preserved
+    fdom = lambda y: float(np.fft.rfftfreq(len(y), 1 / render.SR)[np.argmax(np.abs(np.fft.rfft(y[:, 0])))])
+    assert fdom(out) > fdom(voc) + 10                   # dominant frequency moved up
+
+
+@_needs_rubberband
+def test_pitch_shift_uses_formant_preserved_and_quality(monkeypatch):
+    """DoD: formant=preserved and pitchq=quality must be EXPLICIT in every rubberband invocation
+    (the default formant is `shifted` — the chipmunk mode)."""
+    seen = []
+    real = render._run_ffmpeg
+    monkeypatch.setattr(render, "_run_ffmpeg", lambda cmd: (seen.append(" ".join(cmd)), real(cmd))[1])
+    render._pitch_shift(_voc_tone(render.SR // 2), 2.0, render.SR)
+    joined = " ".join(seen)
+    assert "rubberband=pitch=" in joined
+    assert "formant=preserved" in joined and "pitchq=quality" in joined
+
+
+def test_apply_vocal_chain_is_length_preserving():
+    voc = _voc_tone(render.SR)
+    out = render._apply_vocal_chain(
+        voc, _vm(deess=0.4, highpass_hz=90, compress_ratio=3.0, saturate_wet=0.25,
+                 presence_gain_db=2.5, reverb_wet=0.12), render.SR)
+    assert out.shape == voc.shape                       # the whole chain never changes the vocal's length
+
+
+def test_enabled_chain_changes_the_render_but_not_its_length(tmp_path):
+    stems, vocal = _stems(tmp_path)
+    plain, chained = tmp_path / "plain.wav", tmp_path / "chain.wav"
+    render.render_mix(_arr_plan([(1.0, (0.0, 2.0), False)]), stems, vocal, plain)
+    p = _arr_plan([(1.0, (0.0, 2.0), False)])
+    p.vocal_moves = [_vm(highpass_hz=90, compress_ratio=3.0, saturate_wet=0.4, presence_gain_db=3.0)]
+    render.render_mix(p, stems, vocal, chained)
+    ya, _ = sf.read(plain, dtype="float32", always_2d=True)
+    yb, _ = sf.read(chained, dtype="float32", always_2d=True)
+    assert ya.shape == yb.shape                          # length preserved -> placement_end unchanged
+    assert float(np.max(np.abs(ya - yb))) > 1e-3         # ...but the chain audibly processed the vocal
+
+
+def test_p2_pre_master_ceiling_rejects_overhot_chain(tmp_path):
+    """Referee P2 (render-side): a chain that inflates the vocal's peak by more than +3 dB before the
+    master is rejected loudly (over-processing), not silently normalized into mush. (P2 is a relative
+    peak-gain guard, not the brief's literal -3 dBFS absolute ceiling — see the render.py flag.)"""
+    stems, vocal = _stems(tmp_path)
+    _tone(vocal, freq=3000.0, amp=0.9, secs=8.0)         # a loud tone right in the presence band
+    p = _arr_plan([(1.0, (0.0, 2.0), False)])
+    p.vocal_moves = [_vm(presence_gain_db=6.0)]           # +6 dB at 3 kHz -> ~1.8 peak, well over -3 dBFS
+    with pytest.raises(render.RenderError):
+        render.render_mix(p, stems, vocal, tmp_path / "x.wav")
+
+
+def test_duck_bed_only_ducks_never_boosts():
+    sr = render.SR
+    bed = np.full((sr, 2), 0.5, dtype=np.float32)
+    voc = np.zeros((sr, 2), dtype=np.float32)
+    voc[: sr // 2] = 0.8                                  # the vocal is present only in the first half
+    prepared = [(types.SimpleNamespace(anchor=0.0), voc)]
+    dm = [types.SimpleNamespace(target_stems=["drums", "bass", "other"], key_placement_id="p0",
+                                depth_db=6.0, attack_ms=1, release_ms=1)]
+    out = render._duck_bed(bed, dm, prepared, sr)
+    assert out.shape == bed.shape
+    assert np.all(np.abs(out) <= np.abs(bed) + 1e-6)     # ONLY ducks — never boosts (P4 by construction)
+    assert float(np.mean(np.abs(out[: sr // 4]))) < 0.95 * float(np.mean(np.abs(bed[: sr // 4])))  # ducked under the vocal
+    assert float(np.mean(np.abs(out[-sr // 4:]))) > 0.99 * 0.5  # bed restored where the vocal is absent
 
 
 def test_render_produces_valid_wav(tmp_path):

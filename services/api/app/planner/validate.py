@@ -55,6 +55,16 @@ _BED_STEMS = {"drums", "bass", "other"}
 # math below is exact — no coarse sampling, nothing to slip through.
 _ALL_MUTED_EPS = 0.05
 
+# Phase 0 — the vocal chain's referee rules (P1, P3, P4, P5 are PLAN checks here; P2, the pre-master
+# ceiling, needs the intermediate audio and so is enforced render-side in workers/render.py — it can't
+# be a plan check, by construction). These mirror the config's hard caps; a plan whose moves breach a
+# cap is rejected before it ever renders. With the chain disabled the plan carries no vocal/duck moves,
+# so none of these run and validation is exactly as before.
+_PITCH_MAX_SEMITONES = 3.0    # P1 (rubberband + formant=preserved; librosa would force 2.0 — not used)
+_SATURATE_WET_CAP = 0.5      # P3
+_PRESENCE_GAIN_CAP = 6.0     # P3 (magnitude)
+_DUCK_DEPTH_CAP = 6.0        # P4
+
 
 class ValidationError(Exception):
     """Raised when a plan or a render breaks a hard rule; carries every violation."""
@@ -181,6 +191,67 @@ def _stem_move_violations(moves: list, downbeats: list[float]) -> list[str]:
     return [v for v in out if not (v in seen or seen.add(v))]
 
 
+def _pid_index(pid) -> int | None:
+    """The placement index behind a positional id like 'p3' (matches the planner's emission), or None."""
+    if isinstance(pid, str) and pid.startswith("p") and pid[1:].isdigit():
+        return int(pid[1:])
+    return None
+
+
+def _vocal_chain_violations(plan: MixPlan, downbeats: list[float]) -> list[str]:
+    """Phase 0 referee rules P1, P3, P4, P5 (P2 is render-side). Re-derives independently from the
+    plan's placements/grid; never trusts the plan's own numbers. Empty vocal/duck moves ⇒ no checks
+    ⇒ today's behaviour."""
+    out: list[str] = []
+    placements = list(plan.placements or [])
+    n = len(placements)
+    for m in getattr(plan, "vocal_moves", []) or []:
+        # P1 — pitch band
+        if abs(m.pitch_semitones) > _PITCH_MAX_SEMITONES + 1e-9:
+            out.append(f"a vocal move pitches {m.pitch_semitones:+.1f} st, outside ±{_PITCH_MAX_SEMITONES:.0f} (P1)")
+        # P3 — dial bounds (every dial inside its declared range)
+        if m.saturate_wet > _SATURATE_WET_CAP + 1e-9 or m.saturate_wet < 0.0:
+            out.append("saturate_wet is outside 0..0.5 (P3)")
+        if abs(m.presence_gain_db) > _PRESENCE_GAIN_CAP + 1e-9:
+            out.append("presence_gain_db exceeds ±6 dB (P3)")
+        if not (0.0 <= m.deess <= 1.0):
+            out.append("deess is outside 0..1 (P3)")
+        if m.compress_ratio < 1.0 or m.compress_ratio > 20.0:
+            out.append("compress_ratio is outside 1..20 (P3)")
+        if not (0.0 <= m.reverb_wet <= 1.0):
+            out.append("reverb_wet is outside 0..1 (P3)")
+        if m.highpass_hz and not (20 <= m.highpass_hz <= 500):
+            out.append("highpass_hz is outside 20..500 (P3)")
+        # P5 — timeline anchoring: valid downbeat span, overlapping exactly one placement
+        idx = _pid_index(m.placement_id)
+        if idx is None or not (0 <= idx < n):
+            out.append(f"a vocal move references an unknown placement '{m.placement_id}' (P5)")
+        elif downbeats:
+            if not (0 <= m.start_bar < m.end_bar < len(downbeats)):
+                out.append("a vocal move's bar range is not a valid downbeat span (P5)")
+            else:
+                s_t, e_t = downbeats[m.start_bar], downbeats[m.end_bar]
+                overlaps = sum(
+                    1 for p in placements
+                    if s_t < placement_end(p.anchor, p.vocal_src, plan.vocal_stretch, getattr(p, "warp", None)) - 1e-6
+                    and e_t > p.anchor + 1e-6)
+                if overlaps != 1:
+                    out.append(f"a vocal move spans {overlaps} placements, not exactly one (P5)")
+    # P4 — duck sanity: only ducks (never boosts), depth <= 6 dB, never the vocal stem, keys a real placement
+    for d in getattr(plan, "duck_moves", []) or []:
+        if d.depth_db < 0.0:
+            out.append("a duck move boosts (negative depth) instead of ducking (P4)")
+        if d.depth_db > _DUCK_DEPTH_CAP + 1e-9:
+            out.append(f"a duck depth exceeds {_DUCK_DEPTH_CAP:.0f} dB (P4)")
+        if any(s not in _BED_STEMS for s in d.target_stems):
+            out.append("a duck move targets a non-bed stem (e.g. the vocal) (P4)")
+        kidx = _pid_index(d.key_placement_id)
+        if kidx is None or not (0 <= kidx < n):
+            out.append(f"a duck move keys an unknown placement '{d.key_placement_id}' (P4)")
+    seen: set[str] = set()
+    return [v for v in out if not (v in seen or seen.add(v))]
+
+
 def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[str]:
     """Return the list of hard-rule violations in the plan (empty == clean)."""
     violations: list[str] = []
@@ -247,6 +318,10 @@ def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[s
     # (possibly retimed) a1.downbeats the placements above used, so a move on a movable-master grid
     # is judged on the beats the audio actually plays. Empty stem_moves => no checks => as before.
     violations.extend(_stem_move_violations(getattr(plan, "stem_moves", []), a1.downbeats))
+    # Phase 0 — the vocal chain's referee rules (P1/P3/P4/P5), judged against the SAME (retimed /
+    # windowed) grid as everything above. P2 (pre-master ceiling) is enforced render-side. Empty
+    # vocal/duck moves ⇒ no checks ⇒ validated exactly as before.
+    violations.extend(_vocal_chain_violations(plan, a1.downbeats))
     return violations
 
 

@@ -515,3 +515,91 @@ def test_validate_stem_move_off_retimed_grid_flagged():
                             anchor=a1r.downbeats[8], bed_stretch=1.05, master_bpm=master_bpm)
     v = validate.validate_plan(plan, a1, a2)
     assert any("R3" in m for m in v), v
+
+
+# ---------------------------------------------------------------- Phase 0: the vocal chain (P1-P5)
+# Each rule has a test that FAILS without the rule (a plan that breaches it must be rejected), plus a
+# clean enabled plan that passes. The referee re-derives from the plan's placements/grid; it never
+# trusts the move's own numbers. (P2, the pre-master ceiling, is render-side — tested in test_render.py.)
+
+from app.models import DuckMove, VocalProcessMove
+
+
+def _chain_plan(vmoves=None, dmoves=None):
+    """A one-placement plan (anchor 4.0, vocal 0-8 -> ends 12.0 at stretch 1.0) plus chain moves.
+    a1 = make_analysis(bpm=120) -> downbeats every 2s, so bar 2 = 4.0s (anchor), bar 6 = 12.0s (end)."""
+    return MixPlan(
+        mix_id="m" * 64, song1_id="a" * 64, song2_id="b" * 64, master_bpm=120.0,
+        vocal_stretch=1.0, vocal_src=(0.0, 8.0), anchor=4.0,
+        placements=[Placement(anchor=4.0, vocal_src=(0.0, 8.0))],
+        vocal_moves=vmoves or [], duck_moves=dmoves or [])
+
+
+def _good_vm(**k):
+    d = dict(placement_id="p0", start_bar=2, end_bar=6, deess=0.4, highpass_hz=90,
+             compress_ratio=3.0, saturate_wet=0.25, presence_gain_db=2.5, reverb_wet=0.12)
+    d.update(k)
+    return VocalProcessMove(**d)
+
+
+def _a():
+    return make_analysis(bpm=120.0, n_bars=16)  # downbeats 0,2,...,30
+
+
+def test_clean_enabled_chain_plan_passes():
+    a1, a2 = _a(), make_analysis()
+    assert validate.validate_plan(_chain_plan([_good_vm()], [DuckMove(key_placement_id="p0",
+             depth_db=1.5, attack_ms=5, release_ms=120)]), a1, a2) == []
+
+
+def test_p1_rejects_pitch_beyond_three_semitones():
+    a1, a2 = _a(), make_analysis()
+    v = validate.validate_plan(_chain_plan([_good_vm(pitch_semitones=5.0)]), a1, a2)
+    assert any("P1" in m for m in v), v
+
+
+def test_p3_rejects_saturate_wet_over_half():
+    a1, a2 = _a(), make_analysis()
+    v = validate.validate_plan(_chain_plan([_good_vm(saturate_wet=0.7)]), a1, a2)
+    assert any("P3" in m for m in v), v
+
+
+def test_p3_rejects_presence_gain_over_six_db():
+    a1, a2 = _a(), make_analysis()
+    v = validate.validate_plan(_chain_plan([_good_vm(presence_gain_db=8.0)]), a1, a2)
+    assert any("P3" in m for m in v), v
+
+
+def test_p4_rejects_a_duck_that_boosts():
+    a1, a2 = _a(), make_analysis()
+    v = validate.validate_plan(_chain_plan([_good_vm()],
+            [DuckMove(key_placement_id="p0", depth_db=-2.0, attack_ms=5, release_ms=120)]), a1, a2)
+    assert any("P4" in m for m in v), v
+
+
+def test_p4_rejects_a_duck_deeper_than_six_db():
+    a1, a2 = _a(), make_analysis()
+    v = validate.validate_plan(_chain_plan([_good_vm()],
+            [DuckMove(key_placement_id="p0", depth_db=9.0, attack_ms=5, release_ms=120)]), a1, a2)
+    assert any("P4" in m for m in v), v
+
+
+def test_p4_rejects_a_duck_targeting_the_vocal_stem():
+    a1, a2 = _a(), make_analysis()
+    v = validate.validate_plan(_chain_plan([_good_vm()],
+            [DuckMove(target_stems=["drums", "vocals"], key_placement_id="p0",
+                      depth_db=1.5, attack_ms=5, release_ms=120)]), a1, a2)
+    assert any("P4" in m for m in v), v
+
+
+def test_p5_rejects_a_move_that_overlaps_no_placement():
+    a1, a2 = _a(), make_analysis()
+    # bars 0..1 -> 0.0-2.0s, well before the placement at 4.0-12.0s -> overlaps zero placements
+    v = validate.validate_plan(_chain_plan([_good_vm(start_bar=0, end_bar=1)]), a1, a2)
+    assert any("P5" in m for m in v), v
+
+
+def test_p5_rejects_a_move_for_an_unknown_placement():
+    a1, a2 = _a(), make_analysis()
+    v = validate.validate_plan(_chain_plan([_good_vm(placement_id="p9")]), a1, a2)
+    assert any("P5" in m for m in v), v

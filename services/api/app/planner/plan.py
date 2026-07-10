@@ -14,7 +14,8 @@ from __future__ import annotations
 import json
 import os
 
-from app.models import MixPlan, Placement, TrackAnalysis, VocalChainConfig, chain_config_hash
+from app.models import (DuckMove, MixPlan, Placement, TrackAnalysis, VocalChainConfig,
+                        VocalProcessMove, chain_config_hash)
 from app.planner import fence, hooks, llm, window
 
 # Phase 0 (T1): the AI arrangement engine is OFF by default. The founder prefers the
@@ -359,9 +360,57 @@ def _dedupe_nonoverlapping(placements: list[Placement], stretch: float) -> list[
     return kept
 
 
+def _emit_vocal_chain(placements: list[Placement], cfg: VocalChainConfig,
+                      a1g: TrackAnalysis, stretch: float) -> tuple[list[VocalProcessMove], list[DuckMove]]:
+    """Phase 0 (G5): translate the vocal-chain CONFIG into per-placement timeline INSTRUCTIONS — one
+    `VocalProcessMove` (stages 1-8) and one bed `DuckMove` (stage 9) per placement. This is the whole
+    architecture: the config is the planner's input; the moves are the renderer's input; the renderer
+    never reads the config. Emitted ONLY when the chain is enabled — disabled ⇒ ([], []) so the render
+    is byte-identical (mirrors `stem_moves == []`). A stage disabled in the config emits its NEUTRAL
+    dial (the renderer treats a neutral dial as off — the per-stage kill switch). `pitch_semitones`
+    stays 0 here: key-correction repair is Slice 2d, still off. `placement_id` is positional (`p{i}`),
+    matching the renderer's lookup."""
+    if not cfg.enabled or not placements:
+        return [], []
+    downbeats = a1g.downbeats or []
+
+    def bar_of(t: float) -> int:
+        return min(range(len(downbeats)), key=lambda k: abs(downbeats[k] - t)) if downbeats else 0
+
+    vmoves: list[VocalProcessMove] = []
+    dmoves: list[DuckMove] = []
+    for i, p in enumerate(placements):
+        pid = f"p{i}"
+        end_t = fence.placement_end(p.anchor, p.vocal_src, stretch, getattr(p, "warp", None))
+        sb = bar_of(p.anchor)
+        eb = max(sb + 1, bar_of(end_t))
+        vmoves.append(VocalProcessMove(
+            placement_id=pid, start_bar=sb, end_bar=eb,
+            pitch_semitones=0.0,  # key-correction repair is Slice 2d (off)
+            deess=cfg.deess_intensity if cfg.deess_enabled else 0.0,
+            highpass_hz=cfg.highpass_hz if cfg.highpass_enabled else 0,
+            compress_ratio=cfg.compress_ratio if cfg.compress_enabled else 1.0,
+            saturate_wet=cfg.saturate_wet if cfg.saturate_enabled else 0.0,
+            presence_gain_db=cfg.presence_gain_db if cfg.presence_enabled else 0.0,
+            reverb_wet=cfg.reverb_wet if cfg.reverb_enabled else 0.0,
+            reason="chain: bollywood_vocal_over_house v0 (static config dials)",
+        ))
+        if cfg.duck_enabled:
+            dmoves.append(DuckMove(
+                target_stems=["drums", "bass", "other"], key_placement_id=pid,
+                depth_db=cfg.duck_depth_db, attack_ms=cfg.duck_attack_ms, release_ms=cfg.duck_release_ms))
+    return vmoves, dmoves
+
+
 def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
-                   prompt: str = "", take: int = 1) -> MixPlan:
-    """Produce the arrangement recipe. Raises MixDeclined if the pair can't blend."""
+                   prompt: str = "", take: int = 1,
+                   chain: VocalChainConfig | None = None) -> MixPlan:
+    """Produce the arrangement recipe. Raises MixDeclined if the pair can't blend.
+
+    `chain` is the vocal-chain config (Phase 0). Defaults to OFF (`VocalChainConfig()`), so a mix
+    emits no vocal_moves/duck_moves and renders byte-identically to m6.0 until the founder flips it on
+    after the tuning week."""
+    chain = chain or VocalChainConfig()
     opts = fence.arrangement_options(a1, a2)
     if not opts["mixable"]:
         raise MixDeclined(opts["reason"])
@@ -436,6 +485,10 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         we = max(we, min(ws + last_end + _OUTRO_SECS, full_end))  # never shrink; never past the real track
         window_span = (round(ws, 3), round(we, 3))
 
+    # Phase 0 (G5): emit the vocal-processing timeline instructions from the chain config (none when
+    # disabled → byte-identical render). key-correction pitch stays 0 (Slice 2d).
+    vocal_moves, duck_moves = _emit_vocal_chain(placements, chain, a1g, opts["vocal_stretch"])
+
     first = placements[0]
     return MixPlan(
         mix_id=mix_id, song1_id=a1.song_id, song2_id=a2.song_id,
@@ -445,7 +498,8 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         placements=placements, s1_vocal_regions=s1_regions, stem_moves=stem_moves, take=take,
         window=window_span,
         camelot_fit=fence.camelot_detail(a1, a2),  # Phase 0: informational key-fit (logged, never gates)
-        chain_config_hash=chain_config_hash(VocalChainConfig()),  # the (default, off) chain config in effect
+        chain_config_hash=chain_config_hash(chain),  # the chain config this mix was rendered under
+        vocal_moves=vocal_moves, duck_moves=duck_moves,  # Phase 0 vocal chain (empty when disabled)
         notes=_describe_arrangement(placements, s1_regions),
         confidence=0.75 if source == "ai" else 0.6, source=source,
     )

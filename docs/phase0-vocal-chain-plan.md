@@ -63,7 +63,9 @@ Lay the timeline instructions and config, all OFF, so nothing changes yet.
 
 - **Acceptance:** with chain disabled, `MixPlan.vocal_moves == []` and the render is byte-identical to Slice 1; models round-trip; `compute_pitch_repair` unit-tested. **No dangerous file touched.**
 
-### Slice 2b — The nine-stage render chain (HEAVY — `render.py` + CI golden-file)
+### Slice 2b — The nine-stage render chain (HEAVY — `render.py`) ✅ BUILT, SHIPPED DISABLED
+
+✅ **BUILT 2026-07-10, disabled, golden gate green, adversarial review SAFE for the disabled ship. NOT enabled.** Golden test written FIRST against main (disabled == m6.0 hash). Nine stages built per spec (formant=preserved + pitchq=quality explicit; deterministic numpy reverb, not aecho; stage 9 bed-side numpy ducker; length-preserving). Real-audio verified: FO×Der Lagi disabled = byte-identical to baseline, enabled = clean/no-clip. **Deviations flagged:** P2 relative peak-gain (not literal −3 dBFS — incompatible with our stem levels); stage 9 numpy ducker (not sidechaincompress). **Bug fixed:** reverb was +7 dB peak-inflating → wet normalized to dry peak. **Must-fix before enable:** GPL `rubberband` licensing decision (inert now, pitch pinned 0); saturation-mush crest-factor guard.
 
 The production engine. Reads `VocalProcessMove`s; obeys, never decides.
 
@@ -76,7 +78,9 @@ The production engine. Reads `VocalProcessMove`s; obeys, never decides.
 - **CI golden-file test:** disabled render hashes to the `m5o.1` reference; build fails otherwise. Pin ffmpeg version for determinism (G2).
 - **Ceremony:** independent **test-author** subagent writes failing tests vs approved acceptance; **adversarial-safety quorum** (correctness / DSP-distortion / blast-radius / reproduces) must ALL return safe; then **confirm-and-apply** (founder yes → `.zuko/approve.js` → apply).
 
-### Slice 2c — The referee rules P1–P5 (HEAVY — `validate.py`)
+### Slice 2c — The referee rules P1–P5 (HEAVY — `validate.py`) ✅ BUILT
+
+✅ **BUILT 2026-07-10 with 2b (same change).** P1/P3/P4/P5 are plan checks in `validate.py::_vocal_chain_violations`; **P2 is render-side** (needs the intermediate audio). Each rule has a fail-without-the-rule test. Landed WITH the chain, before the enable gate (smoke alarm before the stove).
 
 The quality guardrail gains five rules; it re-derives independently, never trusts the plan.
 

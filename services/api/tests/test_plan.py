@@ -187,6 +187,42 @@ def test_plan_emits_no_vocal_moves_while_the_chain_is_disabled(monkeypatch):
     assert plan.vocal_moves == [] and plan.duck_moves == []
 
 
+def test_enabled_chain_emits_one_move_per_placement(monkeypatch):
+    """Phase 0 Slice 2b: with the chain enabled, the planner emits one VocalProcessMove (with the
+    config's dials) and one keyed DuckMove per placement — and the plan still passes the referee."""
+    from app.models import VocalChainConfig
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0, n_bars=64)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 30.0), (40.0, 70.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2, chain=VocalChainConfig(enabled=True))
+
+    assert plan.vocal_moves and len(plan.vocal_moves) == len(plan.placements)
+    assert len(plan.duck_moves) == len(plan.placements)
+    vm = plan.vocal_moves[0]
+    assert vm.saturate_wet == 0.25 and vm.presence_gain_db == 2.5 and vm.highpass_hz == 90
+    assert vm.pitch_semitones == 0.0  # key-correction repair is Slice 2d (still off)
+    assert plan.duck_moves[0].key_placement_id == plan.vocal_moves[0].placement_id
+    validate.assert_plan(plan, a1, a2)  # the enabled plan is clean under the referee (P1-P5)
+
+
+def test_a_disabled_stage_emits_its_neutral_dial(monkeypatch):
+    """Each of the nine stages is independently disable-able: a stage turned off in the config emits
+    its NEUTRAL dial (the renderer treats a neutral dial as off), while enabled stages keep theirs."""
+    from app.models import VocalChainConfig
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0, n_bars=64)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(16.0, 40.0)])
+    cfg = VocalChainConfig(enabled=True, saturate_enabled=False, presence_enabled=False, duck_enabled=False)
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2, chain=cfg)
+
+    vm = plan.vocal_moves[0]
+    assert vm.saturate_wet == 0.0 and vm.presence_gain_db == 0.0  # off stages -> neutral dials
+    assert vm.highpass_hz == 90 and vm.compress_ratio == 3.0      # on stages keep their dials
+    assert plan.duck_moves == []                                  # duck disabled -> no DuckMove
+
+
 def test_plan_carries_the_chain_config_hash(monkeypatch):
     """Phase 0 T1.4: the plan records the (default, off) vocal-chain config hash for reproducibility."""
     from app.models import VocalChainConfig, chain_config_hash

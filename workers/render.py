@@ -363,6 +363,201 @@ def _placements_of(plan):
                            "beat_breath": getattr(plan, "beat_breath", False)})()]
 
 
+# ---------------------------------------------------------------- Phase 0: the vocal chain (stages 1-9)
+# The planner decides; the renderer OBEYS. Every stage below is driven by a VocalProcessMove / DuckMove
+# the planner emitted — the renderer NEVER reads VocalChainConfig. With no moves (the chain disabled),
+# nothing here runs and the render is byte-identical to m6.0 (the golden-file gate).
+#
+# The values below are fixed effect-SHAPE constants (like _SWEEP_LO_HZ etc. already in this file) — the
+# CURVE of each effect, not a per-mix decision. The tunable per-stage AMOUNTS all come from the move's
+# dials (deess / highpass_hz / compress_ratio / saturate_wet / presence_gain_db / reverb_wet /
+# pitch_semitones). A neutral dial => that stage is a no-op (this is the per-stage kill switch: the
+# planner emits a neutral dial when the config disables a stage).
+_SATURATE_DRIVE = 2.0          # tanh input gain (shape); saturation AMOUNT is move.saturate_wet
+_SATURATE_WET_CAP = 0.5        # 🔒 hard cap (also enforced by referee P3)
+_COMPRESS_THRESHOLD_DB = -18.0  # acompressor threshold (shape); AMOUNT is move.compress_ratio
+_PRESENCE_HZ = 3000.0          # presence bell centre (shape); AMOUNT is move.presence_gain_db
+_PRESENCE_Q = 0.8
+_REVERB_SECS = 0.6             # convolution IR length; the wet tail is TRUNCATED to the dry length
+_REVERB_DECAY = 6.0            # exponential decay of the synthetic IR
+_REVERB_SEED = 20260710        # 🔒 FIXED seed -> the IR (and every render) is deterministic (golden-safe)
+# Referee P2 (enforced HERE, render-side — it needs the intermediate audio the plan-referee can't see).
+# INTENT (founder): catch a vocal distorted into mush at stage 6 that the master would faithfully
+# normalize and hand back looking legal ("we can't clip" is a false sense of safety about the output).
+#
+# ⚠️ DEVIATION FROM THE BRIEF, FLAGGED (rule 6): the brief specified an ABSOLUTE ceiling — "any stage's
+# output peak > -3 dBFS". That is INCOMPATIBLE with our signal levels: our separated vocal stems
+# legitimately peak near/above 0 dBFS (measured 1.14 on the real Der Lagi vocal), and the whole
+# pre-master signal is DESIGNED to exceed unity (build/sweep overshoot already "folds into the peak-
+# normalize"). A literal -3 dBFS ceiling rejects EVERY real mix, so the chain could never be tuned.
+# Instead P2 here is a RELATIVE guard: the chain must not push the vocal's PEAK up by more than
+# _P2_MAX_GAIN_DB — i.e. it can't blow the level up. This catches gross over-EQ / over-drive before the
+# master hides it, while letting a naturally-loud clean vocal through.
+#
+# ⚠️ KNOWN LIMIT, FLAGGED: a PEAK guard (this one, or the brief's literal one) does NOT catch saturation
+# mush that stays under the peak — tanh actually LOWERS the peak. The faithful mush-detector is a
+# crest-factor (peak/RMS) floor, which must be ear-calibrated during the tuning week. Deferred, on
+# purpose, to that week — noted here so nobody mistakes this peak guard for a full mush check.
+_P2_MAX_GAIN_DB = 3.0
+_P2_MAX_GAIN = 10 ** (_P2_MAX_GAIN_DB / 20)
+
+
+def _fit_length(y: np.ndarray, n: int) -> np.ndarray:
+    """Trim or zero-pad a stereo array to exactly `n` samples. The whole vocal chain is length-
+    preserving by construction, so a placed vocal's length — and thus `placement_end` and the
+    referee's R1 overlap math — is NEVER changed by processing."""
+    if len(y) > n:
+        return y[:n]
+    if len(y) < n:
+        return np.vstack([y, np.zeros((n - len(y), 2), dtype=np.float32)])
+    return y
+
+
+def _ffmpeg_filter_array(voc: np.ndarray, filtergraph: str, sr: int) -> np.ndarray:
+    """Run one FFmpeg audio filtergraph on a stereo float array and return it at the SAME length.
+    Used for the stages FFmpeg does well (de-ess / high-pass / compress / presence EQ in one pass, and
+    rubberband pitch in another). A 32-bit float intermediate WAV keeps precision between stages."""
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
+        i, o = Path(td) / "i.wav", Path(td) / "o.wav"
+        sf.write(i, voc, sr, subtype="FLOAT")
+        _run_ffmpeg(["ffmpeg", "-y", "-i", str(i), "-filter:a", filtergraph,
+                     "-ar", str(sr), "-ac", "2", "-c:a", "pcm_f32le", str(o)])
+        y, _ = sf.read(o, dtype="float32", always_2d=True)
+    return _fit_length(y, len(voc))
+
+
+def _pitch_shift(voc: np.ndarray, semitones: float, sr: int) -> np.ndarray:
+    """Stage 3 — rubberband pitch shift with formants PRESERVED (never the `shifted` chipmunk default)
+    and pitch quality set explicitly. Pitch-only (tempo=1) -> length-preserving."""
+    ratio = 2.0 ** (semitones / 12.0)
+    return _ffmpeg_filter_array(voc, f"rubberband=pitch={ratio:.6f}:formant=preserved:pitchq=quality", sr)
+
+
+def _saturate(x: np.ndarray, drive: float, wet: float) -> np.ndarray:
+    """Stage 6 — tanh soft-clip, dry/wet blended. `wet` is hard-capped at 0.5 (not a suggestion)."""
+    wet = min(wet, _SATURATE_WET_CAP)
+    return ((1.0 - wet) * x + wet * np.tanh(x * drive)).astype(np.float32)
+
+
+def _reverb_ir(sr: int) -> np.ndarray:
+    """A short, DETERMINISTIC exponentially-decaying-noise impulse response.
+
+    FFmpeg has no native algorithmic reverb (only `aecho`, a delay, and `afir`, which needs an IR
+    asset). This is a small deterministic convolution reverb chosen for testability and zero binary
+    assets — NOT because convolution is the ideal reverb here. Placeholder-grade. Revisit if it sounds
+    thin. The FIXED seed makes the IR — and therefore every render — reproducible (golden-file safe)."""
+    rng = np.random.default_rng(_REVERB_SEED)
+    n = int(_REVERB_SECS * sr)
+    t = np.linspace(0.0, _REVERB_SECS, n, endpoint=False)
+    ir = (rng.standard_normal(n).astype(np.float32)) * np.exp(-_REVERB_DECAY * t).astype(np.float32)
+    ir[0] = 1.0  # a dry spike so the wet path keeps the direct sound
+    return (ir / float(np.max(np.abs(ir)))).astype(np.float32)
+
+
+def _reverb(voc: np.ndarray, wet: float, sr: int) -> np.ndarray:
+    """Stage 8 — a convolution-reverb SEND (dry/wet blend). Length-preserving: the wet tail is
+    truncated to the dry length so the vocal's length (and R1 overlap math) is unchanged."""
+    from scipy.signal import fftconvolve
+
+    ir = _reverb_ir(sr)
+    wetsig = np.empty_like(voc)
+    for ch in range(voc.shape[1]):
+        wetsig[:, ch] = fftconvolve(voc[:, ch], ir)[: len(voc)]
+    # Convolution SUMS many delayed IR taps, so the wet peak balloons well above the dry — normalize
+    # the wet back to the dry peak so the reverb adds AMBIENCE, not LEVEL (otherwise a small wet blend
+    # inflates the peak ~7 dB and trips P2). The blend is then a convex mix of two same-peak signals,
+    # so it can't exceed the dry peak.
+    wp = float(np.max(np.abs(wetsig)))
+    dp = float(np.max(np.abs(voc)))
+    if wp > 0.0:
+        wetsig *= dp / wp
+    return ((1.0 - wet) * voc + wet * wetsig).astype(np.float32)
+
+
+def _apply_vocal_chain(voc: np.ndarray, m, sr: int) -> np.ndarray:
+    """Apply the vocal chain (stages 1,2,3,5,6,7,8) to a placed vocal, per the planner's move `m`.
+
+    LENGTH-PRESERVING by construction (`_fit_length` at the end), so a placed vocal's length —
+    `placement_end` and the referee's R1 overlap math — is never changed by processing. De-ess (stage
+    1) precedes saturate (stage 6) by construction (a fixed-order pipeline, not a user-orderable list):
+    saturation is non-linear and amplifies the separation artifacts de-ess removes. Each stage is a
+    no-op when its dial is neutral (the per-stage kill switch). Stage 4 (time-stretch) already ran
+    upstream in `_vocal_take*` and is NOT touched here.
+
+    Two engine boundaries: stages 1,2,5,7 in ONE FFmpeg filtergraph (single decode/encode), then
+    rubberband (3), then numpy saturate (6) and numpy reverb (8). Order note: the grouping runs presence
+    (7) before saturate (6); the one hard rule (1 before 6) holds regardless.
+
+    KNOWN COST (flagged, not fixed here): stages 3 (pitch) and 4 (stretch) are two sequential resampling
+    passes, each adding artifacts. rubberband can do pitch+tempo in ONE call, but stage 4 uses a per-bar
+    `warp_map` (variable ratio per bar) while pitch is constant across the placement, so they can't be
+    trivially merged. A real future optimisation, not a Phase 0 task."""
+    n0 = len(voc)
+    if n0 == 0:
+        return voc
+    fg: list[str] = []
+    if m.deess > 0.0:                                             # stage 1
+        fg.append(f"deesser=i={min(max(m.deess, 0.0), 1.0):.4f}")
+    if m.highpass_hz > 0:                                         # stage 2
+        fg.append(f"highpass=f={int(m.highpass_hz)}")
+    if m.compress_ratio > 1.0:                                    # stage 5
+        fg.append(f"acompressor=threshold={_COMPRESS_THRESHOLD_DB}dB:ratio={float(m.compress_ratio):.4f}")
+    if m.presence_gain_db != 0.0:                                 # stage 7
+        fg.append(f"equalizer=f={_PRESENCE_HZ}:t=q:w={_PRESENCE_Q}:g={float(m.presence_gain_db):.4f}")
+    if fg:
+        voc = _ffmpeg_filter_array(voc, ",".join(fg), sr)
+    if abs(m.pitch_semitones) > 1e-9:                             # stage 3
+        voc = _pitch_shift(voc, float(m.pitch_semitones), sr)
+    if m.saturate_wet > 0.0:                                      # stage 6 (after stage 1, always)
+        voc = _saturate(voc, _SATURATE_DRIVE, float(m.saturate_wet))
+    if m.reverb_wet > 0.0:                                        # stage 8
+        voc = _reverb(voc, min(float(m.reverb_wet), 1.0), sr)
+    return _fit_length(voc, n0)
+
+
+def _smooth_env(env: np.ndarray, attack_ms: float, release_ms: float, sr: int) -> np.ndarray:
+    """Smooth a 0..1 presence envelope with a single-pole filter (release-dominated; attack
+    approximated). Vectorized + deterministic. Only used by the stage-9 duck."""
+    from scipy.signal import lfilter
+
+    tau = max(float(attack_ms), float(release_ms)) * 0.001 * sr
+    a = float(np.exp(-1.0 / max(1.0, tau)))
+    return lfilter([1.0 - a], [1.0, -a], env).astype(np.float32)
+
+
+def _duck_bed(bed: np.ndarray, duck_moves: list, prepared: list, sr: int) -> np.ndarray:
+    """Stage 9 — a BED-side sidechain duck, keyed by the ALREADY-PLACED vocal (NOT a vocal stage).
+    For each DuckMove, the bed is attenuated by up to `depth_db` while its keyed placement's vocal is
+    present, smoothed over attack/release. ONLY DUCKS (gain <= 1) -> can never push the master toward
+    clipping (referee P4). Runs at mix time, on the bed, before the master.
+
+    DEVIATION FROM THE BRIEF (flagged per rule 6): the brief suggested FFmpeg `sidechaincompress`. We
+    use a deterministic numpy envelope ducker instead — same reasoning as the reverb: it is exactly
+    depth-accurate (a compressor can't hit "duck by 1.5 dB"), provably only-attenuating (so the P2/P4
+    safety properties hold by construction), and byte-deterministic for the golden-file gate. The
+    architecture the brief cares about is preserved exactly: it operates on the BED, keyed by the PLACED
+    vocal, and only ducks. `target_stems` is honored for the common all-three case (the bed here is the
+    summed drums+bass+other); a stem-SUBSET duck would need the stems kept separate downstream — noted,
+    not needed while the chain ships disabled."""
+    by_id = {f"p{i}": (max(0, int(p.anchor * sr)), voc) for i, (p, voc) in enumerate(prepared)}
+    gain = np.ones(len(bed), dtype=np.float32)
+    for d in duck_moves:
+        key = by_id.get(getattr(d, "key_placement_id", None))
+        if key is None:
+            continue
+        a0, voc = key
+        vlen = min(len(voc), len(bed) - a0)
+        if vlen <= 0:
+            continue
+        depth = 10.0 ** (-abs(float(d.depth_db)) / 20.0)          # linear floor, <= 1 (only ducks)
+        env = np.zeros(len(bed), dtype=np.float32)
+        vmono = np.abs(voc[:vlen]).mean(axis=1)
+        env[a0:a0 + vlen] = vmono / (float(vmono.max()) or 1.0)
+        env = _smooth_env(env, d.attack_ms, d.release_ms, sr)
+        gain = np.minimum(gain, 1.0 - (1.0 - depth) * env)        # duck toward the floor where the vocal is loud
+    return (bed * gain[:, None]).astype(np.float32)
+
+
 def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
                out_path: Path) -> Path:
     """Render `plan` to a WAV at out_path.
@@ -425,20 +620,50 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
         for name in _BED_STEMS:
             bed += _hold(decoded[name], length) * _stem_envelope(length, moves, name, SR)[:, None]
 
-        prev_voc_end = 0  # sample where the last placed vocal ended — a build never reaches back over it
-        for p in _placements_of(plan):
+        # Phase 0: the planner's vocal-processing instructions. Empty when the chain is disabled -> the
+        # chain and the duck are both skipped -> the render is byte-identical to m6.0 (the golden gate).
+        # The renderer OBEYS these moves; it never reads VocalChainConfig. placement_id is positional
+        # ("p{i}"), matching the planner's emission.
+        vmoves = {getattr(m, "placement_id", None): m for m in getattr(plan, "vocal_moves", []) or []}
+        duck_moves = getattr(plan, "duck_moves", []) or []
+
+        # Pass 1 — build each placement's finished vocal. This touches ONLY the vocal (never the bed),
+        # so lifting it out of the lay loop below leaves the bed's arithmetic order — and therefore the
+        # rendered bytes — unchanged. The vocal chain (stages 1-8) applies HERE, length-preserving.
+        prepared: list = []  # [(placement, voc_array), ...]
+        for i, p in enumerate(_placements_of(plan)):
             warp = getattr(p, "warp", None)
             if warp:  # M4d: per-bar beat-lock — each bar re-locked to Song 1's grid (no drift)
                 voc = _edge_fade(_vocal_take_warped(song2_vocal, warp))
             else:  # legacy single global stretch (M3/M4a–c cached plans, or a thin-grid fallback)
                 start, end = p.vocal_src
                 voc = _edge_fade(_vocal_take(song2_vocal, start, max(end - start, 0.0), plan.vocal_stretch))
+            vm = vmoves.get(f"p{i}")
+            if vm is not None:  # Phase 0 vocal chain (stages 1-8); no move -> skipped -> byte-identical
+                pk_in = float(np.max(np.abs(voc))) if voc.size else 0.0
+                voc = _apply_vocal_chain(voc, vm, SR)
+                pk_out = float(np.max(np.abs(voc))) if voc.size else 0.0  # referee P2 (relative peak-gain)
+                if pk_in > 0.0 and pk_out > pk_in * _P2_MAX_GAIN:
+                    raise RenderError(
+                        f"vocal chain raised the peak {20 * np.log10(pk_out / pk_in):.1f} dB "
+                        f"(> {_P2_MAX_GAIN_DB:.0f} dB, P2) — over-processed; the master would normalize the mush")
             if getattr(p, "chop", False):  # Step 4: re-fire the hook onset over this entry's FIRST bar
                 k = min(bar, len(voc))       # (a vocal chop). Replaces bar 1 -> voc length is unchanged,
                 if k > 0:                    # so placement_end / the referee's overlap math don't move.
                     voc[:k] = _chop_pattern(voc[:k], k, plan.master_bpm)
             if getattr(p, "echo", False):  # ring the (already edge-faded) vocal out into the drop
                 voc = _echo(voc, plan.master_bpm)
+            prepared.append((p, voc))
+
+        # Stage 9 — sidechain-duck the BED under the placed vocals (only when the planner emitted
+        # DuckMoves; disabled -> skipped -> byte-identical). Bed-side, keyed by the placed vocal.
+        if duck_moves:
+            bed = _duck_bed(bed, duck_moves, prepared, SR)
+
+        # Pass 2 — lay each vocal on the bed with its entry moves (build / breath / sweep). Same order
+        # and same arithmetic as before the split.
+        prev_voc_end = 0  # sample where the last placed vocal ended — a build never reaches back over it
+        for p, voc in prepared:
             anchor = max(0, int(p.anchor * SR))  # never place before the start
             b0 = max(0, anchor - bar)
             build_bars = getattr(p, "build_bars", 0)
