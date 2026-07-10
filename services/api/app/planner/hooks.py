@@ -4,8 +4,9 @@ The app can't hear audio, so *which* vocal slice is "the hook" (the recognizable
 on) is a per-song judgment, not something the loudness/energy math can find (it kept grabbing the
 wrong bit). For the small curated catalog we mark it ONCE — the slice is read off the song's own
 section map (which chorus holds the hook) plus knowledge of the song, then confirmed by ear — keyed
-by the song's content id. A song with no entry falls back to the old loudest-peak pick, so this is
-purely additive.
+by the song's content id. A song with no entry is NOT guessed at: the planner uses its vocal regions
+as-is (song order) and never lands the loudest slice on the drop as a fake hook — a low-confidence
+guess measured ~28s off is worse than admitting we don't know (Task 1, 2026-07-10).
 
 Each value is (start_secs, end_secs): the sung stretch that contains the hook. The planner lands it
 on the strongest anchor (the drop) and uses the other vocal parts for the setup entries.

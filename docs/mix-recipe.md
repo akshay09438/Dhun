@@ -41,7 +41,7 @@ _The single, plain-English rulebook for how the app turns two songs into a DJ mi
 
 - **The drop gets the HOOK** — the song's signature line (e.g. _"Jee karda," "Dil ye bekaraar kyun hai," "Aankhein teri kitni haseen"_), not whatever is merely loudest.
 - **The other spots get the setup** — different, other parts of the song (a verse, another section), never the hook twice, so the mix has variety and builds _toward_ the hook.
-- **How the hook is found:** the app can't hear the songs, so for each curated song the hook's exact spot is **marked once** (read off the song's chorus/verse structure + knowledge of the song, then **confirmed by ear**) and locked in. A song with no mark falls back to the loudest part.
+- **How the hook is found:** the app can't hear the songs, so for each curated song the hook's exact spot is **marked once** (read off the song's chorus/verse structure + knowledge of the song, then **confirmed by ear**) and locked in. A song with **no mark is not guessed at** — its vocal parts are used **as-is, in song order**, and the loudest part is never crowned "the hook" (measured ~28s wrong; a confident wrong guess is worse than none — Task 1, 2026-07-10).
 
 ## Step 4 — Lock the vocal to the beat
 

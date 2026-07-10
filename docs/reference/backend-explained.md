@@ -70,7 +70,7 @@ These are the human judgments and hand-tuned numbers baked into the code — the
 ### 3a. Curated catalog + per-song hooks (hand-made)
 
 - **The catalog** (`data/library/manifest.json`): a hand-verified list of songs we've already ingested, split and analyzed, chosen in a tempo band that blends well. Users pick from this list (V1 has no open upload in the shipped catalog flow).
-- **The hook markers** (`planner/hooks.py`): for a few songs we **hand-mark the signature line** — the exact `(start, end)` seconds of "the hook" (e.g. Jee Karda's _"Jee karda"_ = 55.0–68.7 s). The app can't hear which line is the memorable one, so a human marks it (read off the section map, confirmed by ear). Only 3 are marked today; a song with no marker falls back to "loudest slice."
+- **The hook markers** (`planner/hooks.py`): for a few songs we **hand-mark the signature line** — the exact `(start, end)` seconds of "the hook" (e.g. Jee Karda's _"Jee karda"_ = 55.0–68.7 s). The app can't hear which line is the memorable one, so a human marks it (read off the section map, confirmed by ear). Only 3 are marked today; a song with no marker is **not guessed at** — its vocal regions are used as-is in song order, never crowning the loudest slice "the hook" (removed Task 1, 2026-07-10).
 
 ### 3b. Tempo safety (in `fence.py`)
 

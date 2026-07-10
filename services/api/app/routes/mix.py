@@ -113,7 +113,12 @@ _S1_STEMS = ("drums", "bass", "other")
 #        change, so ENGINE_VERSION (the mix cache) is the right lever — NOT LOCAL_ANALYSIS_VERSION (the
 #        analysis output — energy/regions/sections — is UNCHANGED). The removed fallback fires only on
 #        empty vocal_regions (no catalog song), so catalog mixes re-render byte-identical. Zero Replicate.
-ENGINE_VERSION = "m6.1"
+# m6.2: LOUDEST-SLICE HOOK FALLBACK removed (Task 1) — a vocal donor with NO hand-marked hook no longer
+#        lands its loudest slice on the drop (a guess measured ~28s off); it uses its vocal regions as-is
+#        in song order. A donor WITH a hand-marked hook is byte-identical (path unchanged), but a hookless
+#        donor's plan differs, so bump the mix cache. PLANNER change → ENGINE_VERSION, not analysis. Zero
+#        Replicate (stems/analysis keyed by song_id).
+ENGINE_VERSION = "m6.2"
 
 # Phase 0 (T1.4): a stable hash of the vocal-chain config, folded into the mix cache id. Default (off)
 # config today; during the tuning week each dial change yields a fresh hash -> a fresh render, so the

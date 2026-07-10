@@ -315,10 +315,13 @@ def test_section_labels_do_not_affect_a_populated_regions_plan(monkeypatch):
     assert base.stem_moves == garbled.stem_moves and base.s1_vocal_regions == garbled.s1_vocal_regions
 
 
-# Deliberately baselined 2026-07-10 (section map dropped): verified via
-# test_section_labels_do_not_affect_a_populated_regions_plan that this plan comes from ENERGY (the
-# drop at bars 40-47) + vocal_regions, not section labels. Re-baseline ONLY after diffing + eyeballing.
-_GATE_B_PLAN_SIG = "b55f68d228c0294b"
+# Deliberately RE-baselined 2026-07-10 (Task 1 — loudest-slice hook guess removed): eyeballed the new
+# no-hook plan — vocals now lay in the song's own time order (anchor 0.0→region 0-16, anchor 32→region
+# 24-44, the drop wraps to region 1), no longer loudness-selecting which region lands on the drop; the
+# drop keeps its energy-driven produced build. Still comes from ENERGY + vocal_regions, not section
+# labels (see test_section_labels_do_not_affect_a_populated_regions_plan). Re-baseline ONLY after
+# diffing + eyeballing.
+_GATE_B_PLAN_SIG = "e57725c75d3314ae"
 
 
 def test_gate_b_plan_determinism_on_a_fixed_analysis(monkeypatch):
@@ -472,29 +475,36 @@ def test_ai_midbar_starts_still_pass_the_referee(monkeypatch):
     validate.assert_plan(plan, a1, a2)  # must NOT raise — the old code raised a R7 ValidationError
 
 
-def test_loudest_vocal_peak_lands_on_the_biggest_drop(monkeypatch):
-    """The house × Bollywood recipe's core move (R1): Song 2's most POWERFUL vocal stretch
-    should land on Song 1's biggest DROP — not wherever the rotation happens to put it."""
-    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
-    # Song 1: one clear, biggest drop in the final third (breakdown at bars 36-39, drop at 40).
-    energy = [0.3] * 48
-    for i in range(36, 40):
-        energy[i] = 0.2
-    for i in range(40, 48):
-        energy[i] = 0.95  # bar 40 -> 80.0s is the biggest drop
-    a1 = make_analysis(bpm=120.0, n_bars=48, energy=energy)
-    # Song 2: a LOUD vocal peak early (0-16s) and a quiet region later.
-    a2e = [0.2] * 32
-    for i in range(0, 8):
-        a2e[i] = 0.95
-    a2 = make_analysis(bpm=118.0, n_bars=32, energy=a2e,
-                       vocal_regions=[(0.0, 16.0), (40.0, 56.0)])
+def test_no_hook_lays_vocals_in_song_order_not_loudest():
+    """Task 1 (2026-07-10): with NO hand-marked hook, the arranger must not GUESS which slice is the
+    memorable hook by landing Song 2's LOUDEST region on the drop (that guess measured ~28s off as a
+    hook detector). It lays the vocal regions across the anchors in the song's own time order — the
+    earliest entry carries the earliest region — so no slice is privileged onto the drop."""
+    from app.models import Section, TrackAnalysis
 
-    plan = planner.build_mix_plan("m" * 64, a1, a2, take=1)
+    downs = [round(2.0 * i, 3) for i in range(61)]     # a downbeat every 2s, 0..120s
+    energy = [0.3] * 61
+    energy[45] = 0.95                                  # the LOUDEST drop at ~90s (final third)
+    a1g = TrackAnalysis(song_id="beat", status="ready", bpm=120.0,
+                        beats=[round(1.0 * i, 3) for i in range(121)], downbeats=downs,
+                        phrase_starts=downs[::8], energy_curve=energy,
+                        sections=[Section(start=0.0, end=120.0, label="verse")])
+    # An EARLY region and a LATE region; the LATE one is the loudest (vocal_peaks lists it first).
+    # NO "hook" key -> the no-guess path. Old code would land the loud late region on the 90s drop.
+    opts = {
+        "anchors_ranked": [10.0, 50.0, 90.0], "drops": [90.0],
+        "vocal_slices": [(4.0, 24.0), (60.0, 80.0)],
+        "vocal_peaks": [(60.0, 80.0), (4.0, 24.0)],    # loudest-first (late region loudest)
+        "vocal_stretch": 1.0, "track_end": 120.0,
+        "a1_grid": a1g, "master_bpm": 120.0,
+    }  # note: NO "hook"
 
-    drop_place = min(plan.placements, key=lambda p: abs(p.anchor - 80.0))
-    assert abs(drop_place.anchor - 80.0) < 2.0   # a placement lands on the biggest drop
-    assert drop_place.vocal_src[0] == 0.0        # ...and it carries Song 2's loudest peak (starts at 0.0)
+    placements = planner._default_arrangement(opts, take=1)
+
+    ordered = sorted(placements, key=lambda p: p.anchor)
+    assert ordered[0].vocal_src[0] == 4.0              # earliest entry carries the earliest region
+    drop = [p for p in placements if p.anchor == 90.0]
+    assert drop and drop[0].vocal_src[0] != 60.0       # the loudest region is NOT forced onto the drop
 
 
 def test_placement_produce_fields_default_off():

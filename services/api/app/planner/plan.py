@@ -210,11 +210,17 @@ def _default_arrangement(opts: dict, take: int) -> list[Placement]:
     The first placement never breathes; later ones do."""
     anchors_ranked = opts["anchors_ranked"]
     peaks = opts.get("vocal_peaks") or opts["vocal_slices"]  # loudest-first; slices is the fallback
+    hook = opts.get("hook")  # the hand-marked signature line (high confidence), or None
+    # No hand-marked hook -> low confidence: never GUESS which slice is the memorable hook by landing
+    # Song 2's LOUDEST region on the drop. That guess (loudest-slice-as-hook) measured ~28s off as a
+    # hook detector, so we don't ship it (Task 1, 2026-07-10). Instead use the vocal regions AS-IS, in
+    # the song's own time order, across the anchors in time order -- no slice privileged onto the drop.
+    asis = sorted(opts["vocal_slices"], key=lambda r: r[0])  # song/time order, not loudness-ranked
     drops = opts.get("drops", [])
     stretch = opts["vocal_stretch"]
     if len(anchors_ranked) < 2:
         return [Placement(anchor=anchors_ranked[0] if anchors_ranked else 0.0,
-                          vocal_src=opts.get("hook") or peaks[0])]
+                          vocal_src=hook or asis[0])]
 
     n = min(_MAX_PLACEMENTS, len(anchors_ranked))
     chosen = fence.synced_anchors(anchors_ranked, drops, opts["track_end"], count=n, take=take)  # drop-aware arc
@@ -239,7 +245,6 @@ def _default_arrangement(opts: dict, take: int) -> list[Placement]:
         except ValueError:
             return (0.0, -10_000.0)
     by_strength = sorted(range(len(chosen)), key=lambda i: _strength(chosen[i]), reverse=True)
-    hook = opts.get("hook")
     if hook:
         # Land the signature HOOK on the strongest anchor (the drop); the other entries get the SETUP
         # — the song's other vocal parts, never the hook again, rotated by `take` for regenerate variety.
@@ -249,7 +254,9 @@ def _default_arrangement(opts: dict, take: int) -> list[Placement]:
         for rank, idx in enumerate(by_strength[1:]):
             slice_for[idx] = setup[(rank + take - 1) % len(setup)]
     else:
-        slice_for = {idx: peaks[(rank + take - 1) % len(peaks)] for rank, idx in enumerate(by_strength)}
+        # No hook: vocals in the song's own time order across the anchors in time order (`chosen` is
+        # time-ordered) — the earliest entry gets the earliest region; no loudest-onto-drop guess.
+        slice_for = {idx: asis[(idx + take - 1) % len(asis)] for idx in range(len(chosen))}
 
     placements: list[Placement] = []
     for i, anc in enumerate(chosen):
@@ -271,7 +278,7 @@ def _default_arrangement(opts: dict, take: int) -> list[Placement]:
             s0 = s0 + spare * ((take - 1) % n_pos) / (n_pos - 1)
         placements.append(Placement(anchor=anc, vocal_src=(round(s0, 3), round(s0 + length, 3)), beat_breath=i > 0))
     if not placements:  # nothing fit — one safe placement at the best anchor
-        s0, s1 = peaks[0]
+        s0, s1 = hook or asis[0]   # the hook if marked, else the first region as-is (never loudest-guess)
         end = s0 + min(s1 - s0, fence.MAX_VOCAL_SECS)
         placements = [Placement(anchor=chosen[0] if chosen else anchors_ranked[0], vocal_src=(s0, round(end, 3)))]
     return placements
