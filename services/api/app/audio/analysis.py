@@ -31,6 +31,17 @@ from app.config import settings
 
 _MODEL = "sakemin/all-in-one-music-structure-analyzer"
 
+# The analysis has two halves with very different costs to recompute:
+#   CLOUD half (bpm/beats/downbeats/sections) — Replicate, real money per song. Keyed by song_id
+#     (content hash) and cached in `{song_id}.structure.json`. NEVER invalidated.
+#   LOCAL half (key/energy_curve/vocal_regions) — pure numpy/scipy on our box, FREE. Keyed by
+#     song_id + LOCAL_ANALYSIS_VERSION, so improving the local analyzer recomputes the local half
+#     WITHOUT re-paying for the cloud structure (it is reused from the structure cache, or seeded
+#     from a legacy combined analysis.json — either way zero cloud calls).
+# Bump this ONLY when the local analyzer changes; a bump then re-derives the local half for every
+# song for free. (Cloud-half changes would need a model/version change, which is a separate concern.)
+LOCAL_ANALYSIS_VERSION = "la1"
+
 # Krumhansl–Kessler key profiles (perceptual weight of each pitch class).
 _MAJOR = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
 _MINOR = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
@@ -47,6 +58,23 @@ class AnalysisError(Exception):
 
 def analysis_path(song_id: str) -> Path:
     return settings.data_dir / f"{song_id}.analysis.json"
+
+
+def structure_path(song_id: str) -> Path:
+    """The durable CLOUD-half cache (bpm/beats/downbeats/sections), keyed by song_id, never invalidated."""
+    return settings.data_dir / f"{song_id}.structure.json"
+
+
+def analysis_is_current(song_id: str) -> bool:
+    """True iff a cached analysis exists AND its LOCAL half is the current version — so a version bump
+    (an improved local analyzer) makes a cache look 'not ready' and gets re-derived on next access."""
+    p = analysis_path(song_id)
+    if not p.exists():
+        return False
+    try:
+        return json.loads(p.read_text()).get("local_analysis_version") == LOCAL_ANALYSIS_VERSION
+    except (OSError, json.JSONDecodeError):
+        return False
 
 
 # ---------------------------------------------------------------- cloud part
@@ -72,6 +100,35 @@ def _cloud_structure(wav_path: Path) -> dict:
         if isinstance(parsed, dict) and "beats" in parsed:
             return parsed
     raise AnalysisError("analyzer returned no usable result")
+
+
+def _normalize_structure(raw: dict) -> dict:
+    """Normalize a raw cloud result into the durable structure shape (segments -> sections)."""
+    return {
+        "bpm": float(raw.get("bpm") or 0.0),
+        "beats": [float(b) for b in raw.get("beats", [])],
+        "downbeats": [float(d) for d in raw.get("downbeats", [])],
+        "sections": [{"start": float(s["start"]), "end": float(s["end"]), "label": str(s["label"])}
+                     for s in raw.get("segments", [])],
+    }
+
+
+def _structure_cached(song_id: str, wav_path: Path, legacy: dict | None = None) -> dict:
+    """The CLOUD half — from the structure cache, or seeded from a legacy combined analysis.json, or
+    (only when neither exists) a fresh Replicate call. Reusing/seeding is what makes a LOCAL version
+    bump cost ZERO cloud."""
+    sp = structure_path(song_id)
+    if sp.exists():
+        return json.loads(sp.read_text())
+    if legacy is None and analysis_path(song_id).exists():
+        legacy = json.loads(analysis_path(song_id).read_text())
+    if legacy and legacy.get("beats"):  # a pre-split combined analysis already holds the cloud fields
+        struct = {"bpm": float(legacy.get("bpm") or 0.0), "beats": legacy["beats"],
+                  "downbeats": legacy.get("downbeats", []), "sections": legacy.get("sections", [])}
+    else:  # genuinely first time — the one paid cloud call, then cached forever
+        struct = _normalize_structure(_cloud_structure(wav_path))
+    sp.write_text(json.dumps(struct))
+    return struct
 
 
 # ---------------------------------------------------------------- local math
@@ -184,18 +241,20 @@ def _beat_regularity(beats: list[float]) -> float:
 
 
 def analyze_track(song_id: str, wav_path: Path) -> dict:
-    """Full analysis for one song, cached by content id (run once, ever)."""
+    """Full analysis for one song. The CLOUD half is cached by content id (run once, ever); the LOCAL
+    half is re-derived for free whenever LOCAL_ANALYSIS_VERSION changes (zero cloud)."""
     cache = analysis_path(song_id)
+    legacy: dict | None = None
     if cache.exists():
-        return json.loads(cache.read_text())
+        legacy = json.loads(cache.read_text())
+        if legacy.get("local_analysis_version") == LOCAL_ANALYSIS_VERSION:
+            return legacy  # both halves fresh — nothing to do
 
-    structure = _cloud_structure(wav_path)
+    # Reuse (or seed) the cloud half; recompute ONLY the local half. Passing the legacy analysis lets
+    # `_structure_cached` seed the structure cache from it, so a version bump never re-calls Replicate.
+    structure = _structure_cached(song_id, wav_path, legacy=legacy)
     beats = [float(b) for b in structure.get("beats", [])]
     downbeats = [float(d) for d in structure.get("downbeats", [])]
-    sections = [
-        {"start": float(s["start"]), "end": float(s["end"]), "label": str(s["label"])}
-        for s in structure.get("segments", [])
-    ]
     vocal_regions, vocal_conf = _vocal_regions(song_id, downbeats)
 
     result = {
@@ -206,11 +265,12 @@ def analyze_track(song_id: str, wav_path: Path) -> dict:
         "downbeats": downbeats,
         "phrase_starts": downbeats[::8],  # 8-bar blocks (4/4 assumed in V1)
         "key": detect_key(wav_path),
-        "sections": sections,
+        "sections": structure.get("sections", []),
         "sections_confidence": 0.6,  # the industry-wide weak link — never trust blindly
         "energy_curve": _rms_per_bar(wav_path, downbeats),
         "vocal_regions": vocal_regions,
         "vocal_confidence": vocal_conf,
+        "local_analysis_version": LOCAL_ANALYSIS_VERSION,
     }
     cache.write_text(json.dumps(result))
     return result

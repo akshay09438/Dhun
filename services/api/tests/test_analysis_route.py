@@ -40,6 +40,7 @@ def _fake_result(sid):
         "sections": [{"start": 0.0, "end": 1.0, "label": "verse"}],
         "sections_confidence": 0.6, "energy_curve": [1.0],
         "vocal_regions": [], "vocal_confidence": 0.3,
+        "local_analysis_version": an.LOCAL_ANALYSIS_VERSION,  # a fresh cache the route serves as-is
     }
 
 

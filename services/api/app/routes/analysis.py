@@ -14,7 +14,7 @@ import threading
 
 from fastapi import APIRouter, HTTPException, Response
 
-from app.audio.analysis import analysis_path, analyze_track
+from app.audio.analysis import analysis_is_current, analysis_path, analyze_track
 from app.models import TrackAnalysis
 from app.storage import path_for
 
@@ -27,10 +27,11 @@ _jobs: dict[str, str] = {}
 
 
 def _load_ready(song_id: str) -> TrackAnalysis | None:
-    p = analysis_path(song_id)
-    if not p.exists():
+    # Ready only when BOTH halves are fresh — a stale LOCAL version (an improved analyzer) re-derives
+    # on next access (free, no cloud) rather than serving the old blobby analysis forever.
+    if not analysis_is_current(song_id):
         return None
-    data = json.loads(p.read_text())
+    data = json.loads(analysis_path(song_id).read_text())
     return TrackAnalysis(status="ready", **data)
 
 
