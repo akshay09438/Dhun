@@ -46,6 +46,23 @@ def window_analysis(a1: TrackAnalysis, win_start: float, win_end: float) -> Trac
     })
 
 
+def output_grid(a1: TrackAnalysis, master_bpm: float, bed_stretch: float = 1.0,
+                win: tuple[float, float] | None = None) -> TrackAnalysis:
+    """The rendered mix's own grid in OUTPUT time: retime Song 1's bed to `master_bpm` (the movable
+    master), then crop to `win` if the mix was windowed. This is the SAME derivation the referee runs
+    in validate.assert_plan (retimed_analysis then window_analysis), so the grid persisted on the plan
+    matches the audio the renderer produced — set_render then joins mixes by ARITHMETIC over the plans,
+    never by re-analyzing the output WAV. Pure arithmetic over cached source data; no audio, no cloud.
+
+    (validate.py keeps its own inline copy of this derivation — it is a dangerous, founder-tuned surface
+    we must not touch — so this is the canonical copy for everyone else. They must stay in agreement.)
+    """
+    g = fence.retimed_analysis(a1, master_bpm) if abs((bed_stretch or 1.0) - 1.0) >= 1e-6 else a1
+    if win is not None:
+        g = window_analysis(g, win[0], win[1])
+    return g
+
+
 _TARGET_SECS = 90.0      # the window we aim for
 _MIN_SECS = 60.0         # ...flexible down to here
 _MAX_SECS = 120.0        # ...and up to here

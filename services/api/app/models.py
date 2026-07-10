@@ -227,6 +227,14 @@ class MixPlan(BaseModel):
     chain_config_hash: str = ""  # Phase 0: the vocal-chain config this mix was rendered under (cache + reproducibility)
     vocal_moves: list[VocalProcessMove] = []  # Phase 0 G5: vocal-processing instructions; [] = today's plain vocal
     duck_moves: list[DuckMove] = []  # Phase 0 stage 9: bed ducks under the vocal; [] = no ducking (today)
+    # Set transitions (3.1): the rendered mix's OWN beat grid in OUTPUT seconds + its length, written
+    # next to the WAV so joining mixes into a continuous set (set_render) is ARITHMETIC over the plans —
+    # never a re-analysis of the output audio ("the pipeline must not listen to itself"). Derived at
+    # render time from Song 1's cached grid + master_bpm + window (window.output_grid), the SAME grid
+    # the referee judges against. Empty/None on pre-3.1 cached plans (they simply carry no set-grid).
+    out_downbeats: list[float] = []       # bar starts ("the one") in the mix's output timeline
+    out_phrase_starts: list[float] = []   # 8-bar phrase boundaries in the mix's output timeline
+    mix_duration: float | None = None     # the rendered mix's length in seconds
 
 
 class Mix(BaseModel):

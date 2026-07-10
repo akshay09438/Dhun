@@ -87,6 +87,14 @@ def test_mix_is_async_then_ready_and_plays(tmp_path, monkeypatch):
     assert audio.headers["content-type"] == "audio/wav"
     assert len(audio.content) > 1000  # a real WAV, not empty
 
+    # 3.1 (set transitions): the persisted plan carries the mix's OWN beat grid + length, so a set-join
+    # is arithmetic over the plans (no re-analysis of the WAV).
+    plan = ready["plan"]
+    assert plan["out_downbeats"], "the mix's output-time downbeats must be persisted on the plan"
+    assert plan["mix_duration"] and plan["mix_duration"] > 0
+    assert plan["out_downbeats"][0] >= 0.0
+    assert set(plan["out_phrase_starts"]) <= set(plan["out_downbeats"])  # phrase boundaries are downbeats
+
 
 def test_mix_is_cached(tmp_path, monkeypatch):
     _use_tmp(monkeypatch, tmp_path)

@@ -1,5 +1,6 @@
 from app.models import Section, TrackAnalysis
-from app.planner.window import window_analysis
+from app.planner.fence import retimed_analysis
+from app.planner.window import output_grid, window_analysis
 
 
 def _grid():
@@ -15,6 +16,26 @@ def _grid():
                   Section(start=60.0, end=120.0, label="chorus")],
         vocal_regions=[(10.0, 20.0), (70.0, 95.0)],
     )
+
+
+def test_output_grid_native_tempo_is_the_source_grid():
+    """No movable-master retime (bed_stretch 1) and no window → the mix's grid IS Song 1's grid."""
+    a = _grid()
+    g = output_grid(a, master_bpm=120.0)
+    assert g.downbeats == a.downbeats
+    assert g.phrase_starts == a.phrase_starts
+
+
+def test_output_grid_retimes_then_windows_like_the_referee():
+    """A movable-master + windowed mix: output_grid must equal the referee's own derivation
+    (retimed_analysis → window_analysis), so the persisted set-grid matches the rendered audio."""
+    a = _grid()
+    g = output_grid(a, master_bpm=132.0, bed_stretch=1.1, win=(20.0, 80.0))  # bed_stretch != 1 → retime
+    expected = window_analysis(retimed_analysis(a, 132.0), 20.0, 80.0)
+    assert g.downbeats == expected.downbeats           # exact match to the grid render/validate use
+    assert g.phrase_starts == expected.phrase_starts
+    assert g.downbeats and g.downbeats[0] == 0.0       # windowed grid is 0-based (output time)
+    assert set(g.phrase_starts) <= set(g.downbeats)    # phrase boundaries are downbeats
 
 
 def test_window_analysis_crops_and_rebases_to_zero():

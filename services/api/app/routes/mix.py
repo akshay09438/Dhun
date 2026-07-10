@@ -31,6 +31,7 @@ from app.config import settings
 from app.models import Mix, MixPlan, TrackAnalysis, VocalChainConfig, chain_config_hash
 from app.planner import validate
 from app.planner import name as name_planner
+from app.planner import window
 from app.planner.plan import MixDeclined, build_mix_plan
 from app.storage import path_for
 
@@ -190,6 +191,23 @@ def _ready(mix_id: str) -> Mix | None:
                plan=plan, message=plan.notes)
 
 
+def _attach_set_grid(plan: MixPlan, a1: TrackAnalysis, wav: Path) -> None:
+    """Stamp the mix's own beat grid (output-time downbeats + phrase boundaries) and length onto the
+    plan, so a later set-join reads them as arithmetic instead of re-analyzing the rendered WAV. The
+    grid is Song 1's cached grid retimed to the master tempo and cropped to the window (window.output_grid
+    — the referee's own derivation); the length comes from the WAV header (metadata, not audio analysis).
+    Best-effort: a header read that fails leaves mix_duration None but keeps the (load-bearing) grid."""
+    g = window.output_grid(a1, plan.master_bpm, plan.bed_stretch, plan.window)
+    plan.out_downbeats = list(g.downbeats)
+    plan.out_phrase_starts = list(g.phrase_starts)
+    try:
+        import soundfile as sf
+        info = sf.info(str(wav))
+        plan.mix_duration = round(info.frames / info.samplerate, 4) if info.samplerate else None
+    except Exception:  # noqa: BLE001 — a missing/odd WAV header must never fail the mix
+        plan.mix_duration = None
+
+
 def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int) -> None:
     """Background worker: plan -> validate -> render -> validate the audio."""
     try:
@@ -208,6 +226,12 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int) 
             stems["vocals"] = s1_voc
         render_mix(plan, stems, stem_path(song2_id, "vocals"), _mix_wav(mix_id))
         validate.assert_render(_mix_wav(mix_id))
+
+        # 3.1 (set transitions): stamp the mix's OWN beat grid + length onto the plan before caching it,
+        # so joining mixes into a set is arithmetic over the plans — never a re-analysis of the WAV.
+        # Grid is derived from Song 1's cached grid + tempo/window (the SAME grid the referee used), not
+        # from the audio we just wrote; the length is read from the WAV header (metadata, not analysis).
+        _attach_set_grid(plan, a1, _mix_wav(mix_id))
 
         _plan_path(mix_id).write_text(plan.model_dump_json())
         _jobs.pop(mix_id, None)  # readiness now inferred from the stored files

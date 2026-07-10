@@ -313,6 +313,16 @@ Diagnostic-led work (measure before building), done alongside the founder's tuni
 - **Gate B added** (`test_gate_b_plan_determinism_on_a_fixed_analysis`) — plan-determinism given a fixed analysis, complementing Gate A (render-determinism). Re-baseline deliberately (diff + eyeball) when the planner/analyzer changes.
 - **Diagnostics (recorded, killed 4 theories):** vocal_regions blob rate 11% (not 90%); `lead_sections` fires 100% of legal pairs (not "never"); loudest-slice + bed-energy + vocal-stem-repetition all miss the 3 hand-marked hooks → hooks stay hand-marked; section-map precision 23%. `sections_confidence=0.6` is ~3× optimistic.
 
+## As-built (Set transitions — the plan carries its own beat grid), Task 3.1 (2026-07-10)
+
+The set stitcher (`workers/set_render.py`) currently joins finished mixes with a plain equal-power crossfade — no tempo lock, no beat alignment, beats clash at every seam. The fix is beat-aligned, phrase-boundary seams (3.3), and the enabling move (3.1) is: **stop throwing away the mix's beat grid when we write the WAV.** A set-join must be arithmetic over the plans, never a re-analysis of our own output ("the pipeline must not listen to itself").
+
+- **The `MixPlan` was already persisted** next to the WAV (`routes/mix.py::_run_mix` writes `{mix_id}.mixplan.json`). 3.1 **enriches** it with the mix's own timeline: `MixPlan.out_downbeats` / `out_phrase_starts` (bar + 8-bar-phrase boundaries in **output** seconds) and `mix_duration` — all additive, empty/None on pre-3.1 plans.
+- **`window.output_grid(a1, master_bpm, bed_stretch, win)`** (non-dangerous `window.py`) derives that grid: retime Song 1's cached grid to the master tempo (movable master) then crop to the window — **the SAME derivation `validate.assert_plan` runs**, so the persisted grid matches the audio the renderer produced. Pure arithmetic over cached source data; **no audio decode, no cloud.** (validate.py keeps its own inline copy — a dangerous, founder-tuned surface we must not touch — so `output_grid` is the canonical copy for everyone else; they must stay in agreement.)
+- **`routes/mix.py::_attach_set_grid`** stamps the grid onto the plan after render, before caching. `mix_duration` is read from the **WAV header** (metadata, not analysis); a bad header leaves it `None` but keeps the load-bearing grid. **`render.py`/`validate.py` UNTOUCHED** (3.1 lives entirely in `mix.py` + `window.py` + `models.py`, as the brief requires — the founder is tuning `render.py`).
+- **Tests:** `output_grid` unit-tested to equal the referee's derivation (native + retimed+windowed); the real end-to-end mix-route render test now asserts the persisted plan carries a non-empty output grid, a positive duration, and phrase boundaries that are a subset of the downbeats. **386 backend green.**
+- **Left (3.2, 3.3):** one global master tempo across a whole set; then beat-aligned phrase-boundary seams in `set_render.py` reading these persisted grids.
+
 ## Known follow-ups
 
 - **Re-run the adversarial safety review on the R1 crossfade relaxation** (bounded hand-off overlap, no engine fade) before merging `feat/house-bollywood-energy-sync` to main. See the handoff's open escalations.
