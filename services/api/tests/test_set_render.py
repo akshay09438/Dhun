@@ -131,3 +131,50 @@ def test_empty_list_raises(tmp_path):
     out = tmp_path / "set.wav"
     with pytest.raises(set_render.SetRenderError):
         set_render.assemble_set([], out)
+
+
+# ---- 3.2: one global master tempo across a set ----
+
+def test_set_tempo_band_matches_fence():
+    """The set engine's safe band MUST equal the planner's SAFE_STRETCH band — one source of truth,
+    two readers. If fence retunes the band, this fails loudly instead of the set drifting silently."""
+    from app.planner import fence
+    assert set_render.SAFE_STRETCH_LO == fence.SAFE_STRETCH_LO
+    assert set_render.SAFE_STRETCH_HI == fence.SAFE_STRETCH_HI
+
+
+def test_global_master_tempo_centres_every_song_in_the_band():
+    """The chosen tempo keeps every song's stretch strictly inside [0.89, 1.11]."""
+    bpms = [111.0, 118.0, 122.0, 125.0, 133.0]  # a feasible spread (max/min = 1.198 <= 1.247)
+    t = set_render.global_master_tempo(bpms)
+    assert 118.0 <= t <= 124.0
+    for b in bpms:
+        assert set_render.SAFE_STRETCH_LO <= t / b <= set_render.SAFE_STRETCH_HI
+    assert set_render.global_master_tempo([]) == 0.0
+
+
+def test_set_tempo_plan_all_fit_when_close():
+    """A tempo-close set: one global tempo, nobody declined."""
+    songs = [{"id": "a", "bpm": 120.0}, {"id": "b", "bpm": 124.0}, {"id": "c", "bpm": 118.0}]
+    plan = set_render.set_tempo_plan(songs)
+    assert plan["all_fit"] and not plan["declined"]
+    assert all(0.89 <= s["ratio"] <= 1.11 for s in plan["accepted"])
+
+
+def test_set_tempo_plan_declines_the_outlier_not_the_whole_set():
+    """The 6-song catalog can't all share one tempo (111 & 143 BPM are >1.25x apart). The plan must
+    DECLINE the single true outlier (Tere Bina, 143) and keep the other five in band — never loosen
+    the band, and never wrongly drop a song that would have fit (e.g. Der Lagi, 111)."""
+    songs = [
+        {"name": "Father Ocean", "bpm": 122.0}, {"name": "Dont Start Now", "bpm": 125.0},
+        {"name": "Der Lagi", "bpm": 111.0}, {"name": "Tujhe Bhula Diya", "bpm": 133.0},
+        {"name": "With You", "bpm": 118.0}, {"name": "Tere Bina", "bpm": 143.0},
+    ]
+    plan = set_render.set_tempo_plan(songs)
+    assert not plan["all_fit"]
+    assert [d["name"] for d in plan["declined"]] == ["Tere Bina"]     # only the true outlier
+    assert {a["name"] for a in plan["accepted"]} == {
+        "Father Ocean", "Dont Start Now", "Der Lagi", "Tujhe Bhula Diya", "With You"}
+    for a in plan["accepted"]:                                        # everyone kept is in band
+        assert 0.89 <= a["ratio"] <= 1.11
+    assert plan["declined"][0]["ratio"] < 0.89                        # Tere Bina really was out
