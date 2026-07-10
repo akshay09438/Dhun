@@ -115,9 +115,13 @@ _S1_STEMS = ("drums", "bass", "other")
 #        empty vocal_regions (no catalog song), so catalog mixes re-render byte-identical. Zero Replicate.
 # m6.2: LOUDEST-SLICE HOOK FALLBACK removed (Task 1) — a vocal donor with NO hand-marked hook no longer
 #        lands its loudest slice on the drop (a guess measured ~28s off); it uses its vocal regions as-is
-#        in song order. A donor WITH a hand-marked hook is byte-identical (path unchanged), but a hookless
-#        donor's plan differs, so bump the mix cache. PLANNER change → ENGINE_VERSION, not analysis. Zero
-#        Replicate (stems/analysis keyed by song_id).
+#        in song order. ⚠️ ALL FIVE shipped catalog vocal donors are currently hookless (only the 3 older
+#        Anchor Point songs in hooks.py are marked, none of them in the catalog), so EVERY catalog vocal
+#        mix changed — VERIFIED on Father Ocean × Der Lagi (entries 2 & 3 swap which Der Lagi section they
+#        sing; the drop is unchanged). The bump is warranted (real movement), not caution: without it the
+#        app would serve stale pre-Task-1 audio. PLANNER change → ENGINE_VERSION, not analysis. Zero
+#        Replicate (stems/analysis keyed by song_id). Marking each donor's hook (Task 2) restores the
+#        stable with-hook path per song.
 ENGINE_VERSION = "m6.2"
 
 # Phase 0 (T1.4): a stable hash of the vocal-chain config, folded into the mix cache id. Default (off)
