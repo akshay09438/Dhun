@@ -196,25 +196,25 @@ def test_declines_when_unmixable():
     assert "tempo" in str(exc.value).lower()
 
 
-def test_long_song_vocal_spans_its_good_part_window(monkeypatch):
-    """The arc fix, now at WINDOW scale. A long song with a real mid-song drop is cropped to its
-    ~90s good-part window (founder decision 2026-07-09: tighter, best-parts mixes replace the old
-    'span the whole 4+ minutes' behaviour). Within that window the vocal must STILL reach the first
-    half AND the final third — the anti-clustering guarantee holds, just on the window not the full
-    track."""
+def test_long_song_vocal_spans_the_full_song(monkeypatch):
+    """The anti-clustering guarantee, on the FULL song. The good-parts window is disabled (founder
+    decision 2026-07-09: remix the whole song, not the best ~90s), so a long song is NOT cropped —
+    plan.window is None — and the vocal must reach both the first third AND the final third across the
+    whole track, never clustered in one loud spot."""
     monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)  # deterministic
     energy = [0.3] * 128
-    for i in range(56, 72):  # loud sections mid-song — a real drop, so the song gets windowed
+    for i in range(56, 72):  # a real mid-song drop
         energy[i] = 0.9
     a1 = make_analysis(bpm=120.0, n_bars=128, energy=energy)  # ~256s (~4.3 min)
     a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 30.0), (40.0, 70.0)])
 
     plan = planner.build_mix_plan("m" * 64, a1, a2)
 
-    assert plan.window is not None              # a long song with a drop is cropped to its good part
-    anchors = sorted(p.anchor for p in plan.placements)  # window-relative (start at 0)
-    assert anchors[0] <= 40.0                   # a vocal enters early (no long empty intro)
-    assert anchors[-1] - anchors[0] >= 40.0     # ...and the vocal spans a real stretch, not clustered
+    assert plan.window is None                  # full song, no ~90s crop
+    anchors = sorted(p.anchor for p in plan.placements)  # absolute times across the whole track
+    assert anchors[0] <= 90.0                   # a vocal enters in the first third (no long empty intro)
+    assert anchors[-1] >= 150.0                 # ...and one reaches the final third of the ~256s song
+    assert anchors[-1] - anchors[0] >= 80.0     # spanning a real stretch, not clustered
 
 
 def test_hook_lands_on_the_loudest_drop():
@@ -719,13 +719,13 @@ def _vocal_song():
                          vocal_regions=[(20.0, 60.0), (120.0, 150.0)])
 
 
-def test_build_mix_plan_windows_a_long_song(monkeypatch):
+def test_build_mix_plan_uses_the_full_song(monkeypatch):
+    """The good-parts window is disabled (founder decision 2026-07-09): even a long song is remixed
+    FULL-length, never cropped to the best ~90s, so plan.window is None. The window machinery is
+    proven still-working in test_validate_plan_clean_on_a_windowed_plan (which flips the flag on)."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)     # force the deterministic path
     p = planner.build_mix_plan("m1", _beat_song(240.0), _vocal_song())
-    assert p.window is not None
-    ws, we = p.window
-    assert 60.0 <= we - ws <= 120.0                            # ~90s good part, not 4 minutes
-    assert all(pl.anchor <= (we - ws) + 1e-6 for pl in p.placements)  # window-relative anchors
+    assert p.window is None                                    # full song, no ~90s crop
 
 
 def test_build_mix_plan_falls_back_full_track_without_a_drop(monkeypatch):

@@ -30,17 +30,22 @@ def test_validate_plan_clean():
     assert validate.validate_plan(make_plan(anchor=16.0), a1, a2) == []
 
 
-def test_validate_plan_clean_on_a_windowed_plan():
+def test_validate_plan_clean_on_a_windowed_plan(monkeypatch):
     """A good-parts WINDOWED plan has window-relative (0-based) anchors/warp/moves. The referee is
     handed the FULL Song-1 grid (as the real pipeline does — mix.py passes _load_analysis(song1)),
     so it must re-derive the SAME windowed grid the planner used before judging on-beat/warp/moves.
     Without that, on a real (non-uniform) grid every windowed mix is falsely rejected as off-beat.
-    A deterministic drifting grid reproduces it without touching the cache."""
+    A deterministic drifting grid reproduces it without touching the cache.
+
+    The good-parts window is disabled by default (founder decision 2026-07-09: full-song mixes), so
+    this test flips the flag back ON to keep the referee's window-handling covered — the machinery is
+    dormant, not deleted, so a future re-enable must still validate cleanly."""
     import os
 
     from app.models import Section, TrackAnalysis
     from app.planner.plan import build_mix_plan
 
+    monkeypatch.setattr("app.planner.plan._GOOD_PARTS_WINDOW_ENABLED", True)  # exercise the dormant window path
     os.environ.pop("ANTHROPIC_API_KEY", None)  # force the deterministic rules path
     downs, t = [], 0.0
     for i in range(160):  # bar interval drifts 2.00 -> ~2.13s (a real tempo wobble)

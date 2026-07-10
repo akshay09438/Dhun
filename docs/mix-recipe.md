@@ -24,6 +24,8 @@ _The single, plain-English rulebook for how the app turns two songs into a DJ mi
 
 ## Step 1b — Find the good part first (crop to ~90 seconds)
 
+> **⚠️ TURNED OFF 2026-07-09 (founder decision):** after ear-testing, the founder chose **full-song mixes** over the ~90s good part. This whole step is **disabled by default** (a flag in `plan.py`) — the app now arranges across the **whole track** again. The step is kept dormant + documented below so it can be flipped back on in one line if wanted.
+
 - Real DJs don't play a whole track — they play the ~1–2 minutes that builds up to and lands on the song's big moment. Before deciding where the vocal goes, the app now picks the beat song's **best ~90 seconds (60–120s, flexible)** and arranges everything inside that window instead of the whole track.
 - **The window is anchored on the beat's main drop** — its biggest, most energetic drop (the payoff) — and ends with a short **wind-down outro** so the mix eases out instead of stopping cold right on the hook.
 - **It starts on a proper cue point** — a phrase boundary at a spot of _lower_ musical density (a breakdown, a quiet moment, or where a build begins), never dropped into the middle of a busy chorus. This is exactly where a real DJ would start bringing a track in.

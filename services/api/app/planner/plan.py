@@ -18,6 +18,10 @@ from app.models import MixPlan, Placement, TrackAnalysis
 from app.planner import fence, hooks, llm, window
 
 _MAX_PLACEMENTS = 3
+# Good-parts window: crop the mix to the beat's best ~90s. DISABLED (founder decision 2026-07-09:
+# remix the FULL song, not the best ~90s). Kept as a flag — not deleted — so it's a one-line revert
+# and the window machinery (window.py + render/validate window-handling) stays dormant + tested.
+_GOOD_PARTS_WINDOW_ENABLED = False
 _ENTRY_MARGIN = 1.0  # secs of beat-only breathing room between one vocal's end and the next entry
 _WINDOW_STEP = 8.0  # ~a phrase; min spare room in a region worth sliding the vocal window for regenerate variety
 _OUTRO_SECS = 12.0  # good-parts: beat runway kept AFTER the last vocal ends, so the windowed mix winds
@@ -362,11 +366,12 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     a1g = opts.get("a1_grid", a1)
     full_end = a1g.beats[-1] if a1g.beats else 0.0  # pre-window track end (abs), to clamp the outro extension
 
-    # Good-parts window: build the mix on the beat's best ~90s (the run-up into its main drop)
-    # instead of the whole track. Only on a confident grid with a real drop; else keep the full
-    # track (today's behaviour). windowed_options re-grids the menu onto the 0-based window, so the
-    # entire arrangement below runs unchanged on the window.
-    window_span = window.choose_window(a1g, opts.get("drops", []), take) if _confident(a1g) else None
+    # Good-parts window: build the mix on the beat's best ~90s (the run-up into its main drop) instead
+    # of the whole track. DISABLED by default via _GOOD_PARTS_WINDOW_ENABLED (founder decision: full-
+    # song mixes); when off, window_span stays None and the engine's own "no window -> full track" path
+    # runs, so render.py and validate.py need NO change (they already treat window=None as full track).
+    window_span = (window.choose_window(a1g, opts.get("drops", []), take)
+                   if (_GOOD_PARTS_WINDOW_ENABLED and _confident(a1g)) else None)
     if window_span:
         opts = window.windowed_options(opts, *window_span)
         a1g = opts["a1_grid"]
