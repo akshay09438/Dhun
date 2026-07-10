@@ -178,3 +178,84 @@ def test_set_tempo_plan_declines_the_outlier_not_the_whole_set():
     for a in plan["accepted"]:                                        # everyone kept is in band
         assert 0.89 <= a["ratio"] <= 1.11
     assert plan["declined"][0]["ratio"] < 0.89                        # Tere Bina really was out
+
+
+# ---- 3.3: beat-aligned, phrase-boundary seams ----
+
+def test_phrase_seam_picks_last_and_first_phrase_boundaries():
+    """A mixes OUT on its last phrase boundary; B mixes IN on its first; the crossfade is `phrases`
+    phrases long. Too few boundaries → None (caller falls back to a plain crossfade)."""
+    assert set_render._phrase_seam([0.0, 2.0, 4.0, 6.0, 8.0], 10.0, [0.0, 2.0, 4.0], 1) == (8.0, 0.0, 2.0)
+    assert set_render._phrase_seam([0.0, 2.0, 4.0, 6.0, 8.0], 10.0, [1.0, 3.0, 5.0], 2) == (8.0, 1.0, 4.0)
+    assert set_render._phrase_seam([0.0], 10.0, [0.0], 1) is None      # too few → fall back
+
+
+def test_beatmatched_seam_trims_to_phrase_boundaries(tmp_path):
+    a, b = tmp_path / "a.wav", tmp_path / "b.wav"
+    _tone(a, 220.0, secs=10.0)
+    _tone(b, 440.0, secs=8.0)
+    mixes = [{"wav": a, "phrase_starts": [0.0, 2.0, 4.0, 6.0, 8.0]},   # dur 10 → mix out on phrase @8
+             {"wav": b, "phrase_starts": [0.0, 2.0, 4.0, 6.0]}]         # dur 8  → mix in on phrase @0
+    out = tmp_path / "set.wav"
+    set_render.assemble_beatmatched_set(mixes, out, phrases=1)
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    # a_end=8, a_start=6, xf=2s, a_keep=A[0:8]; b from 0 → length = 8 + (8 − 2) = 14s
+    assert abs(len(y) / sr - 14.0) < 0.05
+
+
+def test_beatmatched_seam_aligns_the_downbeats(tmp_path):
+    """A's final phrase and B's opening phrase overlap with their downbeats ON THE SAME output samples:
+    an impulse at every bar of each mix reinforces into ONE bar-spaced train in the overlap, not two
+    interleaved trains (which a non-beat-aligned crossfade would produce)."""
+    sr, bar = set_render.SR, 0.5
+
+    def clicks(path, secs):
+        n = int(sr * secs)
+        y = np.zeros((n, 2), dtype="float32")
+        for k in range(int(secs / bar)):
+            idx = int(round(k * bar * sr))
+            if idx < n:
+                y[idx] = 1.0
+        sf.write(path, y, sr)
+
+    a, b = tmp_path / "a.wav", tmp_path / "b.wav"
+    clicks(a, 8.0)
+    clicks(b, 6.0)
+    mixes = [{"wav": a, "phrase_starts": [0.0, 2.0, 4.0, 6.0]},   # phrase = 4 bars = 2s; a_end=6, xf=2
+             {"wav": b, "phrase_starts": [0.0, 2.0, 4.0]}]         # b_start=0
+    out = tmp_path / "set.wav"
+    set_render.assemble_beatmatched_set(mixes, out, phrases=1)
+    y, _ = sf.read(out, dtype="float32", always_2d=True)
+    mono = np.abs(y).mean(axis=1)
+    seg = mono[int(4.0 * sr):int(6.0 * sr)]     # the overlap sits at output [a_keep−xf, a_keep] = [4,6]s
+    hits = np.where(seg > 0.2)[0]
+    clusters = []
+    for idx in hits:
+        if not clusters or idx - clusters[-1] > int(0.05 * sr):
+            clusters.append(idx)
+    assert len(clusters) == 4                   # ONE bar-spaced train (4 bars in the phrase), not 8
+
+
+def test_beatmatched_falls_back_without_grids(tmp_path):
+    """No persisted grids → a plain equal-power crossfade, identical to assemble_set (never worse)."""
+    a, b = tmp_path / "a.wav", tmp_path / "b.wav"
+    _tone(a, 220.0, secs=5.0)
+    _tone(b, 440.0, secs=5.0)
+    out = tmp_path / "set.wav"
+    set_render.assemble_beatmatched_set([{"wav": a}, {"wav": b}], out, phrases=1, fallback_xfade_secs=2.0)
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    assert abs(len(y) / sr - 8.0) < 0.05         # 5 + 5 − 2, the plain crossfade
+
+
+def test_beatmatched_set_never_clips(tmp_path):
+    """3.4: the beat-aligned seam preserves the clip-safety of the plain crossfade — hot inputs, no clip."""
+    a, b = tmp_path / "a.wav", tmp_path / "b.wav"
+    _tone(a, 220.0, secs=8.0, amp=0.97)
+    _tone(b, 440.0, secs=8.0, amp=0.97)
+    mixes = [{"wav": a, "phrase_starts": [0.0, 2.0, 4.0, 6.0]},
+             {"wav": b, "phrase_starts": [0.0, 2.0, 4.0]}]
+    out = tmp_path / "set.wav"
+    set_render.assemble_beatmatched_set(mixes, out, phrases=1)
+    y, _ = sf.read(out, dtype="float32", always_2d=True)
+    peak = float(np.max(np.abs(y)))
+    assert 0.0 < peak <= set_render._CEILING

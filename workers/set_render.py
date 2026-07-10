@@ -143,10 +143,79 @@ def assemble_set(mix_wavs: list[Path], out_path: Path, xfade_secs: float = 4.0) 
         xf = max(0, min(xf, len(y) // 2, len(nxt) // 2))
         y = _crossfade_join(y, nxt, xf)
 
+    return _finalize(y, out_path)
+
+
+def _finalize(y: np.ndarray, out_path: Path) -> Path:
+    """Peak-normalize to −1 dBFS and brickwall-clip below the validator's ceiling, then write. THE
+    clip-safety guarantee for every set (3.4): `assemble_set` and `assemble_beatmatched_set` share it,
+    so neither can ship a clipping set no matter how the seams sum."""
     peak = float(np.max(np.abs(y))) if y.size else 0.0
     if peak > 0.0:
         y = y * (_TARGET_PEAK / peak)
     np.clip(y, -_CEILING, _CEILING, out=y)
-
     sf.write(out_path, y, SR, subtype="PCM_16")
     return out_path
+
+
+# ---- SET ASSEMBLY (the "engine"): BEAT-ALIGNED, phrase-boundary seams (3.3) ----------------------
+
+
+def _phrase_seam(a_ps: list[float], a_dur: float, b_ps: list[float], phrases: int,
+                 ) -> tuple[float, float, float] | None:
+    """Where the beat-aligned seam sits between outgoing mix A and incoming mix B, as
+    (a_end_secs, b_start_secs, xf_secs) — or None to fall back to a plain timed crossfade.
+
+    - a_end   = the LAST phrase boundary at/before A ends → mix OUT on A's final phrase;
+    - a_start = `phrases` phrases earlier → the crossfade is A's last `phrases`×8 bars;
+    - b_start = the FIRST phrase boundary of B → mix IN on B's opening phrase.
+    Both crossfade regions begin on a phrase boundary (= a downbeat); with the whole set on ONE tempo
+    (3.2) the bars are equal length, so every beat inside the overlap coincides — beat-aligned by
+    construction, no onset detection. None when a grid can't spare a full `phrases`-phrase crossfade."""
+    a = sorted(p for p in a_ps if 0.0 <= p <= a_dur + 1e-6)
+    b = sorted(p for p in b_ps if p >= -1e-6)
+    if len(a) < phrases + 1 or not b:
+        return None
+    a_end, a_start, b_start = a[-1], a[-1 - phrases], b[0]
+    xf = a_end - a_start
+    return (a_end, b_start, xf) if xf > 0 else None
+
+
+def assemble_beatmatched_set(mixes: list[dict], out_path: Path, phrases: int = 1,
+                             fallback_xfade_secs: float = 4.0) -> Path:
+    """Join finished mixes into a set with BEAT-ALIGNED, phrase-boundary crossfades.
+
+    `mixes`: in play order, each a dict {"wav": Path, "phrase_starts": [secs…]} (a mix's persisted
+    `out_phrase_starts` from 3.1). Assumes every mix shares ONE master tempo (3.2), so equal bar
+    lengths make the seam a plain phrase overlap: A's last `phrases`×8 bars fade out over B's first
+    `phrases`×8 bars, both starting on a phrase boundary so the beats line up (never a mid-sentence
+    cut). A seam whose grids can't support that falls back to a plain `fallback_xfade_secs` equal-power
+    crossfade — never worse than `assemble_set`. Peak-safe via the shared `_finalize` (3.4). An empty
+    list raises SetRenderError."""
+    if not mixes:
+        raise SetRenderError("no mixes to assemble a set from")
+
+    clips = [_decode(m["wav"]) for m in mixes]
+    y = clips[0]
+    y_ps = list(mixes[0].get("phrase_starts") or [])   # the tail mix's phrase boundaries, in OUTPUT time
+    for i in range(1, len(mixes)):
+        nxt = clips[i]
+        nxt_ps = list(mixes[i].get("phrase_starts") or [])
+        seam = _phrase_seam(y_ps, len(y) / SR, nxt_ps, phrases)
+        if seam is None:  # grids too thin -> plain timed crossfade (never worse than assemble_set)
+            a, b = y, nxt
+            xf = int(SR * fallback_xfade_secs) if fallback_xfade_secs > 0 else 0
+            b_skip_s = 0
+        else:
+            a_end, b_start, xf_t = seam
+            a = y[: int(round(a_end * SR))]
+            b_skip_s = int(round(b_start * SR))
+            b = nxt[b_skip_s:]
+            xf = int(round(xf_t * SR))
+        xf = max(0, min(xf, len(a) // 2, len(b) // 2))
+        b_out_start_s = len(a) - xf  # where b (= nxt[b_skip:]) lands in the new output timeline
+        y = _crossfade_join(a, b, xf)
+        # carry nxt's grid into output time for the NEXT seam: nxt-time p -> output (b_out_start + p·SR − b_skip)
+        y_ps = [(b_out_start_s + (p * SR - b_skip_s)) / SR for p in nxt_ps if p * SR >= b_skip_s - 1e-6]
+
+    return _finalize(y, out_path)
