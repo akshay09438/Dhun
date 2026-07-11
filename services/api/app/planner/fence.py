@@ -548,9 +548,13 @@ def warp_map(anchor: float, vocal_src: tuple[float, float],
     matching Song-1 bar's length, so each bar boundary lands on a Song-1 downbeat.
 
     A single global ratio can't stay aligned because real tempos wobble and BPM detection
-    is imperfect; this maps bar-to-bar instead. A glitchy bar (a missing beat → an out-of-
-    band local ratio) falls back to the global ratio for that bar (no warble). With too few
-    downbeats to define bars, returns one global segment (the legacy behaviour).
+    is imperfect; this maps bar-to-bar instead. A glitchy bar (a missing/extra beat → an
+    out-of-band local ratio) is un-lockable, so the lock TRUNCATES there: every bar up to it
+    stays locked and the rest (glitch + tail) rides one trailing global-stretch segment — the
+    LAST segment, whose end boundary R7 does not grid-check, so no interior boundary drifts.
+    (This is why a mid-bar-start hook still enters ON the beat even when its tail can't lock:
+    the entry bars lock; see the truncate note at the break below.) With too few downbeats to
+    define bars, returns one global segment (the legacy behaviour).
     """
     s0, s1 = vocal_src
     d2 = [t for t in a2_downbeats if s0 - 1e-6 <= t <= s1 + 1e-6]
@@ -567,12 +571,24 @@ def warp_map(anchor: float, vocal_src: tuple[float, float],
     for k in range(m - 1):
         src_len = d2[k + 1] - d2[k]
         out_secs = d1[k + 1] - d1[k]  # the matching Song-1 bar length -> boundary locks to its downbeat
+        # An un-lockable bar (out-of-band local ratio, from a mis-detected downbeat): STOP locking here.
+        # A per-bar fallback for it would drift every LATER boundary off Song 1's grid (R7 rejects that),
+        # and the glitch has no bar count that gives an in-band ratio -- so lock the bars UP TO it and let
+        # the rest ride the trailing global segment below. (The old code discarded the WHOLE map here ->
+        # one global stretch, which un-snapped the ENTRY of a hand-marked hook that starts MID-BAR: the
+        # Tujhe late-by-~2-beats bug, 2026-07-11. The F1-review bail was right for downbeat-aligned slices,
+        # incomplete for mid-bar hooks.)
         if out_secs <= 0 or not (lo <= src_len / out_secs <= hi):
-            return []  # a glitch bar can't lock without warbling or drifting -> fall back to legacy stretch
+            break
         segs.append((round(d2[k], 3), round(d2[k + 1], 3), round(out_secs, 4)))
 
-    if s1 - d2[m - 1] > 1e-3:  # a trailing partial (the vocal's own tail) — the last boundary may be off-grid
-        segs.append((round(d2[m - 1], 3), round(s1, 3), round((s1 - d2[m - 1]) / global_ratio, 4)))
+    # From the last LOCKED boundary to the slice end: one global-stretch segment. It is the vocal's own
+    # tail when every bar locked (len(segs) == m-1 -> d2[m-1]); after an early truncate it also carries the
+    # un-lockable glitch bar(s). Either way it is the LAST segment, whose end boundary R7 does NOT
+    # grid-check -- so a truncated tail is legal, never a drifting INTERIOR boundary.
+    tail_start = d2[len(segs)]
+    if s1 - tail_start > 1e-3:
+        segs.append((round(tail_start, 3), round(s1, 3), round((s1 - tail_start) / global_ratio, 4)))
     return segs
 
 

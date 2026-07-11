@@ -423,15 +423,33 @@ def test_warp_map_midbar_start_does_not_shift_the_grid():
         assert min(abs(cum - d) for d in d1) <= 0.03
 
 
-def test_warp_map_glitch_bar_falls_back_to_legacy():
-    # A real grid glitch (a missing downbeat -> one double-length bar whose ratio is way out
-    # of band) can't lock cleanly. Rather than emit a half-locked, grid-shifting map, warp_map
-    # bails to [] so the placement uses the legacy global stretch (no worse than before).
-    d1 = _jittered_downbeats(122.0, 24, 0.02)
-    d2 = _jittered_downbeats(125.0, 24, 0.03)
-    del d2[5]  # missing downbeat -> a double-length bar in the middle of the slice
-    segs = fence.warp_map(d1[0], (d2[0], d2[12]), d1, d2, fence.best_stretch(122.0, 125.0)[0])
-    assert segs == []  # legacy fallback, not a broken lock
+def test_warp_map_glitch_bar_truncates_the_lock_not_discards_it():
+    # WAS test_warp_map_glitch_bar_falls_back_to_legacy (asserted segs == []). The F1 safety review
+    # bailed the WHOLE map on any out-of-band bar, because a per-bar fallback would shift later
+    # boundaries off Song 1's grid -- which the referee (R7) rejects. That reasoning was CORRECT for a
+    # slice that starts ON a downbeat. But a hand-marked hook starts MID-BAR, so the bail's legacy
+    # fallback plays the un-snapped raw mark and the ENTRY lands off-beat (the Tujhe late-by-~2-beats
+    # bug, 2026-07-11). A glitch bar is genuinely un-lockable (no bar count gives an in-band ratio), so
+    # we can't lock it -- but we CAN lock every bar UP TO it, then ride the rest on ONE trailing global
+    # segment (R7 does not grid-check the LAST segment). Entry + body snap to the beat; only the
+    # un-lockable tail global-stretches. DO NOT re-bail to []: the premise changed with mid-bar hooks.
+    a1 = [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0]   # Song 1: steady 2.0 s bars
+    a2 = [0.0, 2.0, 4.0, 5.0, 7.0, 9.0, 11.0]    # Song 2: the 4->5 bar (1.0 s, ratio 0.5) is the glitch
+    segs = fence.warp_map(0.0, (0.0, 11.0), a1, a2, global_ratio=1.0)
+    assert segs, "a glitch must NOT discard the whole beat-lock"
+    # bars before the glitch stay locked to Song 1's 2.0 s bars (boundaries on Song 1 downbeats):
+    assert segs[0] == (0.0, 2.0, 2.0)
+    assert segs[1] == (2.0, 4.0, 2.0)
+    # the glitch + everything after rides ONE trailing global-stretch segment (out = src / ratio):
+    assert segs[-1] == (4.0, 11.0, 7.0)
+    # every INTERIOR boundary lands on a Song 1 downbeat (what R7 checks); the last segment is exempt:
+    cum = 0.0
+    for _s0, _s1, out in segs[:-1]:
+        cum += out
+        assert cum in a1
+    # every segment's ratio stays inside the warp band, so validate.py R7 passes untouched:
+    for s0, s1, out in segs:
+        assert fence.WARP_LO <= (s1 - s0) / out <= fence.WARP_HI
 
 
 # ---------------------------------------------------------------- energy detection (Step 2)

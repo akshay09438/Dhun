@@ -131,7 +131,17 @@ _S1_STEMS = ("drums", "bass", "other")
 #        Der Lagi's hook specifically UN-MOVES the tuning baseline Task 1 shifted (drift log 37th entry).
 #        PLANNER change → ENGINE_VERSION (mix cache), NOT analysis. Zero Replicate (stems/analysis keyed
 #        by song_id).
-ENGINE_VERSION = "m6.3"
+# m6.4: BEAT-LOCK truncates instead of BAILING on a glitch bar (fence.warp_map). It used to discard the
+#        whole per-bar warp when any bar's local ratio fell out of band, dropping to a single global
+#        stretch — which un-snapped the ENTRY of a hand-marked hook that starts mid-bar (the Tujhe
+#        late-by-~2-beats bug). Now it locks every bar UP TO the glitch and rides the rest (the un-lockable
+#        glitch + tail) on one trailing global segment — the last segment, which R7 doesn't grid-check, so
+#        no interior boundary drifts. The entry + body snap to the beat; only the un-lockable tail
+#        global-stretches. Changes every mix whose vocal slice had a glitch bar (previously bailing);
+#        clean-grid slices render identically. PLANNER change → ENGINE_VERSION. render.py/validate.py
+#        UNTOUCHED (segments stay in the referee's warp band; the tail uses R7's last-segment exemption).
+#        Zero Replicate (stems/analysis keyed by song_id).
+ENGINE_VERSION = "m6.4"
 
 # Phase 0 (T1.4): a stable hash of the vocal-chain config, folded into the mix cache id. Default (off)
 # config today; during the tuning week each dial change yields a fresh hash -> a fresh render, so the
