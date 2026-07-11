@@ -867,6 +867,30 @@ def test_no_hook_falls_back_to_loudest(monkeypatch):
     assert plan.placements  # still produces a valid arrangement
 
 
+# The five SHIPPED catalog vocal donors, keyed by content id (kept in sync with data/library/manifest.json,
+# role_hint "vocals"). Founder-marked their hooks by ear (2026-07-11); this guards against a silent
+# regression back to the hookless no-guess path — every catalog vocal mix depends on these landing.
+_CATALOG_VOCAL_DONORS = {
+    "bbab7b9f875f071f8e3b53aa73e64c02b3f39730d0a1feec48af6b54de501430": "Der Lagi Lekin",
+    "c0c6ab91a06e24367e84874da81d4abc285779f50e8f1aeacf70a655cabceb0b": "Don't Start Now",
+    "fedc95c90aff7c957f398f302a6a3ed4c7dbf48d7a6667c8294e0b4030355e20": "Tujhe Bhula Diya",
+    "ae132f3a444f5121d75097a44110a0323365e6dc4a8d0736a924c00b2ac210c1": "With You",
+    "6ad6903592cd668502c5f4546618aec807c6eadb974fa6437fef7180fbffddc2": "Tere Bina",
+}
+
+
+def test_every_catalog_vocal_donor_has_a_marked_hook():
+    """Every shipped catalog vocal donor MUST carry a hand-marked hook, so the with-hook path (R1)
+    runs on the real catalog instead of the hookless no-guess fallback. A donor added to the manifest
+    without a hook mark should fail HERE, not ship a guessy mix."""
+    from app.planner import hooks
+    for sid, name in _CATALOG_VOCAL_DONORS.items():
+        h = hooks.hook_for(sid)
+        assert h is not None, f"{name} ({sid[:8]}) has no marked hook"
+        start, end = h
+        assert 0.0 <= start < end, f"{name} hook is not a valid (start<end) slice: {h}"
+
+
 from app.models import TrackAnalysis
 
 

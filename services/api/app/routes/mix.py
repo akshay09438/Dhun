@@ -123,7 +123,15 @@ _S1_STEMS = ("drums", "bass", "other")
 #        app would serve stale pre-Task-1 audio. PLANNER change → ENGINE_VERSION, not analysis. Zero
 #        Replicate (stems/analysis keyed by song_id). Marking each donor's hook (Task 2) restores the
 #        stable with-hook path per song.
-ENGINE_VERSION = "m6.2"
+# m6.3: CATALOG HOOKS MARKED — all five shipped vocal donors (Don't Start Now, Der Lagi, Tujhe Bhula
+#        Diya, With You, Tere Bina) now have hand-marked hooks (app/planner/hooks.py; founder-marked by
+#        ear via scripts/mark_drops.html, drops_hooks_marks.csv, 2026-07-11). The with-hook path (R1)
+#        lands each donor's real hook on the drop instead of the m6.2 no-guess "regions in song order",
+#        so EVERY catalog vocal mix re-renders. This is the stable baseline Task 1/2 were driving toward;
+#        Der Lagi's hook specifically UN-MOVES the tuning baseline Task 1 shifted (drift log 37th entry).
+#        PLANNER change → ENGINE_VERSION (mix cache), NOT analysis. Zero Replicate (stems/analysis keyed
+#        by song_id).
+ENGINE_VERSION = "m6.3"
 
 # Phase 0 (T1.4): a stable hash of the vocal-chain config, folded into the mix cache id. Default (off)
 # config today; during the tuning week each dial change yields a fresh hash -> a fresh render, so the
