@@ -108,12 +108,61 @@ def _seam_positions(seq: list[dict]) -> tuple[list[float], float]:
     return seams, y_len / SR
 
 
+def _coerce(v: str):
+    lo = v.lower()
+    if lo in ("true", "false"):
+        return lo == "true"
+    for cast in (int, float):
+        try:
+            return cast(v)
+        except ValueError:
+            pass
+    return v
+
+
+def _chain_config(dials_str: str):
+    """VocalChainConfig(enabled=True, **overrides) + the raw overrides. Per-render only -- this never
+    touches the shipped default (enabled=False) and is never committed. Referee P1-P5 bound every dial."""
+    from app.models import VocalChainConfig
+    overrides = dict(kv.split("=", 1) for kv in dials_str.split()) if dials_str.strip() else {}
+    return VocalChainConfig(enabled=True, **{k: _coerce(v) for k, v in overrides.items()}), overrides
+
+
+def _render_with_chain(beat_id: str, vocal_id: str, chain, out_wav: Path):
+    """Render one mix with the vocal chain ON to a SANDBOX path (never the app cache). Reuses the SHIPPED
+    build_mix_plan(chain=...) + render_mix -- enabling the chain needs NO render.py change (the chain is
+    already built and gated on the plan's vocal_moves, which the config emits). Returns the plan (with its
+    out_phrase_starts, so the beat-matched seam works on chain-on mixes too)."""
+    from app.planner.plan import build_mix_plan
+    from app.planner import validate as _validate
+    from app.audio.stems import stem_path
+    from workers.render import render_mix
+    a1 = mixroute._load_analysis(beat_id)
+    a2 = mixroute._load_analysis(vocal_id)
+    plan = build_mix_plan("tune", a1, a2, "", take=1, chain=chain)
+    _validate.assert_plan(plan, a1, a2)          # referee P1-P5 bound the dials
+    stems = {s: stem_path(beat_id, s) for s in mixroute._S1_STEMS}
+    if stem_path(beat_id, "vocals").exists():
+        stems["vocals"] = stem_path(beat_id, "vocals")
+    render_mix(plan, stems, stem_path(vocal_id, "vocals"), out_wav)
+    _validate.assert_render(out_wav)             # P2 + crest mush guard (render-side)
+    mixroute._attach_set_grid(plan, a1, out_wav)  # out_phrase_starts for the seam
+    return plan
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--set", action="append", dest="sets", metavar='"beat, vocal"', required=True,
                     help="one two-song mix; repeat for more. e.g. --set \"father_ocean, der_lagi\"")
     ap.add_argument("--order", default="", help="1-indexed play order into the --set list, e.g. 2,1,3")
     ap.add_argument("--out", default="prompt-dj set.wav", help="output WAV (bare name -> Desktop)")
+    ap.add_argument("--chain", action="store_true",
+                    help="SANDBOX tuning A/B: render with the vocal chain ON (default OFF = the shipped, "
+                         "byte-identical baseline). Not the shipped config, never committed -- per-render only. "
+                         "Chain renders go to data/tuning_renders/, never the app cache.")
+    ap.add_argument("--dials", default="",
+                    help='chain dial overrides, space-separated, e.g. '
+                         '--dials "saturate_wet=0.3 presence_gain_db=3.0"')
     args = ap.parse_args()
 
     catalog = _load_catalog()
@@ -167,24 +216,42 @@ def main() -> int:
             raise SystemExit(f"set #{i} can't render locally: {miss} (would need the cloud — refusing).")
         print(f"  set #{i}: stems + analyses present for both songs -> local render, no cloud.")
 
-    # ---- render each kept mix through the REAL pipeline (m6.3, hooks, movable master) ----
-    print(f"\nRendering {len(kept)} mix(es) through the real pipeline (ENGINE {mixroute.ENGINE_VERSION})...")
+    # ---- render each kept mix (chain OFF = shipped cache, byte-identical baseline; chain ON = sandbox) ----
+    chain_cfg, dial_overrides = (_chain_config(args.dials) if args.chain else (None, {}))
+    dials_tag = ("_".join(f"{k}{val}" for k, val in dial_overrides.items()) or "defaults") if args.chain else ""
+    sandbox = mixroute.settings.data_dir / "tuning_renders"
+    if args.chain:
+        sandbox.mkdir(exist_ok=True)
+        print(f"\nRendering {len(kept)} mix(es) -- CHAIN ON [{dials_tag}] to the SANDBOX (data/tuning_renders/, "
+              f"never the app cache) -- ENGINE {mixroute.ENGINE_VERSION}...")
+    else:
+        print(f"\nRendering {len(kept)} mix(es) -- chain OFF (byte-identical baseline) -- "
+              f"ENGINE {mixroute.ENGINE_VERSION}...")
     rendered: dict[int, dict] = {}
     for i, b, v, _ in kept:
-        mid = mixroute.mix_id_for(b["id"], v["id"], "", 1)
-        wav = mixroute._mix_wav(mid)
-        if not (wav.exists() and mixroute._plan_path(mid).exists()):
-            print(f"  set #{i}: rendering {b['name']} x {v['name']} (local DSP)...")
-            mixroute._run_mix(mid, b["id"], v["id"], "", 1)
+        if args.chain:
+            wav = sandbox / f"{b['id'][:8]}x{v['id'][:8]}_chain_{dials_tag}.mix.wav"
+            print(f"  set #{i}: rendering {b['name']} x {v['name']} CHAIN-ON (local DSP, sandbox)...")
+            try:
+                p = _render_with_chain(b["id"], v["id"], chain_cfg, wav)
+            except Exception as e:  # noqa: BLE001 — a declined pair or a referee reject (P1-P5)
+                print(f"  set #{i} DROPPED — {type(e).__name__}: {e}")
+                continue
         else:
-            print(f"  set #{i}: reusing cached render.")
-        pf = mixroute._plan_path(mid)
-        if not pf.exists():
-            status, reason = mixroute._jobs.get(mid, ("error", "unknown failure"))
-            print(f"  set #{i} DROPPED — the pipeline declined this pair: {reason}")
-            continue
-        import json
-        p = MixPlan(**json.loads(pf.read_text()))
+            mid = mixroute.mix_id_for(b["id"], v["id"], "", 1)
+            wav = mixroute._mix_wav(mid)
+            if not (wav.exists() and mixroute._plan_path(mid).exists()):
+                print(f"  set #{i}: rendering {b['name']} x {v['name']} (local DSP)...")
+                mixroute._run_mix(mid, b["id"], v["id"], "", 1)
+            else:
+                print(f"  set #{i}: reusing cached render.")
+            pf = mixroute._plan_path(mid)
+            if not pf.exists():
+                _status, reason = mixroute._jobs.get(mid, ("error", "unknown failure"))
+                print(f"  set #{i} DROPPED — the pipeline declined this pair: {reason}")
+                continue
+            import json
+            p = MixPlan(**json.loads(pf.read_text()))
         info = sf.info(str(wav))
         rendered[i] = {"name": f"{b['name']} x {v['name']}", "wav": wav,
                        "phrase_starts": p.out_phrase_starts, "master_bpm": p.master_bpm,
@@ -219,6 +286,8 @@ def main() -> int:
 
     # ---- join with the shipped beat-matched seam engine ----
     out = Path(args.out)
+    if args.chain:  # stamp the dials into the set filename so a chain render is self-documenting
+        out = out.with_name(f"{out.stem} [chain {dials_tag}]{out.suffix}")
     if not out.is_absolute():
         out = Path.home() / "OneDrive" / "Desktop" / out.name
     out.parent.mkdir(parents=True, exist_ok=True)
