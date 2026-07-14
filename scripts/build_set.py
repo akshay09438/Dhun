@@ -306,6 +306,38 @@ def main() -> int:
     if seams:
         print("Jump to the joins:  " + "   ".join(_mmss(s) for s in seams))
     print("zero cloud (local cached stems/analyses only).")
+
+    # Silent set-order scoring (feature 5) — LOG the order the app WOULD recommend vs the one the user
+    # chose (harmonic + energy arc). DATA COLLECTION ONLY: the set above is already written in the
+    # user's order, this changes nothing they hear, and it's fully guarded so it can never break a set.
+    # Zero cloud (cached analyses + arithmetic; runs AFTER the render, on a handful of mixes).
+    try:
+        import numpy as _np
+        from datetime import datetime as _dt
+        from workers import set_score
+        canon = sorted(rendered)                          # the rendered mixes, in --set order (canonical)
+        pair_by_i = {i: (b, v) for i, b, v in pairs}
+        keys, energies, names = [], [], []
+        for i in canon:
+            b, v = pair_by_i[i]
+            a1, a2 = mixroute._load_analysis(b["id"]), mixroute._load_analysis(v["id"])
+            keys.append(a1.key.camelot if a1 and a1.key else "")
+
+            def _mean_energy(a):
+                ec = (a.energy_curve if a else None) or []
+                return float(_np.mean(ec)) if ec else 0.5
+
+            energies.append(0.5 * (_mean_energy(a1) + _mean_energy(a2)))
+            names.append(f"{b['name']} x {v['name']}")
+        user_order = [canon.index(i) for i in seq_idx]    # the user's play order as positions in canon
+        rec = set_score.log_set_pick(
+            mixroute.settings.data_dir / "set_order_log.csv", names, keys, energies, user_order,
+            when=_dt.now().isoformat(timespec="seconds"))
+        print(f"[set-score] logged (data only, no change to the set): your order {rec['user_order']} vs "
+              f"app pick {rec['app_order']}  (match={rec['match']}; app {rec['app_score']} / you "
+              f"{rec['user_score']})  -> data/set_order_log.csv")
+    except Exception:  # noqa: BLE001 — scoring is background data collection; never break the set
+        pass
     return 0
 
 
