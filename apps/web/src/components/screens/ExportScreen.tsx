@@ -1,14 +1,14 @@
 import { useState } from "react";
-import { API_BASE, type MixDTO } from "../../lib/api";
+import { API_BASE } from "../../lib/api";
 import styles from "./ExportScreen.module.css";
 
 export default function ExportScreen({
-  mix,
+  audioPath,
   mixName,
   onStartOver,
   onBack,
 }: {
-  mix: MixDTO;
+  audioPath: string; // the finished track's URL path (a mix or a set)
   mixName: string;
   onStartOver: () => void;
   onBack: () => void;
@@ -16,8 +16,8 @@ export default function ExportScreen({
   const [note, setNote] = useState("");
 
   async function handleDownload() {
-    if (!mix.url) return;
-    const res = await fetch(`${API_BASE}${mix.url}`);
+    if (!audioPath) return;
+    const res = await fetch(`${API_BASE}${audioPath}`);
     const blob = await res.blob();
     const href = URL.createObjectURL(blob);
     const a = document.createElement("a");

@@ -1,26 +1,29 @@
 import { useEffect, useRef, useState } from "react";
 import { getLibrary, type LibrarySongDTO } from "../../lib/api";
+import { MAX_SETS, type SetPick } from "../../types";
 import styles from "./SetupScreen.module.css";
 
-/** MVP setup: users pick two songs from the curated catalog (no uploads).
- *  Every catalog song is pre-analyzed and tempo-verified, so any pair blends. */
+/** A set being composed: either slot may still be empty while the user picks. */
+type SetDraft = { beat: LibrarySongDTO | null; vocal: LibrarySongDTO | null };
+
+const emptyDraft = (): SetDraft => ({ beat: null, vocal: null });
+const isComplete = (d: SetDraft): d is SetPick =>
+  Boolean(d.beat) && Boolean(d.vocal);
+
+/** MVP setup: users pick two songs from the curated catalog (no uploads), and may optionally
+ *  stack a SECOND set (V1 caps at two) to play back-to-back as one continuous mix. Every catalog
+ *  song is pre-analyzed and tempo-verified, so any pair blends. The console edits the active set;
+ *  the stage shows the running order. Single-set stays the default, effortless path. */
 export default function SetupScreen({
-  pick1,
-  pick2,
-  onPick1,
-  onPick2,
-  canMix,
-  onMixIt,
+  onBuild,
 }: {
-  pick1: LibrarySongDTO | null;
-  pick2: LibrarySongDTO | null;
-  onPick1: (s: LibrarySongDTO | null) => void;
-  onPick2: (s: LibrarySongDTO | null) => void;
-  canMix: boolean;
-  onMixIt: () => void;
+  /** Fired when every set in the line-up is complete and the user commits. */
+  onBuild: (sets: SetPick[]) => void;
 }) {
   const [library, setLibrary] = useState<LibrarySongDTO[]>([]);
   const [libError, setLibError] = useState(false);
+  const [sets, setSets] = useState<SetDraft[]>([emptyDraft()]);
+  const [active, setActive] = useState(0);
   const [open, setOpen] = useState<1 | 2 | null>(null);
   const consoleRef = useRef<HTMLDivElement>(null);
 
@@ -44,20 +47,68 @@ export default function SetupScreen({
     return () => window.removeEventListener("mousedown", close);
   }, [open]);
 
+  const activeSet = sets[active] ?? emptyDraft();
+  const canAddSet = sets.length < MAX_SETS && sets.every(isComplete);
+  const canBuild = sets.length > 0 && sets.every(isComplete);
+
   function choose(slot: 1 | 2, song: LibrarySongDTO) {
-    (slot === 1 ? onPick1 : onPick2)(song);
+    setSets((prev) =>
+      prev.map((d, i) =>
+        i === active ? { ...d, [slot === 1 ? "beat" : "vocal"]: song } : d,
+      ),
+    );
     setOpen(null);
   }
+
+  function addSet() {
+    if (!canAddSet) return;
+    setSets((prev) => [...prev, emptyDraft()]);
+    setActive(sets.length); // focus the newly added set
+    setOpen(null);
+  }
+
+  function removeSet(i: number) {
+    if (sets.length <= 1) return; // always keep at least one set
+    setSets((prev) => prev.filter((_, idx) => idx !== i));
+    setActive((a) => (i <= a ? Math.max(0, a - 1) : a));
+    setOpen(null);
+  }
+
+  /** Swap set `i` with the one before it (V1 has at most two, so this is the whole reorder). */
+  function moveUp(i: number) {
+    if (i <= 0) return;
+    setSets((prev) => {
+      const next = [...prev];
+      [next[i - 1], next[i]] = [next[i], next[i - 1]];
+      return next;
+    });
+    setActive((a) => (a === i ? i - 1 : a === i - 1 ? i : a));
+  }
+
+  function selectSet(i: number) {
+    setActive(i);
+    setOpen(null);
+  }
+
+  function build() {
+    if (canBuild) onBuild(sets.filter(isComplete));
+  }
+
+  const multi = sets.length > 1;
 
   return (
     <>
       <div className="console" ref={consoleRef}>
-        <p className="kicker">New mix</p>
-        <h1 className="title">Pick your two songs</h1>
+        <p className="kicker">
+          {multi ? `New set · ${sets.length} of ${MAX_SETS}` : "New mix"}
+        </p>
+        <h1 className="title">
+          {multi ? "Build your set" : "Pick your two songs"}
+        </h1>
 
         <SongSlot
           n={1}
-          picked={pick1}
+          picked={activeSet.beat}
           placeholder="Song One"
           role="→ its beat"
           library={beats}
@@ -68,7 +119,7 @@ export default function SetupScreen({
         />
         <SongSlot
           n={2}
-          picked={pick2}
+          picked={activeSet.vocal}
           placeholder="Song Two"
           role="→ its vocals"
           library={vocals}
@@ -78,22 +129,80 @@ export default function SetupScreen({
           onChoose={(s) => choose(2, s)}
         />
 
-        <button className="btnPrimary" disabled={!canMix} onClick={onMixIt}>
-          Mix it&nbsp;&nbsp;▸
+        {sets.length < MAX_SETS && (
+          <button
+            type="button"
+            className={styles.addSet}
+            data-testid="add-set"
+            disabled={!canAddSet}
+            onClick={addSet}
+            title={
+              canAddSet
+                ? "Add a second set to play back-to-back"
+                : "Finish this set first"
+            }
+          >
+            ＋ Add another set{" "}
+            <span className={styles.addSetHint}>optional</span>
+          </button>
+        )}
+
+        <button
+          className="btnPrimary"
+          disabled={!canBuild}
+          onClick={build}
+          style={{ marginTop: "auto" }}
+        >
+          {multi ? "Build the set" : "Mix it"}&nbsp;&nbsp;▸
         </button>
+        <p className={styles.setNote}>
+          Sets can only be added here — not once the mix is playing.
+        </p>
       </div>
 
       <div className="stage">
-        <div className={styles.tiles}>
-          <Tile label={pick1 ? pick1.original_name : "SONG 1"} />
-          <span className={styles.tilePlus}>＋</span>
-          <Tile label={pick2 ? pick2.original_name : "SONG 2"} />
-        </div>
-        <p className={styles.tagline}>
-          Two songs in.
-          <br />
-          One mix out — arranged like a DJ.
-        </p>
+        {multi ? (
+          <>
+            <div className={styles.roHead}>Running order</div>
+            <div className={styles.ro} data-testid="running-order">
+              {sets.map((d, i) => (
+                <SetCard
+                  key={i}
+                  n={i + 1}
+                  draft={d}
+                  activeCard={i === active}
+                  canRemove={sets.length > 1}
+                  canMoveUp={i > 0}
+                  onSelect={() => selectSet(i)}
+                  onRemove={() => removeSet(i)}
+                  onMoveUp={() => moveUp(i)}
+                />
+              ))}
+            </div>
+            <p className={styles.roFoot}>
+              Played back-to-back as one continuous, beat-matched mix.
+            </p>
+          </>
+        ) : (
+          <>
+            <div className={styles.tiles}>
+              <Tile
+                label={activeSet.beat ? activeSet.beat.original_name : "SONG 1"}
+              />
+              <span className={styles.tilePlus}>＋</span>
+              <Tile
+                label={
+                  activeSet.vocal ? activeSet.vocal.original_name : "SONG 2"
+                }
+              />
+            </div>
+            <p className={styles.tagline}>
+              Two songs in.
+              <br />
+              One mix out — arranged like a DJ.
+            </p>
+          </>
+        )}
       </div>
     </>
   );
@@ -171,6 +280,79 @@ function SongSlot({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** One row in the stage running order. Click to edit it in the console; ✕ to remove; ↑ to move it up. */
+function SetCard({
+  n,
+  draft,
+  activeCard,
+  canRemove,
+  canMoveUp,
+  onSelect,
+  onRemove,
+  onMoveUp,
+}: {
+  n: number;
+  draft: SetDraft;
+  activeCard: boolean;
+  canRemove: boolean;
+  canMoveUp: boolean;
+  onSelect: () => void;
+  onRemove: () => void;
+  onMoveUp: () => void;
+}) {
+  const label = isComplete(draft)
+    ? `${draft.beat.original_name} × ${draft.vocal.original_name}`
+    : draft.beat
+      ? `${draft.beat.original_name} × …`
+      : "Pick two songs…";
+  return (
+    <div
+      className={
+        activeCard
+          ? `${styles.setCard} ${styles.setCardActive}`
+          : styles.setCard
+      }
+      data-testid={`set-card-${n}`}
+    >
+      <button
+        type="button"
+        className={styles.setSelect}
+        onClick={onSelect}
+        aria-current={activeCard}
+        title="Edit this set"
+      >
+        <span className={styles.setBadge}>{n}</span>
+        <span className={styles.setName} title={label}>
+          {label}
+        </span>
+      </button>
+      <div className={styles.setIcons}>
+        <button
+          type="button"
+          className={styles.setIc}
+          disabled={!canMoveUp}
+          onClick={onMoveUp}
+          aria-label={`Move set ${n} up`}
+          title="Move up"
+        >
+          ↑
+        </button>
+        <button
+          type="button"
+          className={`${styles.setIc} ${styles.setIcX}`}
+          disabled={!canRemove}
+          data-testid={`remove-set-${n}`}
+          onClick={onRemove}
+          aria-label={`Remove set ${n}`}
+          title="Remove this set"
+        >
+          ✕
+        </button>
+      </div>
     </div>
   );
 }

@@ -1,20 +1,13 @@
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import ExportScreen from "./ExportScreen";
-import type { MixDTO } from "../../lib/api";
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
-const mix = {
-  mix_id: "m",
-  status: "ready",
-  url: "/mix/m/audio",
-  plan: null,
-  message: null,
-} as MixDTO;
+const AUDIO_PATH = "/mix/m/audio";
 
 test("ExportScreen shows the name and downloads the full mix", async () => {
   const fetchMock = vi
@@ -30,7 +23,7 @@ test("ExportScreen shows the name and downloads the full mix", async () => {
 
   render(
     <ExportScreen
-      mix={mix}
+      audioPath={AUDIO_PATH}
       mixName="Tere Ocean"
       onStartOver={() => {}}
       onBack={() => {}}
@@ -47,7 +40,7 @@ test("ExportScreen flags the clip export as coming soon", () => {
   vi.stubGlobal("fetch", vi.fn());
   render(
     <ExportScreen
-      mix={mix}
+      audioPath={AUDIO_PATH}
       mixName="Tere Ocean"
       onStartOver={() => {}}
       onBack={() => {}}

@@ -1,71 +1,117 @@
 import { useState } from "react";
 import {
+  API_BASE,
   getMixName,
   makeMix,
-  type LibrarySongDTO,
   type MixDTO,
-  type SongDTO,
+  type SetDTO,
 } from "./lib/api";
-import { studyAndMix, type StudyStage } from "./lib/study";
-import type { Screen } from "./types";
+import { studyAndBuildSet, studyAndMix, type StudyStage } from "./lib/study";
+import type { PlayMember, Screen, SetPick } from "./types";
 import Frame from "./components/shell/Frame";
 import SetupScreen from "./components/screens/SetupScreen";
 import GeneratingScreen from "./components/screens/GeneratingScreen";
 import PlayScreen from "./components/screens/PlayScreen";
 import ExportScreen from "./components/screens/ExportScreen";
 
-// The setup prompt box was removed (it steered nothing at mix time — live steering
-// happens on the Play screen). Mixes are made with an empty prompt.
+// The setup prompt box was removed (it steered nothing at mix time). Mixes use an empty prompt.
 const MIX_PROMPT = "";
 
 export function App() {
   const [screen, setScreen] = useState<Screen>("setup");
-  const [pick1, setPick1] = useState<LibrarySongDTO | null>(null);
-  const [pick2, setPick2] = useState<LibrarySongDTO | null>(null);
-  const [songs, setSongs] = useState<SongDTO[]>([]);
-  const [mix, setMix] = useState<MixDTO | null>(null);
-  const [mixId, setMixId] = useState<string | undefined>(undefined);
-  const [mixName, setMixName] = useState("");
+  const [sets, setSets] = useState<SetPick[]>([]); // the chosen line-up (for names + regenerate)
+  const [mix, setMix] = useState<MixDTO | null>(null); // single-set path
+  const [setInfo, setSetInfo] = useState<SetDTO | null>(null); // two-set path
+  const [name, setName] = useState(""); // the mix or set's playful name
   const [stage, setStage] = useState<StudyStage>("uploading");
   const [regenerating, setRegenerating] = useState(false);
   const [error, setError] = useState("");
 
-  /** Fetch a playful AI name for the mix (fallback-safe; never blocks the UI). */
-  function loadName(s1: SongDTO, s2: SongDTO) {
-    setMixName("");
-    getMixName(s1.original_name, s2.original_name, MIX_PROMPT)
-      .then(setMixName)
-      .catch(() => setMixName(""));
+  const isSet = setInfo !== null;
+  const audioPath = isSet ? setInfo?.url : mix?.url;
+
+  /** The Play screen's line-up: one row per set, with the songs and (for a set) the drops. */
+  const members: PlayMember[] = isSet
+    ? (setInfo?.members ?? []).map((m) => {
+        const pick = sets[m.index - 1];
+        return {
+          index: m.index,
+          beat: pick?.beat.original_name ?? "Song 1",
+          vocal: pick?.vocal.original_name ?? "Song 2",
+          kept: m.kept,
+          reason: m.reason,
+          seamAt: m.seam_at,
+        };
+      })
+    : sets[0]
+      ? [
+          {
+            index: 1,
+            beat: sets[0].beat.original_name,
+            vocal: sets[0].vocal.original_name,
+            kept: true,
+            reason: null,
+            seamAt: null,
+          },
+        ]
+      : [];
+
+  /** Name a single mix (fallback-safe; never blocks the UI). */
+  function loadName(s1: string, s2: string) {
+    setName("");
+    getMixName(s1, s2, MIX_PROMPT)
+      .then(setName)
+      .catch(() => setName(""));
   }
 
-  async function handleMixIt() {
-    if (!pick1 || !pick2) return;
+  /** Build the chosen line-up: one set → a single mix; two sets → the continuous set builder. */
+  async function handleBuild(picks: SetPick[]) {
+    setError("");
+    setSets(picks);
     setScreen("generating");
     setStage("uploading");
-    setError("");
+
+    if (picks.length === 1) {
+      const { beat, vocal } = picks[0];
+      setSetInfo(null);
+      try {
+        const made = await studyAndMix(beat.id, vocal.id, setStage, MIX_PROMPT);
+        setMix(made);
+        loadName(beat.original_name, vocal.original_name);
+        setScreen("play");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Something went wrong.");
+      }
+      return;
+    }
+
+    setMix(null);
     try {
-      // Catalog songs are already ingested — no upload; go straight to the study.
-      const chosen: SongDTO[] = [pick1, pick2];
-      setSongs(chosen);
-      const made = await studyAndMix(pick1.id, pick2.id, setStage, MIX_PROMPT);
-      setMix(made);
-      setMixId(made.mix_id);
-      loadName(pick1, pick2);
+      const built = await studyAndBuildSet(picks, setStage);
+      setSetInfo(built);
+      loadName(
+        picks[0].beat.original_name,
+        picks[picks.length - 1].vocal.original_name,
+      );
       setScreen("play");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong.");
+      setError(e instanceof Error ? e.message : "Couldn't build your set.");
     }
   }
 
-  /** Regenerate a fresh take without leaving the Play screen. */
+  /** Regenerate a fresh take of a single mix without leaving the Play screen. */
   async function handleRegenerate() {
-    if (songs.length < 2 || regenerating) return;
+    if (isSet || sets.length < 1 || regenerating) return;
     const take = (mix?.plan?.take ?? 1) + 1;
     setRegenerating(true);
     try {
-      const made = await makeMix(songs[0].id, songs[1].id, MIX_PROMPT, take);
+      const made = await makeMix(
+        sets[0].beat.id,
+        sets[0].vocal.id,
+        MIX_PROMPT,
+        take,
+      );
       setMix(made);
-      setMixId(made.mix_id);
     } catch {
       /* keep the current take on failure */
     } finally {
@@ -73,49 +119,38 @@ export function App() {
     }
   }
 
-  /** Back to Setup with empty song slots, ready for a new pair. */
+  /** Back to Setup, ready for a new line-up. */
   function startOver() {
     setScreen("setup");
     setError("");
-    setPick1(null);
-    setPick2(null);
-    setSongs([]);
+    setSets([]);
     setMix(null);
-    setMixId(undefined);
-    setMixName("");
+    setSetInfo(null);
+    setName("");
   }
 
   return (
     <Frame screen={screen}>
-      {screen === "setup" && (
-        <SetupScreen
-          pick1={pick1}
-          pick2={pick2}
-          onPick1={setPick1}
-          onPick2={setPick2}
-          canMix={Boolean(pick1) && Boolean(pick2)}
-          onMixIt={handleMixIt}
-        />
-      )}
+      {screen === "setup" && <SetupScreen onBuild={handleBuild} />}
       {screen === "generating" && (
         <GeneratingScreen stage={stage} error={error} onStartOver={startOver} />
       )}
-      {screen === "play" && mix && songs.length === 2 && (
+      {screen === "play" && audioPath && members.length > 0 && (
         <PlayScreen
-          songs={songs}
-          mix={mix}
-          mixId={mixId}
-          mixName={mixName}
+          title={name}
+          audioUrl={`${API_BASE}${audioPath}`}
+          members={members}
+          regenerable={!isSet}
           regenerating={regenerating}
           onRegenerate={handleRegenerate}
           onExport={() => setScreen("export")}
           onNextSong={startOver}
         />
       )}
-      {screen === "export" && mix && (
+      {screen === "export" && audioPath && (
         <ExportScreen
-          mix={mix}
-          mixName={mixName}
+          audioPath={audioPath}
+          mixName={name}
           onStartOver={startOver}
           onBack={() => setScreen("play")}
         />
