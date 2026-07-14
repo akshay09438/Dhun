@@ -156,7 +156,7 @@ def test_mix_rejects_bad_song_id(tmp_path, monkeypatch):
 
 def test_engine_version_is_current():
     # bumped when the engine/plan changes so a stale cached mix is never served
-    assert mix_route.ENGINE_VERSION == "m6.4"  # m6.4: beat-lock truncates at a glitch bar instead of bailing (planner change)
+    assert mix_route.ENGINE_VERSION == "m6.5"  # m6.5: Phase-0 vocal chain turned ON in the shipped path (SHIPPED_CHAIN)
 
 
 def test_mix_id_folds_the_chain_config_hash(monkeypatch):

@@ -141,12 +141,27 @@ _S1_STEMS = ("drums", "bass", "other")
 #        clean-grid slices render identically. PLANNER change → ENGINE_VERSION. render.py/validate.py
 #        UNTOUCHED (segments stay in the referee's warp band; the tail uses R7's last-segment exemption).
 #        Zero Replicate (stems/analysis keyed by song_id).
-ENGINE_VERSION = "m6.4"
+ENGINE_VERSION = "m6.5"  # bumped: Phase-0 vocal chain turned ON in the shipped path (see SHIPPED_CHAIN)
 
-# Phase 0 (T1.4): a stable hash of the vocal-chain config, folded into the mix cache id. Default (off)
-# config today; during the tuning week each dial change yields a fresh hash -> a fresh render, so the
-# app never serves a stale cached mix and concludes a dial does nothing.
-_CHAIN_CONFIG_HASH = chain_config_hash(VocalChainConfig())
+# Phase 0 (turned ON 2026-07-14): the founder-approved vocal chain, tuned dial-by-dial by ear during the
+# tuning week and confirmed on the full-set A/B. The model default stays enabled=False (the disabled path
+# is byte-identical to m6.0 — the golden gate + a fallback), so the shipped sound is opted in HERE, in one
+# place, rather than by flipping the model default. All non-tuned stages keep their model defaults; pitch
+# stays 0 (Slice 2d still parked). Character: bright, forward, punchy, clean, natural.
+SHIPPED_CHAIN = VocalChainConfig(
+    enabled=True,
+    saturate_wet=0.3,       # dial 1 — grit / warmth
+    presence_gain_db=4.0,   # dial 2 — brightness / cut
+    reverb_wet=0.08,        # dial 3 — space (dry / close)
+    duck_depth_db=1.0,      # dial 4 — subtle ducking
+    compress_ratio=2.0,     # dial 5 — light compression
+    highpass_hz=120,        # dial 6 — cleanest low-cut
+    deess_intensity=0.4,    # dial 7 — balanced de-ess (= model default, explicit for provenance)
+)
+
+# The vocal-chain config hash is folded into the mix cache id, so turning the chain ON here yields a fresh
+# hash -> fresh mix ids -> every mix re-renders WITH the chain (old chain-off cached mixes are never served).
+_CHAIN_CONFIG_HASH = chain_config_hash(SHIPPED_CHAIN)
 
 # mix_id -> (status, message). "ready" is inferred from the stored WAV; a mix absent
 # here with no stored file is "idle". In-memory is fine for single-worker validation.
@@ -230,7 +245,7 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int) 
     """Background worker: plan -> validate -> render -> validate the audio."""
     try:
         a1, a2 = _load_analysis(song1_id), _load_analysis(song2_id)
-        plan = build_mix_plan(mix_id, a1, a2, prompt, take=take)
+        plan = build_mix_plan(mix_id, a1, a2, prompt, take=take, chain=SHIPPED_CHAIN)
         # Phase 0 (T1.2): log the key-fit on every render — informational only, never gated. Lets us
         # look at the log and find how many "good" pairs were quietly key-clashing.
         cf = plan.camelot_fit

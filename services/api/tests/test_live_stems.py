@@ -14,7 +14,10 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from workers import live_stems  # noqa: E402
-from workers.render import SR  # noqa: E402
+from workers.render import SR, _apply_vocal_chain, _edge_fade, _vocal_take  # noqa: E402
+
+sys.path.insert(0, str(_REPO / "services" / "api"))
+from app.models import VocalProcessMove  # noqa: E402
 
 
 def _tone(path, freq=440.0, secs=8.0, amp=0.4, sr=SR):
@@ -78,6 +81,53 @@ def test_vocal_bus_includes_song1_contrast_region(tmp_path):
                                 stems, vocal, out)
     y, _ = sf.read(out, dtype="float32", always_2d=True)
     assert _rms(y, 5.2, 5.8) > 1e-2
+
+
+def _two_tone(path, f1=440.0, f2=2000.0, secs=8.0, amp=0.3, sr=SR):
+    t = np.linspace(0, secs, int(sr * secs), endpoint=False)
+    y = amp * (np.sin(2 * np.pi * f1 * t) + np.sin(2 * np.pi * f2 * t))
+    sf.write(path, y.astype("float32"), sr)
+
+
+def _arr_plan_with_moves(placements, moves):
+    """Like _arr_plan but carries vocal_moves (Phase-0 chain) + empty duck_moves."""
+    plan = _arr_plan(placements)
+    plan.vocal_moves = list(moves)
+    plan.duck_moves = []
+    return plan
+
+
+def test_vocal_bus_APPLIES_the_chain_matching_export_pass1(tmp_path):
+    """Parity blocker: the Play/steer vocal bus must carry the SAME per-placement vocal chain that
+    Export (`render_mix` Pass 1) applies — else Play previews a dry vocal while Download is tuned.
+    A guard-safe highpass move (removes energy -> can't inflate the peak or trip the crest guard)
+    that still changes bytes; the bus region at the anchor must equal `_apply_vocal_chain` output."""
+    stems, _ = _stems(tmp_path)
+    vocal = tmp_path / "voc2.wav"
+    _two_tone(vocal)
+    anchor, src = 2.0, (0.0, 2.0)
+    move = VocalProcessMove(placement_id="p0", start_bar=0, end_bar=4, highpass_hz=1000)  # kill the 440Hz
+
+    out = tmp_path / "bus_chain.wav"
+    live_stems.render_vocal_bus(_arr_plan_with_moves([(anchor, src)], [move]), stems, vocal, out)
+    y, _ = sf.read(out, dtype="float32", always_2d=True)
+
+    # Independently reproduce Export's Pass-1 vocal for this placement and compare byte-for-byte.
+    voc = _edge_fade(_vocal_take(vocal, src[0], src[1] - src[0], 1.0))
+    expected = _apply_vocal_chain(voc, move, SR)
+    a0 = int(anchor * SR)
+    seg = y[a0:a0 + len(expected)]
+    assert seg.shape[0] == len(expected)
+    assert np.allclose(seg, expected, atol=2e-4)  # PCM_16 quantization only
+
+    # And prove the chain actually did something: the same bus WITHOUT the move is the raw vocal,
+    # which must differ from the processed one (a highpass removes the 440Hz tone).
+    out0 = tmp_path / "bus_nochain.wav"
+    live_stems.render_vocal_bus(_arr_plan([(anchor, src)]), stems, vocal, out0)
+    y0, _ = sf.read(out0, dtype="float32", always_2d=True)
+    seg0 = y0[a0:a0 + len(expected)]
+    assert not np.allclose(seg0, expected, atol=2e-4)  # dry != tuned
+    assert np.allclose(seg0, _edge_fade(_vocal_take(vocal, src[0], src[1] - src[0], 1.0)), atol=2e-4)
 
 
 def test_vocal_bus_with_no_placements_is_valid_silence(tmp_path):
