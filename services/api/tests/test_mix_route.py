@@ -159,6 +159,31 @@ def test_engine_version_is_current():
     assert mix_route.ENGINE_VERSION == "m6.5"  # m6.5: Phase-0 vocal chain turned ON in the shipped path (SHIPPED_CHAIN)
 
 
+def test_shipped_chain_is_enabled_with_the_founder_approved_dials():
+    """Guards the product's shipped SOUND. The vocal chain is turned on in the shipped pipeline via
+    SHIPPED_CHAIN (routes/mix.py). If it silently reverted to enabled=False, or a dial were fat-fingered,
+    every other backend test would still pass — the golden gate only protects the DISABLED path, so it
+    stays green on a regression to OFF — while the app shipped a different-sounding mix. Lock the
+    founder-approved config here so any such revert fails loudly.
+    """
+    c = mix_route.SHIPPED_CHAIN
+    assert c.enabled is True
+    assert (
+        c.saturate_wet,
+        c.presence_gain_db,
+        c.reverb_wet,
+        c.duck_depth_db,
+        c.compress_ratio,
+        c.highpass_hz,
+        c.deess_intensity,
+    ) == (0.3, 4.0, 0.08, 1.0, 2.0, 120, 0.4)
+    # The MODEL default must stay OFF, so the disabled path (and the golden gate) is unaffected:
+    # the shipped sound is opted in via SHIPPED_CHAIN, not by changing the VocalChainConfig default.
+    from app.models import VocalChainConfig
+
+    assert VocalChainConfig().enabled is False
+
+
 def test_mix_id_folds_the_chain_config_hash(monkeypatch):
     """Phase 0 T1.4: the vocal-chain config hash is part of the mix cache id, so a tuning-week
     dial change invalidates the cache (never serves a stale render)."""
