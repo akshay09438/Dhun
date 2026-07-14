@@ -89,6 +89,7 @@ export default function PlayScreen({
   const playerRef = useRef<LivePlayer | null>(null);
   const ctxRef = useRef<LiveContextDTO>({ bpm: 120, downbeats: [] });
   const [ready, setReady] = useState(false);
+  const [loading, setLoading] = useState(true); // true while the mix's audio is buffering
   const [playing, setPlaying] = useState(false);
   const [busState, setBusState] = useState<BusState>({
     drums: true,
@@ -110,12 +111,14 @@ export default function PlayScreen({
   // (Re)load the player when the song or take changes, so live vocals match the mix.
   useEffect(() => {
     setReady(false);
+    setLoading(true);
     setPlaying(false);
     let p: LivePlayer;
     try {
       p = new LivePlayer();
     } catch {
-      return; // no Web Audio (or test DOM) — stays not-ready, no crash
+      setLoading(false); // no Web Audio (or test DOM) — stays not-ready, no spinner stuck on
+      return;
     }
     playerRef.current = p;
     Promise.all([p.load(song1Id, STEM_BUSES, mixId), getLiveContext(song1Id)])
@@ -123,7 +126,8 @@ export default function PlayScreen({
         ctxRef.current = ctx;
         setReady(true);
       })
-      .catch(() => setReady(false));
+      .catch(() => setReady(false))
+      .finally(() => setLoading(false)); // clear the buffering pill on success OR failure
     return () => p.dispose();
   }, [song1Id, mixId]);
 
@@ -361,6 +365,17 @@ export default function PlayScreen({
         </div>
 
         <div className={styles.lanes}>
+          {loading && (
+            <div
+              className={styles.loading}
+              role="status"
+              aria-live="polite"
+              data-testid="mix-loading"
+            >
+              <span className={styles.loadDot} />
+              Loading your mix…
+            </div>
+          )}
           <Lane label="BEAT" bars={beat} />
           <Lane label="VOX" bars={vox} dim />
         </div>
