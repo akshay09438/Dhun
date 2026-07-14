@@ -1,0 +1,11 @@
+{
+  "session": "2026-07-09-goodnight-10-mashups",
+  "task": "Render 10 beat×vocal mashups with the deterministic engine (all built features except the AI judgment layer). Best-effort; report declines.",
+  "decisions": {
+    "cost_and_go": "Yes - run all 10 overnight; OK to spend a few dollars of Replicate credit re-processing ~15 songs (split+analyze, cached).",
+    "engine": "Deterministic (rules path - pop ANTHROPIC_API_KEY). Full engine: tempo-match, energy-sync, four beat moves, echo, both-vocals-trade, beat-lock. AI vocal-placement OFF.",
+    "risky_pairs": "Best-effort: render every pair that blends; skip + honestly report any the engine declines or that fail."
+  },
+  "save_to": "C:/Users/Akshay/OneDrive/Desktop/DJAI SONGS",
+  "verify_first_on": "Father Ocean x Der Lagi Lekin (known-good) before spending on all 15 songs"
+}

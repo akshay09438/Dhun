@@ -4,43 +4,41 @@ _The single source of truth for "where things stand" between sessions. `/handoff
 
 ## Last updated
 
-2026-07-06 (M4 session - full DJ arrangement built end to end)
+2026-07-14 (**MVP FEATURE-COMPLETE — all 5 features built. This session (continuing a long one): turned the vocal chain ON, fixed the vocal hand-off, locked down CORS, cleared ~3.9 GB cache, then wired pitch repair (Slice 2d, gated OFF) and built silent set-order scoring. Suite: 409 backend + 40 web green. All on branch `feat/mvp-finish-pitch-scoring`, PUSHED, a PR is open/ready — NOT merged.** ⚠️ **`origin/main` does NOT have the vocal chain — it is 175 commits behind; the earlier "merge" never landed on main. See Open escalations.**)
 
 ## Where things stand (one breath)
 
-Upload two songs → clean & playable (M1) → split into stems (M2a) → analyzed like a DJ (M2b) → **"Make my mix" now produces a full DJ arrangement:** Song 1's beat throughout, Song 2's vocal weaving in/out across several sections, a real one-bar beat-breath and one subtle filter sweep into a big entry, **Song 1's own vocal answering in a gap for contrast** (the two songs trade, never two voices at once), auto-simplified on shaky songs — with a **Regenerate** button and an arrangement timeline that shows both voices. **M3 is done and live-confirmed. M4 is complete in code** (Slice A live-confirmed by the founder; Slice B built + independently reviewed **SAFE** + verified on a real render). **101 tests green** (91 backend + 10 web). All on branch `feat/m4-arrangement`.
+All five V1 features are now BUILT: (1) two-song DJ mix, (2) live steering + regenerate, (3) **pitch repair — wired but shipped OFF**, (4) the vocal-polish chain — **ON**, ear-confirmed ("sounds plain" fixed), (5) **silent set-order scoring — done**. The vocal chain is live in the app, the vocal hand-off is now a guaranteed crossfade (no two-full-leads on any pair), CORS is locked down for public exposure, and pitch repair can nudge a clashing-key vocal into key but is OFF because the current catalog has nothing for it to fix. Everything is committed on `feat/mvp-finish-pitch-scoring` and pushed; a PR to `main` is ready but **not merged — the merge click is the founder's**.
 
-## In flight
+## In flight - done vs left
 
-- **Nothing half-done.** Working tree clean; every M4 piece committed on `feat/m4-arrangement`. Suite green (evidence below).
-- **The one open item is a human LISTEN, not code.** The full M4 (contrast + sweep) has **not been ear-checked by the founder yet** — automated checks and the adversarial review confirm it's _safe and structurally correct_, but whether the contrast and the sweep _sound good_ (any faint click? contrast balance?) is the one thing CI can't judge. The safety reviewer explicitly recommended a human listen to one real contrast+sweep mix. **This is the open M4 acceptance step.**
-- **Servers left running** on M4b code: backend :8000, web :5173 → http://localhost:5173.
-- **No GitHub remote** - work lives on local branches (`feat/m3-mix`, `feat/m4-arrangement`); no PRs. Offer to set up a remote next session (backup + PRs).
+- **Nothing is half-built or red.** 409 backend + 40 web green, golden gate byte-identical.
+- **DONE + committed this session (branch `feat/mvp-finish-pitch-scoring`, on top of the earlier `feat/house-bollywood-energy-sync` work):**
+  - Earlier in the session (also on the branch, `a989586`..`29dd7e0`): vocal chain turned ON (`SHIPPED_CHAIN`, m6.5), Play-screen buffering pill, chain guard test, R1 hand-off fade fix (`render.py`, m6.6, adversarially reviewed SAFE, ear-confirmed), CORS lockdown (`config.py`), ~3.9 GB regenerable-mix cache cleared, docs aligned.
+  - `d5177e5` — **BUILD 1: pitch repair (Slice 2d) WIRED, gated OFF.** `build_mix_plan` computes the camelot shift + emits it; new `VocalChainConfig.pitch_repair_enabled` (default False); clash beyond ±cap DECLINES; P1 (±3) + `_pitch_shift` (formant=preserved) untouched. `scripts/tune_pitch.py` ear-test tool (zero cloud).
+  - `64458c2` — **BUILD 2: silent set-order scoring.** `workers/set_score.py` + a guarded hook in `build_set.py`; logs app-pick vs user-pick to `data/set_order_log.csv` (gitignored); changes nothing users hear.
+- **DECISION (founder): pitch_repair_enabled stays OFF.** Measured: of the 10 pickable catalog pairs, 8 are already key-compatible and 2 clash beyond ±3 (would decline: Father Ocean × With You, I Adore You × Tere Bina) — **zero pairs pitch repair could actually fix**. Turning it on would only _remove_ Father Ocean × With You. The 3 named clashing pairs (FO×Suniyan, Anchor×Maula Mere, Innerbloom×Dooriyan) are **dropbox/test-only, not in the live catalog**. Leave OFF until a clashing-but-close song is added (a one-line flip).
+- **Left:** M6 the ~50-creator validation test; the pre-launch storage.py cache-eviction _sweep_ (still owed before the user test); the in-app set builder (a parked discovery item, memory `promptdj-inapp-set-builder`).
 
 ## Do first next session
 
-1. **Live-listen the full M4** (the open acceptance). App is running M4b; make a mix from a compatible pair (the cached **122-BPM beat + 125-BPM vocal** works, or Father Ocean + Dua Lipa "Don't Start Now"). Judge: does Song 1's voice answering in a gap feel like a cool _trade_; is the sweep a nice build **with no click** at its start; does it feel richer than Slice A; does Regenerate give a genuinely different take. If good → **M4 fully done**.
-2. **Then land the mix-WAV cache eviction sweep** — the top backlog item, **before the ~50-user test**: Regenerate saves a new ~40 MB WAV per take and nothing deletes them (disk hit 0 once before). A keep-newest-N / age sweep over `data/*.mix.wav` (deletes finished mixes → belongs in `storage.py`, a **dangerous** surface, so gate it). In-process/local only; no Redis/Postgres.
-3. **Then M5** (lean live commands) - or M6 polish (loudness master + short-clip export) per priority.
+1. **Confirm the merge actually happened.** RE-VERIFY `origin/main` has the vocal chain: `git fetch && git show origin/main:services/api/app/routes/mix.py | grep -c SHIPPED_CHAIN` — it was **0** at this handoff (the chain was NOT on main). If the founder merged `feat/mvp-finish-pitch-scoring`, it will be non-zero and the MVP is live on main. If still 0, the entire app lives only on the branch and the PR still needs merging.
+2. **Close the old PR if open.** An old PR for `feat/house-bollywood-energy-sync` may still be open; the new branch fully contains it (git-proven: 0 commits difference), so close the old one to avoid a double-merge and merge only the new PR.
+3. Then: kick off the ~50-creator validation test, or take the in-app set builder into `/zuko:discover`.
 
 ## Verification evidence (which checks ran, what they returned)
 
-Ran at handoff time, 2026-07-06:
+- **Backend:** `cd services/api && ./.venv/Scripts/python.exe -m pytest -q` → **409 passed in ~57s.**
+- **Golden gate + pitch-decline + set-score:** `pytest tests/test_render.py::test_golden_enabled_false_is_byte_identical_to_m6_0 tests/test_plan.py::test_pitch_repair_declines_a_pair_beyond_the_safe_band tests/test_set_score.py` → **6 passed** (disabled render still byte-identical to m6.0; >±3 declines; scoring logs both picks).
+- **Web:** `npm run typecheck` → PASS; `npm test` → **40 passed (8 files).**
+- **Zero-cloud proven:** pitch ear-test (`tune_pitch.py`) + set-score both ran on cached analyses with Replicate guarded to raise; no cloud calls. The 3 pitch pairs + all set demos rendered locally.
+- **Branch pushed, NOT merged:** `feat/mvp-finish-pitch-scoring` is 175 commits ahead of `origin/main`. `git status` clean at handoff.
 
-- Backend: `pytest -q` in `services/api` → **91 passed** (was 26 pre-M3; M3 + M4a + M4b added the fence/planner/validate/render/mix-route suites incl. real-FFmpeg renders and the two-voices-overlap guards).
-- Web: `npm run typecheck` → **PASS** · `npm run lint` → **PASS** · `npm test` (vitest) → **10 passed** (3 files).
-- **Real end-to-end render this session (no cloud cost, cached pair 122+125 BPM, stretch 0.976 — the fixed sub-unity case):** a full Slice B arrangement — S2 vocal at 0:18 / 0:33 / 0:49 (sweep on the 0:49 entry), **Song 1's own vocal answering at 2:41 for contrast**, **S1/S2 NO-OVERLAP verified**, valid 7:56 stereo WAV (peak 0.891, audible 0.88). Both independent reviews on M4a and M4b ran; the M4a safety review **caught a real overlap bug (inverted atempo math), fixed same session**; the M4b safety review returned **SAFE**.
+## Open escalations / RE-VERIFY next session (claims, not settled facts)
 
-## Open escalations
-
-- **None blocking.** No red suite, no work waiting on a human decision (only the optional live listen).
-- **CLAIMS to re-verify (not settled facts):**
-  - The M4 dangerous-surface guards (`workers/render.py`, `services/api/app/planner/validate.py`) were built + hardened via confirm-and-apply with founder approval; approvals cleared. Adversarial review verdict **SAFE** (two-lead-voices guarantee held under attack). **Re-verify next session by ear** that a real contrast+sweep mix has no click and the contrast sits right - that is the one dimension code review couldn't cover.
-  - M1 "before any public exposure" items **remain open** and gate a public launch: sandbox/resource-limit FFmpeg on untrusted input, proxy rate/body limits, HTTP traversal/oversize tests, and a **duration cap at upload** (render caps at 12 min; upload only caps bytes).
-- **Backlog (logged, deliberate - not blockers at validation scale):** (a) **mix-WAV cache eviction = top item before the user test** (see Do-first #2). (b) async-job skeleton triplicated (stems/analysis/mix) - extract one helper on next touch. (c) in-memory `_jobs` + local-disk readiness break at first multi-worker deploy / object-storage move. (d) `bpm_confidence is None` defaults to "confident" (only reachable on legacy analyses; real pipeline always sets it) - consider defaulting unknown→shaky. (e) `Placement.fx` is a bare string (deliberate, referee typo-guards it); if `s1_vocal_regions` ever grows a per-region field, promote the tuple to a named model in the same change.
-- **Keys / cost:** `REPLICATE_API_TOKEN` + `ANTHROPIC_API_KEY` in the gitignored root `.env`. **Check remaining Replicate credit** before a session that splits/analyzes new songs. Anthropic (`claude-sonnet-5`) powers the arrangement planner; negligible cost and it falls back to deterministic rules if the key/network is absent (the deterministic fallback is what the real renders above used).
-- **Environment truths (unchanged):** PyTorch/librosa/madmom can't run on this Windows-ARM machine - heavy audio via Replicate; local DSP is FFmpeg + numpy/scipy only. Time-stretch is FFmpeg `atempo` (LGPL); the sweep uses `scipy.signal`. Watch disk as cached stems/mixes accumulate (see backlog a).
-
-## How to run the app
-
-See README.md. Quick: backend `.venv/Scripts/python -m uvicorn app.main:app --port 8000` (from `services/api`), web `npm run dev` (from root), open http://localhost:5173. Or the `.claude/launch.json` configs. Both are currently running on the M4b code.
+- **🔴 `origin/main` does NOT have the vocal chain / hand-off / CORS (SHIPPED_CHAIN count = 0 at handoff).** The founder believes it is "merged and live," but it is NOT on main — the whole arc lives only on the branch. The open PR (`feat/mvp-finish-pitch-scoring → main`) ships the FULL arc (175 commits), not just the two new builds. Merging it is what makes the MVP live on main. **Re-verify main before assuming anything is deployed.**
+- **`pitch_repair_enabled` is False and should STAY false** until a clashing-but-repairable song is added (there is no live job today). Flipping it is a deliberate founder call (ear + yes), like the chain enable; on `enabled` it is on the danger list.
+- **🔴 `render.py` + `validate.py` (dangerous surfaces) carry the ENABLED vocal chain AND the R1 hand-off fade.** CLAIM to re-verify: golden gate proves the DISABLED path is still byte-identical to m6.0 (`test_golden_enabled_false_is_byte_identical_to_m6_0`, green at handoff). The enabled chain + hand-off fade are ear-confirmed + adversarially reviewed SAFE, but re-run the golden gate before trusting the disabled/fallback path.
+- **CORS is now env-gated** (`config.py`): default allows only `localhost:5173`; production must set `PROMPTDJ_CORS_ORIGINS`; dev wildcard needs `PROMPTDJ_DEV_CORS=1`. Verify the deploy sets the real origin before public exposure.
+- **"I Adore You" catalog beat is LOCAL-ONLY** (gitignored manifest) — won't transfer to another machine/branch; not a committed catalog member.
+- **Pre-launch owed:** the `storage.py` cache-eviction sweep (unbounded disk; this session cleared once by hand but there's no automatic sweep) — land before the ~50-user test.

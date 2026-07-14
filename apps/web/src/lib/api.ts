@@ -1,4 +1,16 @@
-export const API_BASE = "http://localhost:8000";
+// Where the backend lives. In local dev (Vite on :5173) default to the :8000 API.
+// In a production build (served BY the backend, e.g. through a tunnel) default to
+// same-origin ("") so one host serves the UI and the API — no CORS, keys never
+// cross-origin. Override with VITE_API_BASE when the two are hosted separately.
+const _envBase = (import.meta.env as Record<string, string | undefined>)
+  .VITE_API_BASE;
+export const API_BASE =
+  _envBase ?? (import.meta.env.DEV ? "http://localhost:8000" : "");
+
+/** How to wait on a start-then-poll job. Overridable so tests can poll fast. */
+export type PollOpts = { pollMs?: number; maxTries?: number };
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export type SongDTO = {
   id: string;
@@ -6,6 +18,16 @@ export type SongDTO = {
   url: string;
   status: string;
 };
+
+export type LibrarySongDTO = SongDTO & { role_hint?: string };
+
+/** The curated song catalog (MVP: users pick from these instead of uploading). */
+export async function getLibrary(): Promise<LibrarySongDTO[]> {
+  const res = await fetch(`${API_BASE}/library`);
+  if (!res.ok) throw new Error("Couldn't load the song library.");
+  const data = await res.json();
+  return data.songs ?? [];
+}
 
 /** Upload two songs to be cleaned; returns the two playable records. */
 export async function uploadSongs(
@@ -51,6 +73,23 @@ export async function getStemStatus(songId: string): Promise<StemSetDTO> {
   return res.json();
 }
 
+/** Split a song and wait until its parts are ready (start + poll). */
+export async function splitSong(
+  songId: string,
+  { pollMs = 3000, maxTries = 80 }: PollOpts = {},
+): Promise<StemSetDTO> {
+  const started = await startSplit(songId);
+  if (started.status === "ready") return started;
+  for (let i = 0; i < maxTries; i++) {
+    const s = await getStemStatus(songId);
+    if (s.status === "ready") return s;
+    if (s.status === "error")
+      throw new Error("The split failed. Please try again.");
+    await sleep(pollMs);
+  }
+  throw new Error("The split is taking too long. Please try again.");
+}
+
 export type SectionDTO = { start: number; end: number; label: string };
 
 export type TrackAnalysisDTO = {
@@ -87,6 +126,23 @@ export async function getAnalysisStatus(
     throw new Error("Could not check the analysis status.");
   }
   return res.json();
+}
+
+/** Analyze a song and wait until the beat/key/structure read is ready. */
+export async function analyzeSong(
+  songId: string,
+  { pollMs = 3000, maxTries = 100 }: PollOpts = {},
+): Promise<TrackAnalysisDTO> {
+  const started = await startAnalysis(songId);
+  if (started.status === "ready") return started;
+  for (let i = 0; i < maxTries; i++) {
+    const s = await getAnalysisStatus(songId);
+    if (s.status === "ready") return s;
+    if (s.status === "error")
+      throw new Error("The analysis failed. Please try again.");
+    await sleep(pollMs);
+  }
+  throw new Error("The analysis is taking too long. Please try again.");
 }
 
 export type PlacementDTO = {
@@ -150,4 +206,112 @@ export async function getMixStatus(mixId: string): Promise<MixDTO> {
     throw new Error("Could not check the mix status.");
   }
   return res.json();
+}
+
+/** Make a mix and wait until it's rendered (start + poll). */
+export async function makeMix(
+  song1Id: string,
+  song2Id: string,
+  prompt = "",
+  take = 1,
+  { pollMs = 3000, maxTries = 80 }: PollOpts = {},
+): Promise<MixDTO> {
+  const started = await startMix(song1Id, song2Id, prompt, take);
+  if (started.status === "ready") return started;
+  for (let i = 0; i < maxTries; i++) {
+    const s = await getMixStatus(started.mix_id);
+    if (s.status === "ready") return s;
+    if (s.status === "error")
+      throw new Error(s.message ?? "This pair couldn't be mixed. Try another.");
+    await sleep(pollMs);
+  }
+  throw new Error("The mix is taking too long. Please try again.");
+}
+
+/** An AI-generated playful name for a mix, from the two song filenames.
+ *  Cached server-side; falls back to a simple "A × B" if the AI is unavailable. */
+export async function getMixName(
+  song1Name: string,
+  song2Name: string,
+  prompt = "",
+): Promise<string> {
+  const res = await fetch(`${API_BASE}/mix/name`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      song1_name: song1Name,
+      song2_name: song2Name,
+      prompt,
+    }),
+  });
+  if (!res.ok) throw new Error("Couldn't name the mix.");
+  const data = await res.json();
+  return data.name ?? "";
+}
+
+export type LiveOpDTO = {
+  op: "mute" | "unmute" | "decline" | "fade" | "beat_up";
+  target: string | null;
+  targets?: string[];
+  when: string;
+  say: string;
+  reason: string | null;
+};
+
+export type LiveChipDTO = { text: string; op: string; targets: string[] };
+export type SectionSuggestionsDTO = {
+  start: number;
+  end: number;
+  label: string;
+  chips: LiveChipDTO[];
+};
+
+export type LiveContextDTO = { bpm: number | null; downbeats: number[] };
+
+/** Per-section suggestion chips for a finished mix (one cached AI call server-side). */
+export async function getSuggestions(
+  mixId: string,
+): Promise<SectionSuggestionsDTO[]> {
+  const res = await fetch(`${API_BASE}/live/suggestions/${mixId}`);
+  if (!res.ok) throw new Error("Couldn't load suggestions.");
+  const data = await res.json();
+  return data.sections ?? [];
+}
+
+/** Turn a typed steering command into a structured op the player runs on the beat. */
+export async function postLiveCommand(
+  song1Id: string,
+  song2Id: string,
+  text: string,
+): Promise<LiveOpDTO> {
+  const res = await fetch(`${API_BASE}/live/command`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ song1_id: song1Id, song2_id: song2Id, text }),
+  });
+  if (!res.ok) throw new Error("Couldn't run that command.");
+  return res.json();
+}
+
+/** The beatgrid the live player schedules on (Song 1's tempo + downbeats). */
+export async function getLiveContext(song1Id: string): Promise<LiveContextDTO> {
+  const res = await fetch(`${API_BASE}/live/context/${song1Id}`);
+  if (!res.ok) throw new Error("Couldn't load the beat map.");
+  return res.json();
+}
+
+const VOCAL_BUS_POLL_MS = 1500;
+
+/** Fetch the arranged-vocal-bus WAV for a mix, polling past 202 while it renders. */
+export async function fetchVocalBus(mixId: string): Promise<ArrayBuffer> {
+  for (let i = 0; i < 80; i++) {
+    const res = await fetch(`${API_BASE}/live/vocal-bus/${mixId}`);
+    if (res.status === 200) return res.arrayBuffer();
+    if (res.status === 202) {
+      await new Promise((r) => setTimeout(r, VOCAL_BUS_POLL_MS));
+      continue;
+    }
+    throw new Error("Couldn't prepare the live vocals.");
+  }
+  throw new Error("Preparing the live vocals took too long.");
 }

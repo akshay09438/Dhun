@@ -54,7 +54,8 @@ def test_beat_regularity_confidence():
 def test_analyze_track_is_cached(tmp_path, monkeypatch):
     _use_tmp(monkeypatch, tmp_path)
     sid = "a" * 64
-    cached = {"song_id": sid, "bpm": 120.0}
+    # a FRESH cache (current local version) is returned as-is, no cloud, no local recompute
+    cached = {"song_id": sid, "bpm": 120.0, "local_analysis_version": an.LOCAL_ANALYSIS_VERSION}
     an.analysis_path(sid).write_text(json.dumps(cached))
 
     def boom(*a, **k):
@@ -63,3 +64,35 @@ def test_analyze_track_is_cached(tmp_path, monkeypatch):
     monkeypatch.setattr(an, "_cloud_structure", boom)
 
     assert an.analyze_track(sid, tmp_path / "unused.wav") == cached
+
+
+def test_local_reanalysis_costs_zero_cloud(tmp_path, monkeypatch):
+    """0.1: a stale LOCAL half (a legacy analysis with no version, or a bumped version) recomputes the
+    local fields (key/energy/vocal_regions) WITHOUT any cloud call — the cloud structure is reused
+    (seeded from the legacy analysis). Rig BOTH the cloud helper and replicate.run to crash to prove it."""
+    _use_tmp(monkeypatch, tmp_path)
+    sid = "a" * 64
+    sr = 22050
+    t = np.linspace(0, 4, sr * 4, endpoint=False)
+    sf.write(tmp_path / f"{sid}.wav", (0.5 * np.sin(2 * np.pi * 220 * t)).astype("float32"), sr)
+    sf.write(tmp_path / f"{sid}.vocals.mp3", (0.5 * np.sin(2 * np.pi * 440 * t)).astype("float32"), sr)
+    # a LEGACY combined analysis (no local_analysis_version) that already holds the cloud fields
+    legacy = {"song_id": sid, "bpm": 120.0,
+              "beats": [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5], "downbeats": [0.0, 2.0],
+              "sections": [{"start": 0.0, "end": 4.0, "label": "verse"}]}
+    an.analysis_path(sid).write_text(json.dumps(legacy))
+
+    def boom(*a, **k):
+        raise AssertionError("a LOCAL re-analysis must not call the cloud")
+
+    monkeypatch.setattr(an, "_cloud_structure", boom)
+    monkeypatch.setattr(an.replicate, "run", boom)
+
+    result = an.analyze_track(sid, tmp_path / f"{sid}.wav")
+
+    assert result["local_analysis_version"] == an.LOCAL_ANALYSIS_VERSION
+    assert result["beats"] == legacy["beats"]                 # cloud fields reused, not recomputed
+    assert result["bpm"] == 120.0 and result["sections"][0]["label"] == "verse"
+    assert an.structure_path(sid).exists()                    # cloud cache seeded from the legacy analysis
+    assert "camelot" in result["key"] and result["energy_curve"]  # local half genuinely recomputed
+    assert an.analysis_is_current(sid)                        # the rewritten cache is now current

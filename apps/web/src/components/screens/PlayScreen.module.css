@@ -1,0 +1,457 @@
+.consoleHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.nextSong {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--violet);
+  background: transparent;
+  border: 1px solid var(--violet);
+  border-radius: 999px;
+  padding: 4px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.nextSong:hover {
+  background: rgba(143, 0, 255, 0.16);
+}
+.mixTitle {
+  margin-bottom: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feed {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  overflow: auto;
+  margin-bottom: 14px;
+  flex: 1;
+  min-height: 0;
+}
+.feedHint {
+  font-size: 12px;
+  color: var(--w40);
+  font-style: italic;
+}
+.userLine,
+.sysLine {
+  border-left: 2px solid var(--b22);
+  padding-left: 10px;
+  font-size: 12.5px;
+  color: var(--w55);
+}
+.sysLine {
+  border-left-color: var(--violet);
+  color: var(--text);
+}
+
+.ctlLabel {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--w45);
+  text-transform: uppercase;
+  margin: 2px 0 8px;
+}
+.parts {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.part,
+.partOff {
+  padding: 5px 13px;
+  font-size: 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: var(--sys);
+}
+.part {
+  border: 1px solid var(--violet);
+  color: var(--text);
+  background: rgba(143, 0, 255, 0.16);
+}
+.partOff {
+  border: 1px solid var(--b22);
+  color: var(--w40);
+  background: transparent;
+  text-decoration: line-through;
+}
+.moves {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.chip,
+.chipHot {
+  padding: 5px 13px;
+  font-size: 12px;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--sys);
+}
+.chip {
+  border: 1px solid var(--b28);
+  color: var(--w75);
+}
+.chipHot {
+  border: 1px solid var(--violet);
+  color: var(--text);
+}
+.cmdbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--b28);
+  border-radius: 999px;
+  padding: 5px 6px 5px 14px;
+  margin-top: auto;
+}
+.cmdbar input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font-size: 12.5px;
+  outline: none;
+  font-family: var(--sys);
+}
+.cmdbar input::placeholder {
+  color: var(--w40);
+}
+.send {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--violet);
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 13px;
+}
+
+/* stage */
+.live {
+  position: absolute;
+  top: 32px;
+  right: 40px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--violet);
+}
+.liveDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--violet);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .live[data-live="true"] .liveDot {
+    animation: blink 1.4s ease-in-out infinite;
+  }
+}
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+.stageTitle {
+  font-family: var(--serif);
+  font-size: 26px;
+  margin: 0;
+  max-width: 640px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stageSub {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--w45);
+  margin-top: 6px;
+  text-transform: uppercase;
+}
+.lanes {
+  margin: auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: relative;
+}
+.loading {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--b28);
+  border-radius: 999px;
+  padding: 8px 16px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+}
+.loadDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--violet);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .loadDot {
+    animation: blink 1.4s ease-in-out infinite;
+  }
+}
+.lane {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.laneLbl {
+  width: 36px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--w45);
+}
+.lanebars {
+  flex: 1;
+  height: 56px;
+  background: var(--panel);
+  border-radius: 8px;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 8px;
+  overflow: hidden;
+}
+.lanebars span {
+  flex: 1;
+  background: var(--violet);
+  border-radius: 2px;
+  min-height: 4%;
+}
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: auto;
+}
+.playbtn {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: var(--violet);
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 14px;
+  flex: 0 0 auto;
+}
+.playbtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.scrub {
+  flex: 1;
+  position: relative;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: none;
+}
+.scrubTrack {
+  flex: 1;
+  height: 3px;
+  background: var(--track);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.scrubTrack i {
+  display: block;
+  height: 100%;
+  background: var(--violet);
+}
+.knob {
+  position: absolute;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  background: var(--violet);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.scrub:hover .knob,
+.scrub:focus-visible .knob {
+  opacity: 1;
+}
+.time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--w55);
+  font-variant-numeric: tabular-nums;
+}
+.regen,
+.exportlink {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--violet);
+  cursor: pointer;
+  text-transform: uppercase;
+  background: transparent;
+  border: 0;
+}
+.regen:disabled {
+  color: var(--w40);
+  cursor: default;
+}
+
+/* ---- phone + tablet-portrait ---- */
+@media (max-width: 900px) {
+  /* Console: the stage already shows the title, so hide the duplicate here and reorder
+     so the steering controls lead and the chat log trails (it's feedback, not primary). */
+  .mixTitle {
+    display: none;
+  }
+  .consoleHead {
+    order: 0;
+  }
+  .ctlLabel {
+    order: 1;
+  }
+  .parts {
+    order: 2;
+    gap: 9px;
+  }
+  .moves {
+    order: 3;
+    gap: 9px;
+  }
+  .cmdbar {
+    order: 4;
+    margin-top: 14px;
+    padding: 6px 6px 6px 16px;
+  }
+  .feed {
+    order: 5;
+    flex: none;
+    max-height: 38vh;
+    margin: 16px 0 0;
+  }
+
+  /* Touch targets: >=44px, readable type, 16px input (stops iOS zoom-on-focus). */
+  .part,
+  .partOff,
+  .chip,
+  .chipHot {
+    min-height: 44px;
+    padding: 10px 15px;
+    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .nextSong {
+    min-height: 36px;
+    padding: 8px 14px;
+    font-size: 11px;
+  }
+  .cmdbar input {
+    font-size: 16px;
+  }
+  .send {
+    width: 44px;
+    height: 44px;
+    font-size: 15px;
+  }
+  .feedHint,
+  .userLine,
+  .sysLine {
+    font-size: 14px;
+  }
+
+  /* Stage: inline the LIVE badge, bigger transport, scrubber on its own full-width row. */
+  .live {
+    position: static;
+    margin: 0 0 10px;
+  }
+  .stageTitle {
+    font-size: 28px;
+    max-width: none;
+    white-space: normal;
+  }
+  .lanes {
+    margin: 18px 0;
+    gap: 12px;
+  }
+  .lanebars {
+    height: 44px;
+  }
+  .transport {
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-top: 18px;
+  }
+  .playbtn {
+    width: 54px;
+    height: 54px;
+    font-size: 17px;
+  }
+  .time {
+    order: 2;
+    font-size: 13px;
+  }
+  .regen {
+    order: 3;
+    padding: 10px 0;
+    font-size: 12px;
+  }
+  .exportlink {
+    order: 4;
+    padding: 10px 0;
+    font-size: 12px;
+  }
+  .scrub {
+    order: 5;
+    flex: 1 1 100%; /* full-width seek row — easy to drag on touch */
+    min-height: 44px;
+  }
+  .knob {
+    opacity: 1; /* no hover on touch — always show the handle */
+    width: 15px;
+    height: 15px;
+  }
+}

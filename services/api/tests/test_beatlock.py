@@ -197,20 +197,30 @@ def test_warp_map_thin_grid_falls_back_to_single_global_segment():
     assert abs(out_secs - 20.0 / 0.98) <= 1e-3  # global-ratio rendered length
 
 
-def test_warp_map_glitch_bar_falls_back_to_legacy_not_a_warbly_ratio():
-    # Inject a missing downbeat -> one double-length Song-2 bar (a grid glitch). CONTRACT
-    # (corrected after the F1 safety review): a per-bar global fallback for that one bar would
-    # shift every LATER boundary off Song 1's grid, so warp_map instead bails to [] and the
-    # placement uses the legacy global stretch. Either way, no warbly ratio ever ships — and
-    # whatever it does emit stays inside the safe band.
+def test_warp_map_glitch_bar_truncates_and_rides_the_tail_on_the_global_stretch():
+    # WAS test_warp_map_glitch_bar_falls_back_to_legacy_not_a_warbly_ratio (asserted segs == []). The
+    # F1 safety review bailed the whole map on a glitch so no boundary drifts off Song 1's grid (which
+    # R7 rejects). That reasoning was CORRECT for a slice that starts ON a downbeat -- but a hand-marked
+    # hook starts MID-BAR, where the bail's legacy fallback lands the ENTRY off-beat (the Tujhe
+    # late-by-~2-beats bug, 2026-07-11). A glitch bar is un-lockable (no bar count gives an in-band
+    # ratio), so warp_map now locks every bar UP TO the glitch and rides the rest on ONE trailing
+    # global segment -- R7 exempts the LAST segment, so no interior boundary drifts and no ratio
+    # warbles. DO NOT re-bail to []: the premise changed when we started hand-marking mid-bar hooks.
     d1 = _jittered_downbeats(122.0, 24, 0.02)
     d2 = _jittered_downbeats(125.0, 24, 0.03)
-    del d2[5]  # missing downbeat -> a double-length bar around index 4-5
+    del d2[5]  # missing downbeat -> a double-length bar (a grid glitch) around index 4-5
     ratio = fence.best_stretch(122.0, 125.0)[0]
     segs = fence.warp_map(d1[0], (d2[0], d2[10]), d1, d2, ratio)
-    assert segs == []  # glitch -> legacy fallback, never a half-locked grid-shifting map
-    for src_s, src_e, out_secs in segs:  # vacuous here, but the invariant holds for any output
-        assert fence.SAFE_STRETCH_LO - 1e-6 <= (src_e - src_s) / out_secs <= fence.SAFE_STRETCH_HI + 1e-6
+    assert segs, "a glitch must truncate the lock, not discard it"
+    cum = d1[0]
+    for i, (src_s, src_e, out_secs) in enumerate(segs):
+        assert fence.WARP_LO - 1e-6 <= (src_e - src_s) / out_secs <= fence.WARP_HI + 1e-6  # never warbly
+        cum += out_secs
+        if i < len(segs) - 1:  # every INTERIOR boundary still locks to Song 1's grid (R7's check)
+            assert min(abs(cum - d) for d in d1) <= 0.03
+    # the last segment carries the un-lockable tail at the global ratio (R7 exempts its end boundary);
+    # tolerance is loose because warp_map rounds src to 3 dp and out_secs to 4 dp:
+    assert abs((segs[-1][1] - segs[-1][0]) / segs[-1][2] - ratio) < 1e-3
 
 
 # ===========================================================================  #

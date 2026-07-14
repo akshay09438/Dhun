@@ -1,0 +1,714 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Prompt-DJ — Drop & Hook Marker</title>
+    <style>
+      :root {
+        --bg: #f6f6f7;
+        --card: #fff;
+        --ink: #1c1c1f;
+        --muted: #6b6b74;
+        --line: #e4e4e8;
+        --violet: #6d3bf5;
+        --violet-soft: #efeaff;
+        --drop: #e0562d;
+        --hook: #137a4b;
+        --hook-soft: #e2f4ea;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #161618;
+          --card: #1f1f22;
+          --ink: #f2f2f4;
+          --muted: #a0a0aa;
+          --line: #33333a;
+          --violet: #9a78ff;
+          --violet-soft: #2a2340;
+          --drop: #ff7a52;
+          --hook: #4fd39a;
+          --hook-soft: #193029;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family:
+          "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: var(--bg);
+        color: var(--ink);
+        line-height: 1.5;
+      }
+      .wrap {
+        max-width: 860px;
+        margin: 0 auto;
+        padding: 24px 18px 80px;
+      }
+      h1 {
+        font-size: 22px;
+        margin: 0 0 2px;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 13px;
+        margin: 0 0 18px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 16px 18px;
+        margin-bottom: 16px;
+      }
+      button {
+        font-family: inherit;
+        font-size: 14px;
+        border: 1px solid var(--line);
+        background: var(--card);
+        color: var(--ink);
+        border-radius: 10px;
+        padding: 9px 14px;
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: var(--violet);
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      .primary {
+        background: var(--violet);
+        color: #fff;
+        border-color: var(--violet);
+      }
+      .big {
+        font-size: 16px;
+        padding: 14px 18px;
+        font-weight: 700;
+      }
+      .drop-btn {
+        background: var(--drop);
+        color: #fff;
+        border-color: var(--drop);
+      }
+      .hook-btn {
+        background: var(--hook);
+        color: #fff;
+        border-color: var(--hook);
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .songlist {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-height: 230px;
+        overflow: auto;
+      }
+      .song {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 13px;
+      }
+      .song.active {
+        border-color: var(--violet);
+        background: var(--violet-soft);
+      }
+      .song .tag {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .song .done {
+        color: var(--hook);
+        font-weight: 700;
+      }
+      .now {
+        font-size: 13px;
+        color: var(--muted);
+        margin: 2px 0 10px;
+      }
+      .timeline {
+        position: relative;
+        height: 56px;
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+        cursor: pointer;
+        margin: 10px 0;
+      }
+      .playhead {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: var(--violet);
+      }
+      .tick {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: var(--drop);
+      }
+      .tick::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: -3px;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--drop);
+      }
+      .hookspan {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        background: color-mix(in srgb, var(--hook) 30%, transparent);
+        border-left: 2px solid var(--hook);
+        border-right: 2px solid var(--hook);
+      }
+      .time {
+        font-variant-numeric: tabular-nums;
+        font-size: 20px;
+        font-weight: 700;
+      }
+      .marks {
+        font-size: 13px;
+      }
+      .marks .m {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 20px;
+        padding: 3px 10px;
+        margin: 3px 4px 0 0;
+      }
+      .marks .m b {
+        color: var(--drop);
+      }
+      .marks .hk b {
+        color: var(--hook);
+      }
+      .x {
+        cursor: pointer;
+        color: var(--muted);
+        border: none;
+        background: none;
+        padding: 0 2px;
+        font-size: 14px;
+      }
+      kbd {
+        font-family: inherit;
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-bottom-width: 2px;
+        border-radius: 5px;
+        padding: 1px 6px;
+        font-size: 12px;
+      }
+      .hint {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .pill {
+        font-size: 12px;
+        background: var(--violet-soft);
+        color: var(--violet);
+        border-radius: 20px;
+        padding: 2px 10px;
+      }
+      a.dl {
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>🎧 Drop &amp; Hook Marker</h1>
+      <p class="sub">
+        Play each song, tap a key at every real
+        <b style="color: var(--drop)">drop</b>, and mark the one
+        <b style="color: var(--hook)">hook</b> (the memorable line). Then export
+        one CSV. Nothing leaves your computer.
+      </p>
+
+      <div class="card">
+        <div class="row" style="justify-content: space-between">
+          <div class="row">
+            <button class="primary" id="pickFolder">
+              📁 Choose your song folder…
+            </button>
+            <button id="pickFiles">or pick files…</button>
+          </div>
+          <div class="row">
+            <button id="importCsv">Import CSV</button>
+            <a class="dl" id="exportLink"
+              ><button class="primary" id="exportCsv" disabled>
+                ⬇ Export CSV
+              </button></a
+            >
+          </div>
+        </div>
+        <p class="hint" id="loadHint" style="margin: 10px 0 0">
+          Point it at <code>services/api/data</code> (the folder with the song
+          files). It only lists the actual songs, not stems or mixes.
+        </p>
+        <input
+          type="file"
+          id="folderInput"
+          webkitdirectory
+          directory
+          multiple
+          hidden
+        />
+        <input type="file" id="filesInput" accept="audio/*" multiple hidden />
+        <input type="file" id="csvInput" accept=".csv" hidden />
+      </div>
+
+      <div class="card" id="listCard" hidden>
+        <div
+          class="row"
+          style="justify-content: space-between; margin-bottom: 8px"
+        >
+          <b>Songs</b><span class="pill" id="progress">0 marked</span>
+        </div>
+        <div class="songlist" id="songlist"></div>
+      </div>
+
+      <div class="card" id="playerCard" hidden>
+        <div class="now" id="nowName">—</div>
+        <div class="row" style="justify-content: space-between">
+          <div class="time">
+            <span id="cur">0:00.0</span>
+            <span style="color: var(--muted)"
+              >/ <span id="dur">0:00</span></span
+            >
+          </div>
+          <div class="row">
+            <button id="playBtn" class="big">▶ Play</button>
+          </div>
+        </div>
+        <div class="timeline" id="timeline">
+          <div class="playhead" id="playhead" style="left: 0"></div>
+        </div>
+        <div class="row" style="margin: 6px 0 4px">
+          <button class="drop-btn big" id="dropBtn">
+            ● Mark DROP <span class="hint" style="color: #fff">(D)</span>
+          </button>
+          <button class="hook-btn big" id="hookBtn">
+            ◆ Hook start <span class="hint" style="color: #fff">(H)</span>
+          </button>
+          <button id="undoBtn">
+            ↶ Undo drop <span class="hint">(U)</span>
+          </button>
+        </div>
+        <p class="hint" style="margin: 6px 0 10px">
+          <kbd>Space</kbd> play/pause · <kbd>D</kbd> mark a drop ·
+          <kbd>H</kbd> hook start then hook end · <kbd>U</kbd> undo last drop ·
+          <kbd>←</kbd><kbd>→</kbd> jump 5s · <kbd>N</kbd> next song
+        </p>
+        <div class="marks" id="marks"></div>
+        <div
+          class="row"
+          style="margin-top: 12px; justify-content: space-between"
+        >
+          <button id="prevBtn">← Prev song</button>
+          <button id="nextBtn" class="primary">
+            Next song → <span class="hint" style="color: #fff">(N)</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <audio id="audio"></audio>
+    <script>
+      // ---- known catalog names (song_id -> friendly name). Unknown songs show a short hash. ----
+      const NAMES = {
+        ac59f8c4af7e89e916dc825690ade5dbc2b9c6f221c5a7ef863eb9863f3826e1:
+          "Father Ocean (Ben Böhmer Remix) [beat]",
+        c0c6ab91a06e24367e84874da81d4abc285779f50e8f1aeacf70a655cabceb0b:
+          "Don't Start Now (Dua Lipa) [vocals]",
+        bbab7b9f875f071f8e3b53aa73e64c02b3f39730d0a1feec48af6b54de501430:
+          "Der Lagi Lekin (ZNMD) [vocals]",
+        fedc95c90aff7c957f398f302a6a3ed4c7dbf48d7a6667c8294e0b4030355e20:
+          "Tujhe Bhula Diya (Anjaana Anjaani) [vocals]",
+        ae132f3a444f5121d75097a44110a0323365e6dc4a8d0736a924c00b2ac210c1:
+          "With You (AP Dhillon) [vocals]",
+        "6ad6903592cd668502c5f4546618aec807c6eadb974fa6437fef7180fbffddc2":
+          "Tere Bina [vocals]",
+      };
+      const SONG_RE = /^([0-9a-f]{64})\.wav$/; // the bare song WAVs only — not .mix.wav, not stems
+      const $ = (s) => document.querySelector(s);
+      const audio = $("#audio");
+
+      let songs = []; // {id, name, file, url}
+      let idx = -1; // current song index
+      // marks[id] = { drops:[sec,...], hook:[start,end]|null, hookPending:number|null }
+      let marks = JSON.parse(localStorage.getItem("pdj_marks") || "{}");
+
+      function save() {
+        localStorage.setItem("pdj_marks", JSON.stringify(marks));
+      }
+      function fmt(t) {
+        if (!isFinite(t)) t = 0;
+        const m = Math.floor(t / 60),
+          s = t % 60;
+        return m + ":" + s.toFixed(1).padStart(4, "0");
+      }
+      function fmtShort(t) {
+        const m = Math.floor(t / 60),
+          s = Math.floor(t % 60);
+        return m + ":" + String(s).padStart(2, "0");
+      }
+      function nameFor(id) {
+        return NAMES[id] || "song " + id.slice(0, 8) + "…";
+      }
+      function ensure(id) {
+        if (!marks[id])
+          marks[id] = { drops: [], hook: null, hookPending: null };
+        return marks[id];
+      }
+      function markedCount() {
+        return songs.filter(
+          (s) => marks[s.id] && (marks[s.id].drops.length || marks[s.id].hook),
+        ).length;
+      }
+
+      function addSongs(fileList) {
+        const seen = new Set(songs.map((s) => s.id));
+        for (const f of fileList) {
+          const m = (f.name || "").match(SONG_RE);
+          if (!m) continue;
+          const id = m[1];
+          if (seen.has(id)) continue;
+          seen.add(id);
+          songs.push({
+            id,
+            name: nameFor(id),
+            file: f,
+            url: URL.createObjectURL(f),
+          });
+        }
+        // known catalog songs first, then the rest, stable
+        songs.sort((a, b) => (NAMES[b.id] ? 1 : 0) - (NAMES[a.id] ? 1 : 0));
+        renderList();
+        $("#listCard").hidden = songs.length === 0;
+        $("#exportCsv").disabled = songs.length === 0;
+        if (songs.length && idx < 0) load(0);
+        $("#loadHint").textContent =
+          songs.length + " song(s) found. Click one to start.";
+      }
+
+      function renderList() {
+        const el = $("#songlist");
+        el.innerHTML = "";
+        songs.forEach((s, i) => {
+          const mk = marks[s.id] || { drops: [], hook: null };
+          const done = mk.drops.length || mk.hook;
+          const d = document.createElement("div");
+          d.className = "song" + (i === idx ? " active" : "");
+          d.innerHTML = `<span>${s.name}</span><span class="tag">${done ? `<span class="done">✓ ${mk.drops.length} drop(s)${mk.hook ? " + hook" : ""}</span>` : "unmarked"}</span>`;
+          d.onclick = () => load(i);
+          el.appendChild(d);
+        });
+        $("#progress").textContent =
+          markedCount() + " / " + songs.length + " marked";
+      }
+
+      function load(i) {
+        if (i < 0 || i >= songs.length) return;
+        idx = i;
+        const s = songs[i];
+        ensure(s.id);
+        audio.src = s.url;
+        audio.load();
+        $("#playerCard").hidden = false;
+        $("#nowName").textContent = `Now marking: ${s.name}`;
+        $("#playBtn").textContent = "▶ Play";
+        renderList();
+        renderMarks();
+        drawTimeline();
+      }
+
+      function renderMarks() {
+        const s = songs[idx];
+        if (!s) return;
+        const mk = ensure(s.id);
+        const el = $("#marks");
+        el.innerHTML = "";
+        mk.drops
+          .slice()
+          .sort((a, b) => a - b)
+          .forEach((t) => {
+            const real = mk.drops.indexOf(t);
+            const span = document.createElement("span");
+            span.className = "m";
+            span.innerHTML = `<b>▸ drop</b> ${fmt(t)} <button class="x" title="remove">✕</button>`;
+            span.querySelector(".x").onclick = () => {
+              mk.drops.splice(real, 1);
+              save();
+              renderMarks();
+              drawTimeline();
+              renderList();
+            };
+            el.appendChild(span);
+          });
+        if (mk.hook) {
+          const span = document.createElement("span");
+          span.className = "m hk";
+          span.innerHTML = `<b>◆ hook</b> ${fmt(mk.hook[0])} → ${fmt(mk.hook[1])} <button class="x" title="remove">✕</button>`;
+          span.querySelector(".x").onclick = () => {
+            mk.hook = null;
+            mk.hookPending = null;
+            save();
+            renderMarks();
+            drawTimeline();
+            updateHookBtn();
+            renderList();
+          };
+          el.appendChild(span);
+        } else if (mk.hookPending != null) {
+          const span = document.createElement("span");
+          span.className = "m hk";
+          span.innerHTML = `<b>◆ hook start</b> ${fmt(mk.hookPending)} <span class="hint">— press H again at the end</span>`;
+          el.appendChild(span);
+        }
+        if (!mk.drops.length && !mk.hook && mk.hookPending == null)
+          el.innerHTML =
+            '<span class="hint">No marks yet. Play, then tap D at each drop.</span>';
+      }
+
+      function drawTimeline() {
+        const tl = $("#timeline");
+        const dur = audio.duration || 0;
+        [...tl.querySelectorAll(".tick,.hookspan")].forEach((n) => n.remove());
+        if (!dur) return;
+        const s = songs[idx];
+        const mk = ensure(s.id);
+        if (mk.hook) {
+          const h = document.createElement("div");
+          h.className = "hookspan";
+          h.style.left = (100 * mk.hook[0]) / dur + "%";
+          h.style.width = (100 * (mk.hook[1] - mk.hook[0])) / dur + "%";
+          tl.appendChild(h);
+        }
+        mk.drops.forEach((t) => {
+          const d = document.createElement("div");
+          d.className = "tick";
+          d.style.left = (100 * t) / dur + "%";
+          tl.appendChild(d);
+        });
+      }
+
+      // ---- marking actions ----
+      function markDrop() {
+        const s = songs[idx];
+        if (!s) return;
+        const mk = ensure(s.id);
+        mk.drops.push(+audio.currentTime.toFixed(2));
+        save();
+        renderMarks();
+        drawTimeline();
+        renderList();
+      }
+      function undoDrop() {
+        const s = songs[idx];
+        if (!s) return;
+        const mk = ensure(s.id);
+        mk.drops.pop();
+        save();
+        renderMarks();
+        drawTimeline();
+        renderList();
+      }
+      function updateHookBtn() {
+        const s = songs[idx];
+        const mk = s ? ensure(s.id) : null;
+        $("#hookBtn").innerHTML =
+          mk && mk.hookPending != null
+            ? '◆ Hook END <span class="hint" style="color:#fff">(H)</span>'
+            : '◆ Hook start <span class="hint" style="color:#fff">(H)</span>';
+      }
+      function markHook() {
+        const s = songs[idx];
+        if (!s) return;
+        const mk = ensure(s.id);
+        const t = +audio.currentTime.toFixed(2);
+        if (mk.hookPending == null && !mk.hook) {
+          mk.hookPending = t;
+        } else if (mk.hookPending != null) {
+          const a = Math.min(mk.hookPending, t),
+            b = Math.max(mk.hookPending, t);
+          mk.hook = [a, b];
+          mk.hookPending = null;
+        } else {
+          mk.hookPending = t;
+          mk.hook = null;
+        } // re-mark: start a fresh hook
+        save();
+        renderMarks();
+        drawTimeline();
+        updateHookBtn();
+      }
+
+      // ---- CSV ----
+      function toCsv() {
+        const rows = [["song_id", "song_name", "kind", "t_start", "t_end"]];
+        for (const s of songs) {
+          const mk = marks[s.id];
+          if (!mk) continue;
+          mk.drops
+            .slice()
+            .sort((a, b) => a - b)
+            .forEach((t) =>
+              rows.push([s.id, s.name, "drop", t.toFixed(2), ""]),
+            );
+          if (mk.hook)
+            rows.push([
+              s.id,
+              s.name,
+              "hook",
+              mk.hook[0].toFixed(2),
+              mk.hook[1].toFixed(2),
+            ]);
+        }
+        return rows
+          .map((r) =>
+            r
+              .map((c) =>
+                /[",\n]/.test(c)
+                  ? '"' + String(c).replace(/"/g, '""') + '"'
+                  : c,
+              )
+              .join(","),
+          )
+          .join("\n");
+      }
+      function exportCsv() {
+        const blob = new Blob([toCsv()], { type: "text/csv" });
+        const a = $("#exportLink");
+        a.href = URL.createObjectURL(blob);
+        a.download = "drops_hooks_marks.csv";
+      }
+      function importCsv(text) {
+        const lines = text.split(/\r?\n/).filter((x) => x.trim());
+        lines.shift();
+        const acc = {};
+        for (const line of lines) {
+          const c = line
+            .match(/("([^"]|"")*"|[^,]*)(,|$)/g)
+            .map((x) =>
+              x.replace(/,$/, "").replace(/^"|"$/g, "").replace(/""/g, '"'),
+            );
+          const [id, , kind, ts, te] = c;
+          if (!id) continue;
+          acc[id] = acc[id] || { drops: [], hook: null, hookPending: null };
+          if (kind === "drop") acc[id].drops.push(parseFloat(ts));
+          else if (kind === "hook")
+            acc[id].hook = [parseFloat(ts), parseFloat(te)];
+        }
+        marks = Object.assign(marks, acc);
+        save();
+        renderList();
+        if (idx >= 0) {
+          renderMarks();
+          drawTimeline();
+          updateHookBtn();
+        }
+      }
+
+      // ---- wiring ----
+      $("#pickFolder").onclick = () => $("#folderInput").click();
+      $("#pickFiles").onclick = () => $("#filesInput").click();
+      $("#folderInput").onchange = (e) => addSongs(e.target.files);
+      $("#filesInput").onchange = (e) => addSongs(e.target.files);
+      $("#importCsv").onclick = () => $("#csvInput").click();
+      $("#csvInput").onchange = (e) => {
+        const f = e.target.files[0];
+        if (f) {
+          const r = new FileReader();
+          r.onload = () => importCsv(r.result);
+          r.readAsText(f);
+        }
+      };
+      $("#exportCsv").onclick = exportCsv;
+
+      $("#playBtn").onclick = () => {
+        if (audio.paused) audio.play();
+        else audio.pause();
+      };
+      audio.onplay = () => ($("#playBtn").textContent = "⏸ Pause");
+      audio.onpause = () => ($("#playBtn").textContent = "▶ Play");
+      audio.onloadedmetadata = () => {
+        $("#dur").textContent = fmtShort(audio.duration);
+        drawTimeline();
+      };
+      audio.ontimeupdate = () => {
+        $("#cur").textContent = fmt(audio.currentTime);
+        const dur = audio.duration || 1;
+        $("#playhead").style.left = (100 * audio.currentTime) / dur + "%";
+      };
+      $("#timeline").onclick = (e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        audio.currentTime =
+          ((e.clientX - r.left) / r.width) * (audio.duration || 0);
+      };
+      $("#dropBtn").onclick = markDrop;
+      $("#hookBtn").onclick = markHook;
+      $("#undoBtn").onclick = undoDrop;
+      $("#nextBtn").onclick = () => load(idx + 1);
+      $("#prevBtn").onclick = () => load(idx - 1);
+
+      document.addEventListener("keydown", (e) => {
+        if (e.target.tagName === "INPUT") return;
+        const k = e.key.toLowerCase();
+        if (k === " " || e.code === "Space") {
+          e.preventDefault();
+          audio.paused ? audio.play() : audio.pause();
+        } else if (k === "d") {
+          e.preventDefault();
+          markDrop();
+        } else if (k === "h") {
+          e.preventDefault();
+          markHook();
+        } else if (k === "u") {
+          e.preventDefault();
+          undoDrop();
+        } else if (k === "n") {
+          e.preventDefault();
+          load(idx + 1);
+        } else if (e.key === "ArrowRight") {
+          audio.currentTime = Math.min(
+            audio.duration || 0,
+            audio.currentTime + 5,
+          );
+        } else if (e.key === "ArrowLeft") {
+          audio.currentTime = Math.max(0, audio.currentTime - 5);
+        }
+      });
+      updateHookBtn();
+      // restore list hint if marks exist from a prior session
+      if (Object.keys(marks).length)
+        $("#loadHint").innerHTML +=
+          " <b>(your previous marks were restored — load the same folder to continue.)</b>";
+    </script>
+  </body>
+</html>
