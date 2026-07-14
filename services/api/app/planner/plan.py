@@ -368,7 +368,8 @@ def _dedupe_nonoverlapping(placements: list[Placement], stretch: float) -> list[
 
 
 def _emit_vocal_chain(placements: list[Placement], cfg: VocalChainConfig,
-                      a1g: TrackAnalysis, stretch: float) -> tuple[list[VocalProcessMove], list[DuckMove]]:
+                      a1g: TrackAnalysis, stretch: float,
+                      pitch: float = 0.0) -> tuple[list[VocalProcessMove], list[DuckMove]]:
     """Phase 0 (G5): translate the vocal-chain CONFIG into per-placement timeline INSTRUCTIONS — one
     `VocalProcessMove` (stages 1-8) and one bed `DuckMove` (stage 9) per placement. This is the whole
     architecture: the config is the planner's input; the moves are the renderer's input; the renderer
@@ -393,7 +394,7 @@ def _emit_vocal_chain(placements: list[Placement], cfg: VocalChainConfig,
         eb = max(sb + 1, bar_of(end_t))
         vmoves.append(VocalProcessMove(
             placement_id=pid, start_bar=sb, end_bar=eb,
-            pitch_semitones=0.0,  # key-correction repair is Slice 2d (off)
+            pitch_semitones=pitch,  # Slice 2d key-correction shift (0.0 unless pitch_repair_enabled)
             deess=cfg.deess_intensity if cfg.deess_enabled else 0.0,
             highpass_hz=cfg.highpass_hz if cfg.highpass_enabled else 0,
             compress_ratio=cfg.compress_ratio if cfg.compress_enabled else 1.0,
@@ -493,8 +494,20 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         window_span = (round(ws, 3), round(we, 3))
 
     # Phase 0 (G5): emit the vocal-processing timeline instructions from the chain config (none when
-    # disabled → byte-identical render). key-correction pitch stays 0 (Slice 2d).
-    vocal_moves, duck_moves = _emit_vocal_chain(placements, chain, a1g, opts["vocal_stretch"])
+    # disabled → byte-identical render).
+    # Slice 2d — key-correction pitch repair, GATED by chain.pitch_repair_enabled (OFF by default, so
+    # pitch stays 0.0 and this is inert — nothing pitch-corrects). When on: compute the shortest camelot
+    # shift; a pair that can't be fixed inside the safe ±cap band DECLINES (never warp past it — the
+    # referee's P1 also enforces ±cap independently). formant=preserved is set render-side in
+    # render.py:_pitch_shift, so a shift never chipmunks the voice.
+    pitch_semitones = 0.0
+    if chain.enabled and chain.pitch_enabled and getattr(chain, "pitch_repair_enabled", False):
+        repair = fence.compute_pitch_repair(a1, a2, chain)
+        if isinstance(repair, fence.Decline):
+            raise MixDeclined(repair.reason)
+        pitch_semitones = repair.semitones
+    vocal_moves, duck_moves = _emit_vocal_chain(placements, chain, a1g, opts["vocal_stretch"],
+                                                pitch=pitch_semitones)
 
     first = placements[0]
     return MixPlan(

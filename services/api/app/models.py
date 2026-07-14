@@ -125,6 +125,10 @@ class VocalChainConfig(BaseModel):
     highpass_hz: int = 90  # 80..120
 
     pitch_enabled: bool = True
+    # Slice 2d GATE — when True (and pitch_enabled), the planner COMPUTES the key-correction shift and
+    # emits it as a real pitch_semitones (a clash beyond the cap DECLINES). OFF by default: pitch stays
+    # 0 and nothing pitch-corrects — the founder flips this on after the sandbox ear-test, like `enabled`.
+    pitch_repair_enabled: bool = False
     pitch_max_semitones: float = 3.0  # hard cap; rubberband present + formant=preserved (Phase-0 check)
     pitch_engine: Literal["rubberband", "librosa"] = "rubberband"
 

@@ -223,6 +223,43 @@ def test_a_disabled_stage_emits_its_neutral_dial(monkeypatch):
     assert plan.duck_moves == []                                  # duck disabled -> no DuckMove
 
 
+def test_pitch_repair_off_by_default_leaves_pitch_zero(monkeypatch):
+    """Slice 2d gate defaults OFF: even a clashing pair that COULD be shifted emits pitch_semitones 0
+    unless pitch_repair_enabled is set — so nothing pitch-corrects in the shipped app."""
+    from app.models import VocalChainConfig
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0, n_bars=64, key="8A")
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 30.0), (40.0, 70.0)], key="5A")  # clash, fixable by -1
+    plan = planner.build_mix_plan("m" * 64, a1, a2, chain=VocalChainConfig(enabled=True))
+    assert plan.vocal_moves and all(vm.pitch_semitones == 0.0 for vm in plan.vocal_moves)
+
+
+def test_pitch_repair_on_emits_the_camelot_shift(monkeypatch):
+    """With pitch_repair_enabled, the planner emits the shortest key-correction shift on every move,
+    and the plan still passes the referee (P1: within ±3)."""
+    from app.models import VocalChainConfig
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0, n_bars=64, key="8A")
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 30.0), (40.0, 70.0)], key="5A")
+    plan = planner.build_mix_plan("m" * 64, a1, a2,
+                                  chain=VocalChainConfig(enabled=True, pitch_repair_enabled=True))
+    assert plan.vocal_moves and all(vm.pitch_semitones == -1.0 for vm in plan.vocal_moves)
+    validate.assert_plan(plan, a1, a2)  # within ±3 -> referee clean
+
+
+def test_pitch_repair_declines_a_pair_beyond_the_safe_band(monkeypatch):
+    """A clash whose nearest fix exceeds the ±cap band DECLINES — never warped past the safe band."""
+    import pytest
+    from app.models import VocalChainConfig
+    from app.planner.plan import MixDeclined
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0, n_bars=64, key="10B")
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 30.0), (40.0, 70.0)], key="11A")  # 10B/11A -> >±3
+    with pytest.raises(MixDeclined):
+        planner.build_mix_plan("m" * 64, a1, a2,
+                               chain=VocalChainConfig(enabled=True, pitch_repair_enabled=True))
+
+
 def test_plan_carries_the_chain_config_hash(monkeypatch):
     """Phase 0 T1.4: the plan records the (default, off) vocal-chain config hash for reproducibility."""
     from app.models import VocalChainConfig, chain_config_hash
