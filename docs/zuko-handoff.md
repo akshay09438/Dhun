@@ -4,45 +4,48 @@ _The single source of truth for "where things stand" between sessions. `/handoff
 
 ## Last updated
 
-2026-07-14 (**MULTI-SET UI BUILT + verified — Setup can stack up to 2 sets, a new `/set` builder joins them into one continuous beat-matched track, and the Play screen is stripped of live steering. On branch `feat/multiset-ui`, committed + pushed; a PR is one click from being opened (link below). NOT merged.** Suite: **415 backend + 49 web green**, typecheck clean. A **real 15:00 two-set was built and heard playing** in the running app. This reverses the "two-songs-only / no set screen" V1 non-goal AND retires live steering — both deliberate founder decisions this session.)
+2026-07-15 (**BEST-PARTS RESEARCH SESSION — done entirely in the experiment clone `C:\Dhun-Experiment`, NOT the official app. No official product code changed this session (the only diffs in this repo are pre-existing Windows LF↔CRLF line-ending noise, not edited by this session).** Three experiments ran toward a future "best parts" feature: find the best part, cut to it, combine two songs' best parts. Findings below. **The multi-set PR from 2026-07-14 is STILL OPEN and unchanged — not merged.**)
 
 ## Where things stand (one breath)
 
-The MVP is on `main` (PR #1). This session added a **new feature on top, not yet merged**: **multi-set**. On the Setup screen you can now optionally stack a **second** song-pair (capped at two) and "Build the set"; a new backend `/set` route renders each pair through the _existing_ mix pipeline and joins them with the _shipped_ beat-matched seam engine into one continuous WAV (declining any off-tempo outlier with a plain reason); and the Play screen was **stripped** — Parts, chips, message log and the typed command bar are all gone (this **retires V1 Feature 2, live steering, from the UI**), replaced by a read-only **set line-up** and a simple one-file player that plays the finished mix (single) or set (two). The single-set path is unchanged and effortless. **The engine itself was not touched** — `render.py` / `validate.py` / `set_render.py` are import-and-call only. What is NOT done: the founder's **ear-listen** to the join, and merging the PR.
+Two separate threads:
+
+- **(A) Multi-set UI — still pending merge (unchanged since 2026-07-14).** Built + verified last session on branch `feat/multiset-ui` (`319d507`, pushed to `origin`); a PR is one click from being opened. NOT merged. Nothing about it changed this session.
+- **(B) Best-parts research (this session) — in the sandbox only.** Explored whether the app can find a song's best part, cut to it cleanly, and combine two songs' best parts. All work lives in `C:\Dhun-Experiment\experiments\climb-finder\` (that repo has no GitHub remote; committed there as `4b07e81`). It is research/measurement, not shipped code — nothing here is ready to promote into the official app yet.
 
 ## In flight - done vs left
 
-- **Nothing is half-built or red.** 415 backend + 49 web green; typecheck clean. All work committed on `feat/multiset-ui` (`319d507`) and pushed to `origin`.
-- **DONE this session (branch `feat/multiset-ui`, off `origin/main` 5e446f3):**
-  - **Piece 1 — Setup multi-set.** `SetupScreen` owns a 1–2-set line-up (`MAX_SETS=2`, `types.ts`), emits `onBuild(sets)`; console = the unchanged picker, stage = the running order (reorder ↑ / remove ✕). Single-set default unchanged. Note: "sets can only be added here, not during playback."
-  - **Piece 2 — the `/set` route** (`services/api/app/routes/set.py`, NEW; registered in `main.py`). Async start-then-poll like `/mix`, cached by ordered pairs; thin orchestration over `set_render.set_tempo_plan` + `mix._run_mix` + `set_render.assemble_beatmatched_set`; returns a manifest (kept/dropped + reason + `seam_at`) + duration; `/set/{id}/audio` serves the joined WAV. Cap enforced (400 on >2). `tests/test_set_route.py` (6 tests, real render+join end-to-end).
-  - **Piece 3 — stripped Play screen.** Removed the stem-bus `LivePlayer` + all steering from `PlayScreen`; new `lib/trackAudio.ts` (`TrackPlayer`, thin HTMLAudio wrapper) plays the finished track; left = read-only set line-up (now / next / dropped-with-reason), scrubber shows seam markers. `App` normalizes both paths; `study.studyAndBuildSet` reuses the studying checklist then `makeSet`; `api.ts` adds `startSet/getSetStatus/makeSet`; `ExportScreen` now takes `audioPath` (sets export too). Backend live routes left in place but unused (smallest change).
-  - Docs updated to match (functional-spec, technical-spec as-built section, implementation-plan drift-log 47th).
-- **DECISION (founder): live steering is retired from the app.** Made after being told twice exactly what the prompt bar / parts / chips did. The backend live endpoints are left in place but unused by the UI.
-- **DECISION (founder): sets are added on Setup only** (no live mid-playback append — that needs gapless splicing, a separate future build) and **capped at 2** (keeps render time + file size down).
-- **Left:** the founder **ear-listen** to a real two-set (does the join sound good?); **merge the PR**; the pre-launch `storage.py` cache-eviction sweep (now also orphans a new `*.set.wav` kind — see escalations); the ~50-creator validation test; a public/hosted deploy.
+### (A) Multi-set (carried over — re-verify, do not trust the sentence)
+
+- On `feat/multiset-ui` (`319d507`), pushed. Suite was **415 backend + 49 web green, typecheck clean** _as of 2026-07-14_ — this is a CLAIM to re-run before merge, not re-verified this session.
+- **Left:** founder ear-listen to a real two-set join, then open + merge the PR. Then fold the set WAV into the owed `storage.py` cache-eviction sweep.
+
+### (B) Best-parts research (this session)
+
+- **Exp 1 — the climb-finder.** Measures each stem's per-bar energy "climb" (build→peak→release), SOLO (math alone) vs ANCHORED (hand-mark as the peak), scored against the founder's ear-marks on 5 songs. **Finding:** for BEAT songs the best drop = "the marked drop nearest the whole-_mix_ energy peak" (2/2 vs ear; drums-only energy is a flat plateau and can't pick). For VOCAL songs, auto-picking _which_ hook instance is still unsolved (loudest-repeat overshoots to the final chorus; first-strong grabs too-early lines). Confirmed the hook phrase genuinely repeats (chroma sequence match).
+- **Exp 2 — cut a song to its best part.** Validated on Father Ocean (beat-led) AND Tere Bina (vocal-led). **Rule that emerged:** crop edges must be **vocal-aware** — land every edge in a _measured-silent_ gap between sung lines (low instrumental energy is NOT enough), never mid-word. Founder confirmed both crops "cut fine."
+- **Exp 3 — combine best-parts (Father Ocean beat + Der Lagi vocals).** Built V1 (full), V2 (hook-only), V3 (hook + touches) **through the real engine** (`build_mix_plan` + `render_mix`), keeping Song 1's own vocals in the gaps. Founder: **V1 sounds right; V3 is the preferred arrangement.**
+  - ⚠️ **OPEN ISSUE (all versions):** the vocal at the drop sounds "a little early / off tune." Diagnosed with measured numbers (no blind nudge): keys are compatible (both 10B / D major — ruled out), the real drum slam is 236.10s (marked drop 235.1 was ~1s off), the hook is beat-locked tight (0.02s). The measured anomaly: **Der Lagi's hook slice starts mid-phrase** — its sung pickup begins ~18.4s but the beat-lock starts on the downbeat 19.86s, chopping the lead-in — AND Father Ocean's own pre-drop lick (234.1–237.3s) sits stacked right before it. **Waiting on the founder to pinpoint by ear which of the two stacked vocals is the wrong one** before fixing (asked, not yet answered — they said hold).
 
 ## Do first next session
 
-1. **Open the PR (one click):** the branch is pushed; visit the pre-filled link →
-   `https://github.com/akshay09438/Dhun/compare/main...feat/multiset-ui?expand=1` (title + body were pre-filled via the longer link generated this session). Or run `gh pr create` once the GitHub CLI is installed (it is **not** installed on this machine — `gh: none`).
-2. **Founder ear-listen** to a real two-set before merge — the one thing CI can't judge. Fastest path: start both dev servers (`backend` + `web` via the preview tooling), open `localhost:5173`, pick a beat + vocal, "Add another set", pick another, "Build the set", press play, and listen to the transition (~7:22 into the Father Ocean example). Known-good pairs: Father Ocean × Der Lagi, Father Ocean × With You.
-3. **After merge**, fold the set WAV into the owed `storage.py` cache-eviction sweep (below).
+Ask the founder which thread to advance — they are independent:
+
+1. **(B) Finish Exp 3 (most recent):** get the founder's answer to "at the V3 drop (~76–82s), which vocal is early/off — Father Ocean's pre-drop lick, or Der Lagi's mid-phrase hook entry?" Then apply the _matching_ fix (trim the lick / include the hook's pickup / land the main word on the slam). Do NOT nudge blindly — the diagnosis is done, the fix is one measured change once they pinpoint. All in `C:\Dhun-Experiment`.
+2. **(A) Or ship multi-set:** re-run the suite (below), founder ear-listens a two-set join, open the pre-filled PR (`https://github.com/akshay09438/Dhun/compare/main...feat/multiset-ui?expand=1`; `gh` is NOT installed on this machine), merge.
 
 ## Verification evidence (which checks ran, what they returned)
 
-- **Backend:** `cd services/api && ./.venv/Scripts/python.exe -m pytest -q` → **415 passed in ~62s** (was 409; +6 in `tests/test_set_route.py`).
-- **Web:** `npm run typecheck` → PASS (clean); `npm test` → **49 passed (8 files)** (was 45; +4 net across the rewritten Play/App/Export tests + Setup multi-set tests).
-- **`/set` route tests specifically:** `pytest tests/test_set_route.py -q` → **6 passed** (real 2-pair render+join; the ≤2 cap → 400; an off-tempo pair declined with a reason; the not-analyzed guard → 409; bad-id → 404; cache hit → 200).
-- **Live end-to-end (running app, real catalog audio, zero cloud):** `POST /set` for Father Ocean × Der Lagi + Father Ocean × With You → ready in ~24s; manifest: both kept, **seam_at 442.63s (7:22)**, **duration 900.324s (15:00)**; `GET /set/{id}/audio` → `206 audio/wav`, total **158,817,284 bytes (~151 MB)**, range-capable. Drove the real UI: built the same two-set, landed on the stripped Play screen (line-up shows Set 1 NOW / Set 2 UP NEXT, no Parts/chips/type box), pressed play → **clock advanced 0:29→0:31**, one `/set/…/audio` request. Then paused.
-- **Git:** committed `319d507` on `feat/multiset-ui`; pushed to `origin`; `git status` clean except pre-existing Windows LF↔CRLF line-ending noise on files this session did NOT edit (excluded from the commit on purpose).
+- **Official app tests this session: NOT RUN — nothing in the official repo changed, so there was nothing to verify.** The 2026-07-14 result (415 backend + 49 web green, typecheck clean) stands as the last-known state and must be **re-run before the multi-set merge**, not trusted as a sentence.
+- **Best-parts research (sandbox `C:\Dhun-Experiment`) — verified by render + measurement + the founder's ear, not a test suite (throwaway research):**
+  - Exp 2 crops: rendered Father Ocean (196.7s) + Tere Bina (41.7s); confirmed both edges land in measured-silent vocal gaps (Tere Bina start 50.3s: voc 0.01/0.00). Founder: "cuts fine."
+  - Exp 3 mixes: V1 via real `/mix` endpoint (476.3s; plan = 3 Der Lagi placements + 3 Father Ocean vocal regions — Song 1's vocals present, verified rms 0.077 in its gap). V2/V3 via windowed real plan (127.9s each; hook on the drop, Father Ocean vocals kept). Founder: V1 right, V3 preferred, drop timing off (open issue above).
+  - Measured diagnosis of the drop issue: Father Ocean drums slam at 236.10s; both songs key 10B; Der Lagi warp starts at DL downbeat 19.86s while the sung pickup starts ~18.4s.
+- **Git:** sandbox `C:\Dhun-Experiment` committed `4b07e81` (scripts + plots + CSVs; audio renders gitignored). Official repo: only LF↔CRLF noise, nothing committed here except this handoff (on a docs branch).
 
-## Open escalations / RE-VERIFY next session (claims, not settled facts)
+## Open escalations / re-verify next session (claims, not settled facts)
 
-- **The multi-set feature is NOT merged.** It lives only on `feat/multiset-ui` (pushed). The MVP on `main` is unaffected. A PR is one click from being opened (link above); merging is the founder's call after the ear-listen.
-- **CLAIM to re-verify — the engine was not touched.** `render.py` / `validate.py` / `set_render.py` are dangerous surfaces; this feature only _imports and calls_ them. Re-verify by re-running the backend suite (415 green at handoff) — the golden gate + set-render tests would catch any accidental behavior change.
-- **Dangerous test-harness files were edited** (`App.test.tsx`, `PlayScreen.test.tsx`, `PlayScreen.loading.test.tsx`, `ExportScreen.test.tsx`, `SetupScreen.test.tsx`) via the confirm-and-apply flow (founder approved twice this session; approvals recorded + cleared). Each keeps every prior check and adds multi-set coverage; **no test was weakened** — re-verify by reading the diffs if in doubt.
-- **File size / disk (pre-launch):** a two-set of long tracks is ~**150 MB**; the two-set cap bounds it, but the `storage.py` **cache-eviction sweep is still owed** and now also orphans a new file kind (`*.set.wav`), on top of the m6.5+chain mix WAVs. Land before the ~50-user test.
-- **Live steering retirement is a PRODUCT decision, not a bug.** The backend `/live/*` routes still exist and pass their tests; they're just no longer called by the UI. If the founder ever wants steering back, it's a re-wire, not a rebuild.
-- **`gh` (GitHub CLI) is not installed** on this machine, and no API token is in the environment — so a PR can only be opened via the web link (above) until `gh` is set up. (git push works via the `manager` credential helper.)
-- **Still open from before (unchanged):** CORS must be set to the real origin before public exposure; no public/hosted deployment exists yet; the ~50-creator validation test is the real finish line.
+- **Multi-set suite "green" is a 2026-07-14 CLAIM** — re-run `cd services/api && ./.venv/Scripts/python.exe -m pytest -q` and `npm run typecheck && npm test` before merging.
+- **No dangerous-surface code was touched this session** (render.py / validate.py / routes/songs.py / storage.py all untouched; the sandbox used `render_mix`/`build_mix_plan` import-and-call only). Nothing to re-verify there.
+- **Exp 3 "best parts" combining is NOT a shipped feature** — it is sandbox research. Do not treat any of it as in the official app.
+- The founder's Exp-3 pinpoint question is **open and awaiting their answer** — do not guess a fix direction.
