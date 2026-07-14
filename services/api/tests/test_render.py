@@ -119,6 +119,62 @@ def test_golden_enabled_false_is_byte_identical_to_m6_0(tmp_path):
         f"enabled=False render changed vs m6.0 baseline!\n  got:      {h}\n  expected: {_GOLDEN_ENABLED_FALSE}")
 
 
+# --------------------------------------------------- R1 hand-off: outgoing S1 vocal ducks under the entry
+def _silent(path, secs=8.0, sr=44100):
+    sf.write(path, np.zeros(int(sr * secs), dtype="float32"), sr)
+
+
+def _handoff_stems(tmp_path):
+    """Bed + Song-2 vocal SILENT, Song-1's own vocal a steady tone — so the render isolates the
+    Song-1 contrast layer and any decay in it comes from the hand-off fade, not the source."""
+    paths = {}
+    for name in ("drums", "bass", "other"):
+        p = tmp_path / f"{name}.wav"
+        _silent(p)
+        paths[name] = p
+    s1 = tmp_path / "vocals.wav"
+    _tone(s1, freq=300.0, secs=8.0, amp=0.4)  # Song 1's own vocal (contrast)
+    paths["vocals"] = s1
+    s2 = tmp_path / "s2vocal.wav"
+    _silent(s2)
+    return paths, s2
+
+
+def _seg_rms(y, a, b):
+    seg = y[int(a * render.SR):int(b * render.SR)]
+    return float(np.sqrt(np.mean(seg ** 2))) if len(seg) else 0.0
+
+
+def test_handoff_overlap_fades_the_outgoing_s1_vocal_under_the_incoming(tmp_path):
+    """R1 hand-off safety: where Song 1's contrast vocal rings INTO a later Song-2 entry, its tail must
+    fade out across the overlap so the outgoing vocal ducks UNDER the incoming — guaranteeing 'never two
+    full leads' by construction (the R1 relaxation permits the overlap; this makes the decay true)."""
+    stems, s2 = _handoff_stems(tmp_path)
+    out = tmp_path / "ho.wav"
+    plan = _arr_plan([(4.0, (0.0, 0.5), False)])  # Song-2 entry at 4.0s
+    plan.s1_vocal_regions = [(3.0, 6.0)]          # Song-1 contrast 3.0-6.0 rings THROUGH the 4.0 entry
+    render.render_mix(plan, stems, s2, out)
+    y, _ = sf.read(out, dtype="float32", always_2d=True)
+    head = _seg_rms(y, 3.2, 3.9)   # before the entry — outgoing at full
+    tail = _seg_rms(y, 5.5, 5.9)   # deep into the overlap — must be well ducked
+    assert head > 1e-2
+    assert tail < 0.3 * head, f"S1 tail not ducked under the hand-off: head={head:.3f} tail={tail:.3f}"
+
+
+def test_s1_contrast_without_a_handoff_is_not_faded(tmp_path):
+    """Control: a contrast region that does NOT ring into a Song-2 entry plays flat — the fade is
+    surgical to real hand-offs, so a standalone contrast answer keeps its natural body."""
+    stems, s2 = _handoff_stems(tmp_path)
+    out = tmp_path / "ctl.wav"
+    plan = _arr_plan([(7.0, (0.0, 0.5), False)])  # entry at 7.0s, AFTER the contrast region ends (6.0)
+    plan.s1_vocal_regions = [(3.0, 6.0)]
+    render.render_mix(plan, stems, s2, out)
+    y, _ = sf.read(out, dtype="float32", always_2d=True)
+    head = _seg_rms(y, 3.2, 3.9)
+    tail = _seg_rms(y, 5.5, 5.9)
+    assert head > 1e-2 and tail > 0.6 * head, f"standalone contrast should stay flat: head={head:.3f} tail={tail:.3f}"
+
+
 def _has_rubberband():
     """rubberband is FFmpeg's GPL `librubberband` filter. The commercial build MUST stay LGPL (see
     CLAUDE.md), which does NOT link it — so the pitch tests skip rather than hard-require a GPL build.

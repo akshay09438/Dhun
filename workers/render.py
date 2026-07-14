@@ -666,17 +666,27 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
             bed[anchor:need] += voc
             prev_voc_end = need
 
-        # Slice B contrast: Song 1's OWN vocal answers in the beat-only gaps (never overlapping
-        # Song 2's vocal — the referee guarantees it). No stretch — it is already Song 1's tempo.
+        # Slice B contrast: Song 1's OWN vocal answers in the beat-only gaps. It may ring INTO the
+        # next Song-2 entry by up to the bounded R1 hand-off (the referee permits that overlap).
         s1_vocals = song1_stems.get("vocals")
+        s2_anchors = [max(0, int(p.anchor * SR)) for p, _ in prepared]  # where each Song-2 vocal ENTERS
         for s, e in getattr(plan, "s1_vocal_regions", []):
             if s1_vocals is None:
                 break
-            # Song 1 leads its own vocal here, played as recorded (its natural phrase-end decay is the
-            # blend into Song 2 — we don't impose a fade); only an edge fade guards against a click.
+            # Song 1 leads its own vocal here, played as recorded; only an edge fade guards against a click.
             off = window[0] if window else 0.0  # s1 regions are window-relative; the file is not cropped
             take = _edge_fade(_vocal_take(s1_vocals, s + off, max(e - s, 0.0), 1.0))
             a0 = max(0, int(s * SR))
+            # R1 hand-off safety (2026-07-14): where this outgoing S1 vocal rings INTO a later Song-2
+            # entry, fade its tail out across the overlap so it ducks UNDER the incoming vocal — the
+            # decay the R1 relaxation assumes, now made TRUE BY CONSTRUCTION (never two full leads,
+            # for any pair). A standalone contrast answer (no entry within its span) is left untouched,
+            # keeping its natural body. As Song 2 edge-fades IN, Song 1 ramps OUT → a real crossfade.
+            over = [anc for anc in s2_anchors if a0 < anc < a0 + len(take)]
+            if over:
+                start = min(over) - a0
+                ramp = np.linspace(1.0, 0.0, len(take) - start, dtype=np.float32)
+                take[start:] *= ramp[:, None]
             bed = _hold(bed, a0 + len(take))
             bed[a0:a0 + len(take)] += take
 

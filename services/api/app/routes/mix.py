@@ -141,7 +141,7 @@ _S1_STEMS = ("drums", "bass", "other")
 #        clean-grid slices render identically. PLANNER change → ENGINE_VERSION. render.py/validate.py
 #        UNTOUCHED (segments stay in the referee's warp band; the tail uses R7's last-segment exemption).
 #        Zero Replicate (stems/analysis keyed by song_id).
-ENGINE_VERSION = "m6.5"  # bumped: Phase-0 vocal chain turned ON in the shipped path (see SHIPPED_CHAIN)
+ENGINE_VERSION = "m6.6"  # m6.6: R1 hand-off fade — outgoing S1 vocal ducks under the Song-2 entry (render.py)
 
 # Phase 0 (turned ON 2026-07-14): the founder-approved vocal chain, tuned dial-by-dial by ear during the
 # tuning week and confirmed on the full-set A/B. The model default stays enabled=False (the disabled path

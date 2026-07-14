@@ -156,7 +156,7 @@ def test_mix_rejects_bad_song_id(tmp_path, monkeypatch):
 
 def test_engine_version_is_current():
     # bumped when the engine/plan changes so a stale cached mix is never served
-    assert mix_route.ENGINE_VERSION == "m6.5"  # m6.5: Phase-0 vocal chain turned ON in the shipped path (SHIPPED_CHAIN)
+    assert mix_route.ENGINE_VERSION == "m6.6"  # m6.6: R1 hand-off fade (outgoing S1 vocal ducks under the Song-2 entry)
 
 
 def test_shipped_chain_is_enabled_with_the_founder_approved_dials():
