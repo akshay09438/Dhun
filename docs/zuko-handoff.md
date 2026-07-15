@@ -4,70 +4,50 @@ _The single source of truth for "where things stand" between sessions. `/handoff
 
 ## Last updated
 
-2026-07-15 (**BEST-PARTS RESEARCH — still 100% in the experiment clone `C:\Dhun-Experiment`, NOT the official app. No official product code changed (only pre-existing LF↔CRLF line-ending noise, not edited).** Big realization this session: the CURRENT live mixer is ALREADY hook+touches+arc, and the "best-parts" idea is a length-selection WINDOW that sits ON TOP — and that window is already BUILT in the engine, just switched OFF by a flag. **The multi-set PR from 2026-07-14 is STILL OPEN — not merged.**)
+2026-07-15 (**BEST-PARTS is now LIVE on `main` and is the DEFAULT for every mix and set — the toggle was removed. Multi-set UI + the vocal chain were also merged to `main` this session. Three new BEATS were added to the catalog (LOCAL-ONLY). `main` @ `ab10f88`; 416 backend + 49 web + typecheck green; `render.py`/`validate.py` UNTOUCHED.**)
 
 ## Where things stand (one breath)
 
-Two threads:
+`main` (@ `ab10f88`) is the shipped MVP and it all merged this session:
 
-- **(A) Multi-set UI — still pending merge (unchanged since 2026-07-14).** Built + verified on `feat/multiset-ui` (`319d507`, pushed); PR one click from opening; NOT merged. Untouched this session.
-- **(B) Best-parts research (sandbox `C:\Dhun-Experiment`, no GitHub remote).** Proved find→cut→combine, then discovered most of it is already in the live engine. Latest sandbox commit `ce1ac5e`. Research/measurement only — nothing here is promoted into the official app.
-
-## THE BIG REALIZATION (read this first next session)
-
-Reading the live engine (`services/api/app/planner/plan.py`, `window.py`, `render.py`) showed the current mix method is **already richer than the "V3" we were rebuilding**:
-
-- **Full songs today** — the good-parts crop is disabled: `plan.py:32  _GOOD_PARTS_WINDOW_ENABLED = False` (founder decision 2026-07-09 to remix full songs). The window machinery (`window.py`) is kept "dormant + tested", a one-line revert.
-- **Vocal = hook + surrounding phrases** — hand-marked hook on the drop + the vocal's other phrases as "setup" (`plan.py:205-284`, `hooks.py`).
-- **Beat = full track, shaped** by builds / beat-up / breakdown / bass slams (`stem_moves`).
-- **Both songs' vocals trade** — Song 1's own vocals answer in the gaps + lick into the drop (`fence.lead_sections` / `predrop_licks`, `plan.py:101-103`), firing on confident grids.
-- `window.py:choose_window` already picks the MAIN drop by post-onset hit-intensity (it even fixed the "energy-average buries the drop" bug, `window.py:85-91`), a clean cue-in, a 30s tail, and take-rotation.
-
-**So the climb-finder is NOT a replacement mixer — it's a LENGTH-SELECTION layer on top.** Flipping the window ON turns the live method into the best-parts short automatically. The only genuinely NEW work the experiments surfaced: (a) **melodic-drop detection** (Innerbloom's drop is a synth swell, no drums — the detector may miss it), and (b) the **mid-word pickup fix** (a hook with a lead-in enters mid-word because the beat-lock starts on the downbeat).
+- **Best-parts is the DEFAULT, no toggle.** Every finished mix (and each half of a set) is auto-cropped to its ~180s highlight — cut points snapped to vocal-silent phrase boundaries (no chopped lyric), a build-up at the start and wind-down at the end, chained on the beat for sets. A two-song set is now ~5–6 min instead of ~15. **Regenerate still works** (the full render is kept behind the scenes and is what a new take / the set-join build from; the user hears the highlight). Post-render only — the mixing engine is unchanged.
+- **Multi-set UI + vocal chain**: previously on branches, now merged and live.
+- **Catalog grew 2→5 beats**: added **Innerbloom** (122 BPM, copied free from the sandbox), **Rapture (Black Coffee)** (120 BPM/9A) and **Anchor Point (Ahmed Spins)** (122 BPM/8A) — split+analyzed on Replicate (founder-OK'd). All in the ~120–128 blend band. Catalog = **5 beats + 5 vocals**.
+- The app is **running locally at `http://localhost:8000`** (fresh production build; backend serves the UI). Nothing public.
 
 ## In flight - done vs left
 
-### (A) Multi-set (carry over — re-verify, don't trust the sentence)
+Nothing is half-done this session — everything landed and is green.
 
-- On `feat/multiset-ui` (`319d507`), pushed. Suite was **415 backend + 49 web green** _as of 2026-07-14_ — a CLAIM to re-run before merge, not re-verified this session.
-- Left: founder ear-listen to a two-set join, then open + merge the PR; then the owed `storage.py` set-WAV cache eviction.
+**DONE + MERGED this session:**
 
-### (B) Best-parts research — DONE this session (all sandbox)
+- Best-parts ported to the live app (first gated OFF behind a toggle → PR #3; then made the DEFAULT with the toggle removed → `main` @ `ab10f88`). New `workers/best_parts.py`; wiring in `routes/mix.py` (single-mix highlight, full render kept canonical, read-before-crop race fixed) and `routes/set.py` (always-crop, resilient).
+- Multi-set UI (PR #2) and the vocal chain — merged to `main`.
+- 3 catalog beats added (⚠️ LOCAL-ONLY — see escalations).
 
-- **Exp 3 mid-word pickup fix + LOCKED 3 pairs, all founder-ear-confirmed:**
-  - Father Ocean × Der Lagi (`exp3/V3_LOCKED_FatherOcean_x_DerLagi.wav`, `exp3_bestparts.py`) — the mid-word fix that clinched it: prepend the hook's half-bar pickup + pull the anchor back so the line sings INTO the drop. (A 4-bar delay was tried first, sounded worse, reverted.)
-  - I Adore You × Tujhe (`exp3/V3_LOCKED_IAdoreYou_x_Tujhe.wav`, `exp3_pair2.py`) — tempo slow-down; same pickup fix generalized.
-  - Innerbloom × Dooriyan (`exp3/LOCKED_Innerbloom_x_Dooriyan_SHORT.wav` + `_FULL`, `exp3_innerbloom_dooriyan.py`) — **both songs newly loaded** into the sandbox catalog (Replicate stem-split; catalog now 9 songs). Perfect tempo (122=122); key flagged incompatible (6B vs 7A) but founder said it sounds good. Short windowed around the founder-chosen MAIN drop (~5:54) — which is a MELODIC swell (drums out), so the "loudest bar" missed it (lesson: main drop ≠ energy argmax).
-- **The read-only engine analysis** (above) — the session's most valuable output.
+**LEFT (pre-launch, before the ~50-user test — not blocking, carried from prior handoffs):**
 
-### (B) Best-parts — LEFT / IN FLIGHT (the next task, DESIGNED but NOT built — founder closed the session before rendering)
-
-- **The A/B test (requested, not rendered):** on Father Ocean × Der Lagi, build **A = current method, full song** (baseline) vs **B = same mixer fed only each song's climb-finder best-part WINDOW** (same arranging logic, shorter input). Question: does cropping make it **tighter-and-better**, or **thinner** because it starved the arranger of touches?
-- **Two risk-flags to surface BEFORE rendering B (founder asked for these explicitly):**
-  1. **Vocal collision** — does the climb-finder's vocal anchor (loudest hook) AGREE with where the mixer places the vocal (on the drop)? If not, report the gap in seconds.
-  2. **Starvation** — cropped to the window, does the arranger LOSE material it uses in A (predrop_licks, lead_sections, breakdown)? List full-song-available vs survives-in-window.
-- **Two real build gaps** (only these, everything else is a flag flip): melodic-drop detection; the mid-word pickup fix.
-
-### Parked (sandbox)
-
-- **Rapture + Anchor Point** — half-loaded beat songs. Replicate read-timeouts hit repeatedly: **Rapture has stems (analysis missing), Anchor Point has neither** (only the normalized WAV). Song files + any stems on disk. Retry with the loop in `scratchpad/retry_beats.py` if wanted. (Innerbloom + Dooriyan loaded fine.)
+- The **`storage.py` cache-eviction sweep** — now also orphans `*.bestparts.wav` and `*.set.wav` (unbounded local disk). Dangerous surface.
+- **Short-clip (15–30s) export + final loudness master** (M6 polish).
+- The **R1 hand-off** pre-launch items (see the 44th drift-log entry) and re-checking each NEW pair's hand-off by ear.
 
 ## Do first next session
 
-Ask the founder: run the **A/B test** (the designed-not-built task above), OR flip the window flag in a sandbox copy of the engine to test the "best-parts is a one-line switch" hypothesis directly, OR go ship multi-set. All three are teed up.
+Ask the founder which: (a) **ear-check the new beats** (Innerbloom / Rapture / Anchor Point × the vocal catalog) and confirm the best-parts highlight fires cleanly on real pairs (not silently falling back to full); or (b) start the **pre-launch cleanup** — the `storage.py` cache-eviction sweep is the most durable owed item; or (c) **M6 polish** (short-clip export + loudness master), the last thing before the ~50-user validation test.
 
 ## Verification evidence (which checks ran, what they returned)
 
-- **Official app: NO code changed, NO tests run this session** — nothing to verify. The 2026-07-14 suite result (415 backend + 49 web green, typecheck clean) is the last-known state; **re-run before any multi-set merge**, do not trust the sentence.
-- **Sandbox (`C:\Dhun-Experiment`) — verified by render + measurement + the founder's ear, not a test suite (throwaway research):**
-  - 3 mixes locked, each founder-confirmed by ear. Timing/drop diagnoses done with measured numbers (e.g. Father Ocean real slam 236.10s vs marked 235.1; Innerbloom main drop is a drumless swell ~5:54).
-  - **REAL Replicate calls were made** loading Innerbloom + Dooriyan (paid; stem-split + structure). First attempt 401'd (no charge — token not loaded); fixed by `load_dotenv`. Rapture/Anchor Point incurred some timed-out split attempts (Replicate may charge for compute even on client read-timeout — a small, real cost).
-  - Engine analysis is code-cited (plan.py:32/205-284, window.py:85-91/104), not guessed.
-- **Git:** sandbox committed through `ce1ac5e` (scripts + README; audio + catalog data gitignored per "never commit mixes"). Official repo: only this handoff committed (docs branch), plus pre-existing line-ending noise.
+- **Backend:** `cd services/api && ./.venv/Scripts/python.exe -m pytest -q` → **416 passed** (~96s). Includes the new `test_mix_serves_best_parts_highlight_keeping_full_render` (asserts the highlight derivative is built + served while the full render is kept).
+- **Web:** `npm run typecheck` → clean (`tsc --noEmit`); `npm test` → **49 passed** (8 files).
+- **Catalog live:** `GET http://localhost:8000/library` → 5 beats (Father Ocean, I Adore You, Innerbloom, Rapture, Anchor Point) + 5 vocals; the 2 Replicate-ingested beats have full stems + analysis cached (7 files each). New tempos measured: Rapture 120 BPM/9A, Anchor Point 122 BPM/8A.
+- **Best-parts crop** verified on the FastAPI test fixtures (derivative built before 'ready'), and earlier this session founder-ear-approved on real pairs in the sandbox (Father Ocean × Der Lagi, I Adore You × Tujhe) and as an arc'd set.
 
 ## Open escalations / re-verify next session (claims, not settled facts)
 
-- **Multi-set "green" is a 2026-07-14 CLAIM** — re-run `cd services/api && ./.venv/Scripts/python.exe -m pytest -q` and `npm run typecheck && npm test` before merging.
-- **No dangerous-surface code was edited** (render.py / validate.py / config.py / storage.py / songs.py were READ, not changed; the sandbox used engine functions import-and-call only, incl. `separate_stems` which calls Replicate).
-- **Best-parts is NOT in the official app** — it's sandbox research + a code-reading finding that the window is built-but-disabled. Turning it on is a founder decision + the 2 build gaps, not "done."
-- **Sandbox catalog now has 9 songs** (added Innerbloom, Dooriyan). This is on-disk only (gitignored data), not version-controlled.
+- **`render.py` and `validate.py` were NOT edited this session** — best-parts is a post-render crop that imports `render.py` helpers READ-ONLY. This is a CLAIM: re-verify with `git log --oneline -1 -- workers/render.py services/api/app/planner/validate.py` (should predate 2026-07-15) before trusting it.
+- **`_GOOD_PARTS_WINDOW_ENABLED` is still `False`** (the old crop-then-arrange window — distinct from best-parts, which is the opposite approach). Untouched; re-confirm it stays off.
+- **⚠️ The 3 new catalog beats are LOCAL-ONLY.** `data/library/manifest.json` is GITIGNORED, so the additions + their cached stems/analysis live only on the founder's machine — they will NOT transfer to another clone/machine or a deploy. Re-verify the catalog on any new environment.
+- **Best-parts falls back to the full mix on any crop failure** (mix route + set route both). This means a broken crop would silently ship full-length instead of the highlight — confirm by ear that the crop actually fires on each real pair, not just that the app "works".
+- **`storage.py` cache-eviction sweep** (dangerous surface) is still owed and now orphans two more WAV kinds — do not treat disk as bounded.
+- **CORS lockdown** (44th) is in place but must be re-verified before any public exposure (`Start-PromptDJ.bat` / ngrok).
+- **Local dev server** `http://localhost:8000` is running from a background process this session; it will stop when the machine/session ends — relaunch with the two commands in the functional spec, or `Start-PromptDJ.bat` for a public link.
