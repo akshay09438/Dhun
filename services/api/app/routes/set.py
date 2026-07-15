@@ -63,6 +63,7 @@ class SetPairRequest(BaseModel):
 
 class SetRequest(BaseModel):
     sets: list[SetPairRequest]
+    best_parts: bool = False  # crop each mix to its ~180s highlight + build/wind-down arc before joining (gated OFF)
 
 
 class SetMember(BaseModel):
@@ -85,10 +86,12 @@ class SetJob(BaseModel):
     message: str | None = None
 
 
-def set_id_for(pairs: list[tuple[str, str]]) -> str:
-    """Content id for a set: the engine + chain + the ordered pairs. Identical requests hit cache."""
+def set_id_for(pairs: list[tuple[str, str]], best_parts: bool = False) -> str:
+    """Content id for a set: the engine + chain + the ordered pairs (+ best-parts mode). Identical
+    requests hit cache; a best-parts set is a DIFFERENT output, so it caches separately."""
     body = "|".join(f"{a}:{b}" for a, b in pairs)
-    raw = f"{mixroute.ENGINE_VERSION}:{mixroute._CHAIN_CONFIG_HASH}:set:{body}".encode()
+    mode = ":bestparts" if best_parts else ""
+    raw = f"{mixroute.ENGINE_VERSION}:{mixroute._CHAIN_CONFIG_HASH}:set{mode}:{body}".encode()
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -140,8 +143,12 @@ def _seam_positions(seq: list[dict]) -> tuple[list[float], float]:
     return seams, y_len / SR
 
 
-def _run_set(set_id: str, pairs: list[tuple[str, str]]) -> None:
-    """Background worker: reconcile tempo -> render each kept pair (reuse mix._run_mix) -> join."""
+def _run_set(set_id: str, pairs: list[tuple[str, str]], best_parts: bool = False) -> None:
+    """Background worker: reconcile tempo -> render each kept pair (reuse mix._run_mix) -> join.
+
+    When `best_parts` is set, each finished mix is cropped to its ~180s highlight with build/wind-down
+    arcs (workers.best_parts, post-render only) BEFORE the join. OFF by default -> byte-identical to the
+    shipped full-length set (the golden gate)."""
     try:
         # 1. ONE tempo across the whole set; decline outliers (shipped set_tempo_plan).
         songs: list[dict] = []
@@ -179,12 +186,23 @@ def _run_set(set_id: str, pairs: list[tuple[str, str]]) -> None:
                 ))
                 continue
             p = MixPlan(**json.loads(plan_file.read_text()))
-            info = sf.info(str(wav))
-            rendered.append({
-                "index": i, "wav": wav,
-                "phrase_starts": list(p.out_phrase_starts or []),
-                "frames": info.frames,
-            })
+            if best_parts:  # crop this finished mix to its ~180s highlight + arc (post-render, never re-arranges)
+                from workers import best_parts as bp
+                s1_voc = mixroute.stem_path(s1, "vocals")
+                cropped = bp.crop_and_arc(
+                    p, wav, mixroute.stem_path(s2, "vocals"),
+                    s1_voc if s1_voc.exists() else None,
+                    settings.data_dir / f"{set_id}_{i}.bestparts.wav",
+                )
+                rendered.append({"index": i, "wav": cropped["wav"],
+                                 "phrase_starts": cropped["phrase_starts"], "frames": cropped["frames"]})
+            else:
+                info = sf.info(str(wav))
+                rendered.append({
+                    "index": i, "wav": wav,
+                    "phrase_starts": list(p.out_phrase_starts or []),
+                    "frames": info.frames,
+                })
             members.append(SetMember(index=i, song1_id=s1, song2_id=s2, kept=True))
 
         if not rendered:
@@ -230,7 +248,7 @@ def start_set(req: SetRequest, response: Response) -> SetJob:
             if not mixroute._HEX_ID.fullmatch(sid):
                 raise HTTPException(404, "Song not found.")
 
-    set_id = set_id_for(pairs)
+    set_id = set_id_for(pairs, req.best_parts)
     ready = _ready(set_id)
     if ready is not None:
         return ready
@@ -243,7 +261,7 @@ def start_set(req: SetRequest, response: Response) -> SetJob:
 
     if _jobs.get(set_id, (None,))[0] != "processing":
         _jobs[set_id] = ("processing", None)
-        threading.Thread(target=_run_set, args=(set_id, pairs), daemon=True).start()
+        threading.Thread(target=_run_set, args=(set_id, pairs, req.best_parts), daemon=True).start()
 
     response.status_code = 202
     return SetJob(set_id=set_id, status="processing")

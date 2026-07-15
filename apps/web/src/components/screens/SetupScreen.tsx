@@ -17,12 +17,14 @@ const isComplete = (d: SetDraft): d is SetPick =>
 export default function SetupScreen({
   onBuild,
 }: {
-  /** Fired when every set in the line-up is complete and the user commits. */
-  onBuild: (sets: SetPick[]) => void;
+  /** Fired when every set in the line-up is complete and the user commits.
+   *  `bestParts` = build cropped ~3-min highlights with DJ transitions instead of full-length. */
+  onBuild: (sets: SetPick[], bestParts: boolean) => void;
 }) {
   const [library, setLibrary] = useState<LibrarySongDTO[]>([]);
   const [libError, setLibError] = useState(false);
   const [sets, setSets] = useState<SetDraft[]>([emptyDraft()]);
+  const [bestParts, setBestParts] = useState(false); // OFF by default (full-length)
   const [active, setActive] = useState(0);
   const [open, setOpen] = useState<1 | 2 | null>(null);
   const consoleRef = useRef<HTMLDivElement>(null);
@@ -91,7 +93,7 @@ export default function SetupScreen({
   }
 
   function build() {
-    if (canBuild) onBuild(sets.filter(isComplete));
+    if (canBuild) onBuild(sets.filter(isComplete), bestParts);
   }
 
   const multi = sets.length > 1;
@@ -147,12 +149,27 @@ export default function SetupScreen({
           </button>
         )}
 
-        <button
-          className="btnPrimary"
-          disabled={!canBuild}
-          onClick={build}
+        <label
+          className={styles.bestParts}
+          data-testid="best-parts-toggle"
           style={{ marginTop: "auto" }}
+          title="Trim each mix to its ~3-minute highlight and blend them with DJ-style build-up / wind-down transitions."
         >
+          <input
+            type="checkbox"
+            data-testid="best-parts-checkbox"
+            checked={bestParts}
+            onChange={(e) => setBestParts(e.target.checked)}
+          />
+          <span className={styles.bestPartsText}>
+            Best-parts
+            <span className={styles.bestPartsHint}>
+              ~3-min highlights with DJ transitions
+            </span>
+          </span>
+        </label>
+
+        <button className="btnPrimary" disabled={!canBuild} onClick={build}>
           {multi ? "Build the set" : "Mix it"}&nbsp;&nbsp;▸
         </button>
         <p className={styles.setNote}>
