@@ -55,7 +55,33 @@ const READY_MIX = {
   message: null,
 };
 
-/** A backend where the catalog is loaded and every study step is instantly ready. */
+const READY_SET = {
+  set_id: "s",
+  status: "ready",
+  url: "/set/s/audio",
+  members: [
+    {
+      index: 1,
+      song1_id: ID1,
+      song2_id: ID2,
+      kept: true,
+      seam_at: null,
+      reason: null,
+    },
+    {
+      index: 2,
+      song1_id: ID1,
+      song2_id: ID2,
+      kept: true,
+      seam_at: 30,
+      reason: null,
+    },
+  ],
+  duration: 120,
+  message: null,
+};
+
+/** A backend where the catalog is loaded and every study/build step is instantly ready. */
 function mockBackend() {
   vi.stubGlobal(
     "fetch",
@@ -91,6 +117,8 @@ function mockBackend() {
         });
       if (u.endsWith("/mix") && method === "POST")
         return Promise.resolve({ ok: true, json: async () => READY_MIX });
+      if (u.endsWith("/set") && method === "POST")
+        return Promise.resolve({ ok: true, json: async () => READY_SET });
       if (u.includes("/live/suggestions"))
         return Promise.resolve({
           ok: true,
@@ -102,10 +130,8 @@ function mockBackend() {
 }
 
 async function pickBothSongs() {
-  // Song 1 slot -> dropdown -> Father Ocean
   fireEvent.click(screen.getByTestId("song-slot-1"));
   fireEvent.click(await screen.findByRole("option", { name: /father ocean/i }));
-  // Song 2 slot -> dropdown -> Tere Bina
   fireEvent.click(screen.getByTestId("song-slot-2"));
   fireEvent.click(await screen.findByRole("option", { name: /tere bina/i }));
 }
@@ -126,7 +152,7 @@ describe("App — the catalog flow", () => {
     expect(container.querySelector('input[type="file"]')).toBeNull();
   });
 
-  it("picks two catalog songs → generating → lands on the named mix", async () => {
+  it("picks two catalog songs → generating → lands on the stripped Play screen (no steering)", async () => {
     mockBackend();
     render(<App />);
     await pickBothSongs();
@@ -137,25 +163,43 @@ describe("App — the catalog flow", () => {
     expect(btn.disabled).toBe(false);
     fireEvent.click(btn);
 
+    // Lands on Play, named, with a one-set line-up and NO live-steering controls.
     await waitFor(() =>
       expect(screen.getAllByText(/ocean bina/i).length).toBeGreaterThan(0),
     );
-    expect(screen.getByTestId("beat-up")).toBeTruthy();
-    expect(screen.getByTestId("bus-vocals")).toBeTruthy();
+    expect(screen.getByTestId("set-lineup")).toBeTruthy();
+    expect(screen.getByTestId("lineup-1")).toBeTruthy();
+    expect(screen.queryByTestId("beat-up")).toBeNull();
+    expect(screen.queryByTestId("bus-vocals")).toBeNull();
+  });
+
+  it("stacks two sets → builds a continuous set → Play shows both back-to-back", async () => {
+    mockBackend();
+    render(<App />);
+
+    // Set 1
+    await pickBothSongs();
+    fireEvent.click(screen.getByTestId("add-set"));
+    // Set 2 (reuse the same catalog songs — the flow, not the pairing, is under test)
+    await pickBothSongs();
+
+    fireEvent.click(screen.getByRole("button", { name: /build the set/i }));
+
+    await waitFor(() => expect(screen.getByTestId("lineup-1")).toBeTruthy());
+    expect(screen.getByTestId("lineup-2")).toBeTruthy();
+    expect(screen.getByText(/back-to-back/i)).toBeTruthy();
   });
 
   it("shows only beats in Song 1 and only vocals in Song 2", async () => {
     mockBackend();
     render(<App />);
 
-    // Song 1 dropdown: the beat is offered, the vocal is not.
     fireEvent.click(screen.getByTestId("song-slot-1"));
     expect(
       await screen.findByRole("option", { name: /father ocean/i }),
     ).toBeTruthy();
     expect(screen.queryByRole("option", { name: /tere bina/i })).toBeNull();
 
-    // Song 2 dropdown: the vocal is offered, the beat is not.
     fireEvent.click(screen.getByTestId("song-slot-2"));
     expect(
       await screen.findByRole("option", { name: /tere bina/i }),

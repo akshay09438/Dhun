@@ -300,6 +300,70 @@ export async function getLiveContext(song1Id: string): Promise<LiveContextDTO> {
   return res.json();
 }
 
+// ---- Sets: a continuous mix of 1–2 two-song sets, joined on the beat (V1 caps at two) ----
+
+export type SetMemberDTO = {
+  index: number; // 1-based position in the line-up
+  song1_id: string;
+  song2_id: string;
+  kept: boolean; // false when declined (too far off-tempo, or the pair couldn't be mixed)
+  seam_at: number | null; // seconds into the set where this member's crossfade begins
+  reason: string | null; // plain-language reason it was dropped (when kept is false)
+};
+
+export type SetDTO = {
+  set_id: string;
+  status: string; // "processing" | "ready" | "error" | "idle"
+  url: string | null;
+  members: SetMemberDTO[];
+  duration: number | null;
+  message: string | null;
+};
+
+/** Start building a continuous set from an ordered list of pairs. Returns immediately. */
+export async function startSet(
+  pairs: { song1_id: string; song2_id: string }[],
+): Promise<SetDTO> {
+  const res = await fetch(`${API_BASE}/set`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sets: pairs }),
+  });
+  if (!res.ok) {
+    const msg = await res
+      .json()
+      .catch(() => ({ detail: "Couldn't start the set." }));
+    throw new Error(msg.detail ?? "Couldn't start the set.");
+  }
+  return res.json();
+}
+
+/** Check how the set build is going: processing / ready (url + line-up) / error. */
+export async function getSetStatus(setId: string): Promise<SetDTO> {
+  const res = await fetch(`${API_BASE}/set/${setId}`);
+  if (!res.ok) throw new Error("Could not check the set status.");
+  return res.json();
+}
+
+/** Build a set and wait until it's rendered + joined (start + poll). */
+export async function makeSet(
+  pairs: { song1_id: string; song2_id: string }[],
+  { pollMs = 3000, maxTries = 120 }: PollOpts = {},
+): Promise<SetDTO> {
+  const started = await startSet(pairs);
+  if (started.status === "ready") return started;
+  for (let i = 0; i < maxTries; i++) {
+    const s = await getSetStatus(started.set_id);
+    if (s.status === "ready") return s;
+    if (s.status === "error")
+      throw new Error(
+        s.message ?? "This set couldn't be built. Try other songs.",
+      );
+    await sleep(pollMs);
+  }
+  throw new Error("The set is taking too long. Please try again.");
+}
+
 const VOCAL_BUS_POLL_MS = 1500;
 
 /** Fetch the arranged-vocal-bus WAV for a mix, polling past 202 while it renders. */

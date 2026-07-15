@@ -1,10 +1,13 @@
 import {
   analyzeSong,
   makeMix,
+  makeSet,
   splitSong,
   type MixDTO,
   type PollOpts,
+  type SetDTO,
 } from "./api";
+import type { SetPick } from "../types";
 
 /** The honest steps of the "Studying your songs" wait, in order. */
 export type StudyStage =
@@ -47,4 +50,34 @@ export async function studyAndMix(
 
   onStage("done");
   return mix;
+}
+
+/**
+ * Prepare every song in a 1–2 set line-up and join them into one continuous set.
+ *
+ * Same honest checklist as `studyAndMix` (catalog songs are already split/analyzed, so those
+ * steps are instant), then the set builder renders each pair and joins them on the beat. The
+ * "planning" step covers the render + join. Returns the finished set (with its per-set line-up).
+ */
+export async function studyAndBuildSet(
+  sets: SetPick[],
+  onStage: (s: StudyStage) => void,
+  opts: PollOpts = {},
+): Promise<SetDTO> {
+  const ids = Array.from(new Set(sets.flatMap((s) => [s.beat.id, s.vocal.id])));
+
+  onStage("splitting");
+  await Promise.all(ids.map((id) => splitSong(id, opts)));
+
+  onStage("analyzing");
+  await Promise.all(ids.map((id) => analyzeSong(id, opts)));
+
+  onStage("planning");
+  const set = await makeSet(
+    sets.map((s) => ({ song1_id: s.beat.id, song2_id: s.vocal.id })),
+    opts,
+  );
+
+  onStage("done");
+  return set;
 }

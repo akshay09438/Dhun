@@ -142,10 +142,162 @@
   color: var(--text);
 }
 
+/* ---- multi-set: optional "add another set" + the stage running order ---- */
+.addSet {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px;
+  margin: 2px 0 0;
+  border: 1px dashed var(--b28);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--w75);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.addSet:hover:not(:disabled) {
+  border-color: var(--violet);
+  color: var(--text);
+}
+.addSet:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.addSetHint {
+  font-family: var(--sys);
+  color: var(--w45);
+  letter-spacing: 0;
+  font-size: 10px;
+}
+.setNote {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--w45);
+  text-align: center;
+  margin: 10px 0 0;
+  line-height: 1.5;
+}
+
+.roHead {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--w45);
+  margin: 0 0 14px;
+}
+.ro {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: auto 0 0;
+}
+.roFoot {
+  font-family: var(--serif);
+  font-size: 17px;
+  text-align: center;
+  color: var(--w75);
+  margin: 22px 0 auto;
+}
+.setCard {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px 6px 6px;
+  background: var(--panel);
+  border: 1px solid var(--b14);
+  border-radius: 12px;
+}
+.setCardActive {
+  border-color: var(--violet);
+  box-shadow: 0 0 0 1px rgba(143, 0, 255, 0.3);
+}
+.setSelect {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.setBadge {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 1px solid var(--violet);
+  color: var(--violet);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.setName {
+  font-family: var(--serif);
+  font-size: 17px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.setIcons {
+  display: flex;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+.setIc {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid var(--b22);
+  background: transparent;
+  color: var(--w45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  cursor: pointer;
+}
+.setIc:hover:not(:disabled) {
+  border-color: var(--violet);
+  color: var(--text);
+}
+.setIc:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.setIcX:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 @media (max-width: 900px) {
   .songName {
     max-width: none;
     font-size: 18px;
+  }
+  .ro {
+    margin: 6px 0 0;
+  }
+  .roFoot {
+    margin: 18px 0 0;
+  }
+  .setIc {
+    width: 40px;
+    height: 40px;
   }
   /* the stage is stacked below now — flow naturally instead of centering in a fixed frame */
   .tiles {

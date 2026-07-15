@@ -26,6 +26,105 @@
   white-space: nowrap;
 }
 
+/* ---- the set line-up (read-only on Play; sets are chosen on Setup) ---- */
+.setPanelHead {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--w45);
+  text-transform: uppercase;
+  margin: 2px 0 10px;
+  display: flex;
+  justify-content: space-between;
+}
+.setStack {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  overflow: auto;
+  min-height: 0;
+  flex: 1;
+}
+.qcard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  background: var(--panel);
+  border: 1px solid var(--b14);
+  border-radius: 11px;
+}
+.qcardNow {
+  border-color: var(--violet);
+  box-shadow: 0 0 0 1px rgba(143, 0, 255, 0.3);
+}
+.qcardDropped {
+  opacity: 0.6;
+  border-style: dashed;
+}
+.qi {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--violet);
+  width: 40px;
+  flex: 0 0 auto;
+}
+.qcardDropped .qi {
+  color: var(--w45);
+}
+.qp {
+  flex: 1;
+  min-width: 0;
+}
+.qt {
+  font-family: var(--serif);
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qs {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--w45);
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+.qsDrop {
+  font-family: var(--sys);
+  font-size: 10.5px;
+  color: var(--w55);
+  margin-top: 3px;
+  white-space: normal;
+}
+.qnow {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--violet);
+  flex: 0 0 auto;
+}
+.qskip {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--w45);
+  text-transform: uppercase;
+  flex: 0 0 auto;
+}
+.seamMark {
+  position: absolute;
+  top: 50%;
+  width: 2px;
+  height: 12px;
+  background: var(--w55);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  border-radius: 1px;
+}
+
 .feed {
   display: flex;
   flex-direction: column;
