@@ -323,12 +323,11 @@ export type SetDTO = {
 /** Start building a continuous set from an ordered list of pairs. Returns immediately. */
 export async function startSet(
   pairs: { song1_id: string; song2_id: string }[],
-  bestParts = false,
 ): Promise<SetDTO> {
   const res = await fetch(`${API_BASE}/set`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sets: pairs, best_parts: bestParts }),
+    body: JSON.stringify({ sets: pairs }),
   });
   if (!res.ok) {
     const msg = await res
@@ -350,9 +349,8 @@ export async function getSetStatus(setId: string): Promise<SetDTO> {
 export async function makeSet(
   pairs: { song1_id: string; song2_id: string }[],
   { pollMs = 3000, maxTries = 120 }: PollOpts = {},
-  bestParts = false,
 ): Promise<SetDTO> {
-  const started = await startSet(pairs, bestParts);
+  const started = await startSet(pairs);
   if (started.status === "ready") return started;
   for (let i = 0; i < maxTries; i++) {
     const s = await getSetStatus(started.set_id);

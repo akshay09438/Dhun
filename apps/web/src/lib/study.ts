@@ -63,7 +63,6 @@ export async function studyAndBuildSet(
   sets: SetPick[],
   onStage: (s: StudyStage) => void,
   opts: PollOpts = {},
-  bestParts = false,
 ): Promise<SetDTO> {
   const ids = Array.from(new Set(sets.flatMap((s) => [s.beat.id, s.vocal.id])));
 
@@ -77,7 +76,6 @@ export async function studyAndBuildSet(
   const set = await makeSet(
     sets.map((s) => ({ song1_id: s.beat.id, song2_id: s.vocal.id })),
     opts,
-    bestParts,
   );
 
   onStage("done");

@@ -96,6 +96,26 @@ def test_mix_is_async_then_ready_and_plays(tmp_path, monkeypatch):
     assert set(plan["out_phrase_starts"]) <= set(plan["out_downbeats"])  # phrase boundaries are downbeats
 
 
+def test_mix_serves_best_parts_highlight_keeping_full_render(tmp_path, monkeypatch):
+    """Best-parts is the default output: the audio endpoint serves the ~180s highlight derivative, while
+    the FULL render stays on disk as the canonical source for Regenerate + set-joining."""
+    _use_tmp(monkeypatch, tmp_path)
+    _setup_pair(tmp_path)
+
+    r = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2})
+    mix_id = r.json()["mix_id"]
+    _poll(mix_id, "ready")
+
+    full = mix_route._mix_wav(mix_id)
+    highlight = mix_route._bestparts_wav(mix_id)
+    assert full.exists(), "the FULL render must stay on disk (canonical for Regenerate + set-joining)"
+    assert highlight.exists(), "the best-parts highlight is built by default"
+
+    audio = client.get(f"/mix/{mix_id}/audio")
+    assert audio.status_code == 200
+    assert audio.content == highlight.read_bytes(), "the endpoint serves the best-parts highlight, not the full render"
+
+
 def test_mix_is_cached(tmp_path, monkeypatch):
     _use_tmp(monkeypatch, tmp_path)
     _setup_pair(tmp_path)
