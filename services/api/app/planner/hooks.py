@@ -38,6 +38,24 @@ HOOKS: dict[str, tuple[float, float]] = {
     # Tere Bina — the memorable line (declined from the one-tempo SET by 3.2, but still a valid
     #     stand-alone vocal donor for a single mix, so it gets its hook too).
     "6ad6903592cd668502c5f4546618aec807c6eadb974fa6437fef7180fbffddc2": (63.48, 90.13),
+    # --- The seven NEW Bollywood/Punjabi vocal donors (added 2026-07-15). Placed as a first pass from
+    #     the analysis (first chorus that lines up with a vocal region, on a sung onset) + song
+    #     knowledge, then FOUNDER-EAR-CONFIRMED 2026-07-15: five accepted as-is, two moved (Nadan
+    #     Parinde and Jugni Ji) to the founder's marks. ---
+    # Nadan Parinde (Rockstar) — "Nadaan parinde, ghar aaja" — founder-marked 1:35–2:05 (moved from 2:55).
+    "84e4ea36d2f3cb34f7e1beb4ce1bace077083994e700b7cc73347e2f5b5438f3": (95.0, 125.0),
+    # Uff Teri Ada (Karthik Calling Karthik) — "Uff teri ada…" — first chorus (1:22); founder-confirmed.
+    "5c3ce60868f97c5657d32cc14a028b349fab07bfdf984c40f401790fd1c82375": (82.0, 105.0),
+    # Jugni Ji — "Jugni ji…" — founder-marked 0:09–0:29 (moved from 0:50).
+    "cb3e96493087255ef535db47d04388f51d2de27e20c6cb13dd626092778aae43": (9.0, 29.0),
+    # Wari Jawa (Vaari Jaavan) — "Vaari jaavan…" — chorus on the 1:05 vocal onset (skips the 0:53–1:05 gap).
+    "0bcbcd12d965a7d03f314424670768ed9074c18f6f2af961fb05d77c803f3d7b": (65.0, 82.0),
+    # Tere Bin — title hook — first chorus section (1:00), inside the 0:20–2:48 vocal run.
+    "84ff0d8b12455dc66e971874b64ae3b816d622f7fc947cfba12cca77fe6eea88": (60.0, 80.0),
+    # Mera Yaar (Bhaag Milkha Bhaag) — "Mera yaar…" — first chorus (0:57), in the 0:41–1:20 vocal run.
+    "b07a768b3409725988f2d08e2445b46f787e86a3da1233d987999f5ecb2d77c3": (57.0, 77.0),
+    # Khuda Jaane (Bachna Ae Haseeno) — "Khuda jaane ke main fida hoon…" — first chorus (0:59), 0:12–1:24 vocal run.
+    "457d170c17dea1fc8644c479788efff6c1bfc5b5c4b3fa5897e43a6c0e5ce751": (59.0, 84.0),
 }
 
 
