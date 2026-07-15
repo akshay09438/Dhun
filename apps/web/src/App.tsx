@@ -64,16 +64,14 @@ export function App() {
       .catch(() => setName(""));
   }
 
-  /** Build the chosen line-up: one set → a single mix; two sets → the continuous set builder.
-   *  Best-parts (gated) always runs through the set builder — where the crop+arc lives — so a single
-   *  pair with best-parts on becomes a one-mix best-parts "set" (its own ~3-min highlight). */
-  async function handleBuild(picks: SetPick[], bestParts = false) {
+  /** Build the chosen line-up: one set → a single mix; two sets → the continuous set builder. */
+  async function handleBuild(picks: SetPick[]) {
     setError("");
     setSets(picks);
     setScreen("generating");
     setStage("uploading");
 
-    if (picks.length === 1 && !bestParts) {
+    if (picks.length === 1) {
       const { beat, vocal } = picks[0];
       setSetInfo(null);
       try {
@@ -89,7 +87,7 @@ export function App() {
 
     setMix(null);
     try {
-      const built = await studyAndBuildSet(picks, setStage, {}, bestParts);
+      const built = await studyAndBuildSet(picks, setStage);
       setSetInfo(built);
       loadName(
         picks[0].beat.original_name,

@@ -190,6 +190,41 @@ def _mix_wav(mix_id: str) -> Path:
     return settings.data_dir / f"{mix_id}.mix.wav"
 
 
+def _bestparts_wav(mix_id: str) -> Path:
+    return settings.data_dir / f"{mix_id}.bestparts.wav"
+
+
+def _build_bestparts(plan: MixPlan, mix_id: str) -> Path | None:
+    """Crop the FULL mix to its ~180s best-parts highlight + arcs using the in-memory `plan`
+    (workers.best_parts, post-render — never re-arranges, never touches render.py). Returns the
+    derivative path, or None if the crop can't be produced. Built during _run_mix BEFORE the plan is
+    persisted, so a mix that reads as 'ready' always already has its highlight (no read-before-crop race)."""
+    try:
+        from workers import best_parts as bp
+        s1_voc = stem_path(plan.song1_id, "vocals")
+        r = bp.crop_and_arc(plan, _mix_wav(mix_id), stem_path(plan.song2_id, "vocals"),
+                            s1_voc if s1_voc.exists() else None, _bestparts_wav(mix_id))
+        return Path(r["wav"])
+    except Exception:  # noqa: BLE001 — a crop failure must never break the mix; fall back to the full render
+        log.exception("best-parts crop failed for %s; serving the full mix", mix_id)
+        return None
+
+
+def _ensure_bestparts(mix_id: str) -> Path:
+    """The best-parts highlight served to the user by default. Normally built eagerly in _run_mix; this
+    rebuilds it lazily from the persisted plan if it's ever missing (e.g. an older cached mix). The full
+    mix.wav stays canonical (Regenerate re-renders it; the set route crops it). Falls back to the full
+    mix so playback never breaks."""
+    bp_wav = _bestparts_wav(mix_id)
+    if bp_wav.exists():
+        return bp_wav
+    full, plan_file = _mix_wav(mix_id), _plan_path(mix_id)
+    if not (full.exists() and plan_file.exists()):
+        return full
+    plan = MixPlan(**json.loads(plan_file.read_text()))
+    return _build_bestparts(plan, mix_id) or full
+
+
 def _plan_path(mix_id: str) -> Path:
     return settings.data_dir / f"{mix_id}.mixplan.json"
 
@@ -266,16 +301,19 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int) 
         # from the audio we just wrote; the length is read from the WAV header (metadata, not analysis).
         _attach_set_grid(plan, a1, _mix_wav(mix_id))
 
-        _plan_path(mix_id).write_text(plan.model_dump_json())
+        _build_bestparts(plan, mix_id)  # best-parts is the default output — build the highlight BEFORE
+        _plan_path(mix_id).write_text(plan.model_dump_json())  # persisting the plan, so 'ready' implies it exists
         _jobs.pop(mix_id, None)  # readiness now inferred from the stored files
     except MixDeclined as e:
         _jobs[mix_id] = ("error", e.reason)
     except validate.ValidationError as e:
         _mix_wav(mix_id).unlink(missing_ok=True)
+        _bestparts_wav(mix_id).unlink(missing_ok=True)
         _jobs[mix_id] = ("error", f"The mix didn't pass the quality check: {e}")
     except Exception:  # noqa: BLE001 — never leak a raw trace to the user...
         log.exception("mix render failed for %s", mix_id)  # ...but do log it, so a systematic bug isn't invisible
         _mix_wav(mix_id).unlink(missing_ok=True)
+        _bestparts_wav(mix_id).unlink(missing_ok=True)
         _jobs[mix_id] = ("error", "Couldn't build this mix. Try another pair or regenerate.")
 
 
@@ -338,10 +376,10 @@ def mix_status(mix_id: str) -> Mix:
 
 @router.get("/mix/{mix_id}/audio")
 def get_mix_audio(mix_id: str):
-    """Serve the finished mix WAV (id validated before any disk access)."""
+    """Serve the finished mix to the user: its best-parts ~180s highlight (the full render stays on disk
+    as the canonical source for Regenerate + set-joining). id validated before any disk access."""
     if not _HEX_ID.fullmatch(mix_id):
         raise HTTPException(404, "Not found.")
-    wav = _mix_wav(mix_id)
-    if not wav.exists():
+    if not _mix_wav(mix_id).exists():
         raise HTTPException(404, "Not found.")
-    return FileResponse(wav, media_type="audio/wav")
+    return FileResponse(_ensure_bestparts(mix_id), media_type="audio/wav")
