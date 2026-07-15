@@ -315,3 +315,38 @@
     font-size: 20px;
   }
 }
+
+/* Best-parts toggle: build cropped ~3-min highlights with DJ transitions (OFF by default). */
+.bestParts {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 12px;
+  padding: 11px 14px;
+  border: 1px solid var(--b14);
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: var(--sys);
+  transition: border-color 0.15s;
+}
+.bestParts:hover {
+  border-color: var(--violet);
+}
+.bestParts input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--violet);
+  cursor: pointer;
+  flex: none;
+}
+.bestPartsText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+.bestPartsHint {
+  color: var(--w45);
+  font-size: 0.72rem;
+}
