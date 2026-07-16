@@ -4,7 +4,9 @@ _The single source of truth for "where things stand" between sessions. `/handoff
 
 ## Last updated
 
-2026-07-15 (**Catalog expansion session: +7 vocals and a Drum & Bass "bridge" beat ("Merrygo") that lets the slow vocals blend where house beats can't. Two new opt-in planner overrides shipped — instrumental-only beats + hand-marked main drops. Code committed on a branch (PR open); catalog AUDIO is LOCAL-ONLY. `render.py`/`validate.py` UNTOUCHED. 420 backend + 49 web + web-typecheck green.**)
+2026-07-16 (**Catalog expansion session: +7 vocals and a Drum & Bass "bridge" beat ("Merrygo") that lets the slow vocals blend where house beats can't. Two new opt-in planner overrides shipped — instrumental-only beats + hand-marked main drops. 🟢 MERGED to `main` @ `eb8098a` and pushed; catalog AUDIO is LOCAL-ONLY. `render.py`/`validate.py` UNTOUCHED. 420 backend green ON MERGED MAIN; web typecheck clean; 49 web tests passed.**)
+
+**⚠️ Process note (founder decision, 2026-07-16):** this batch was **merged straight to `main` with NO pull request** — the `gh` CLI is not installed on this machine, and when offered the options the founder explicitly chose "skip the PR — merge it directly." This deviates from the CLAUDE.md rule "never commit to the protected branch directly — branch and open a PR." It was a knowing, informed call by the repo owner on a solo project, with the full suite verified green before AND after the merge. **Do not treat this as a new default** — offer the PR path again next time. The long-term fix the founder declined-for-now: install `gh` so PRs can be opened without them touching GitHub.
 
 ## Where things stand (one breath)
 
