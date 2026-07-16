@@ -283,6 +283,57 @@ def test_contrast_and_sweep_on_a_confident_pair(monkeypatch):
     assert sum(1 for p in plan.placements if p.fx == "sweep_in") == 1  # one subtle sweep
 
 
+def test_instrumental_only_beat_places_no_song1_vocal(monkeypatch):
+    """A beat that is really a vocal song (e.g. Merrygo = a D&B remix of Khuda Jaane) must contribute
+    its MUSIC ONLY: the planner must never weave in Song 1's own vocal, or it overlaps Song 2's lyrics.
+    Same confident pair as the contrast test, but with the beat marked instrumental-only."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    monkeypatch.setattr(planner.instrumental_beats, "is_instrumental_only", lambda sid: True)
+    a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(60.0, 90.0)])  # S1 sings, but is instrumental-only
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 20.0), (30.0, 50.0)])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    assert plan.s1_vocal_regions == []  # zero seconds of Song 1's own vocal placed
+    assert sum(1 for p in plan.placements if p.fx == "sweep_in") == 1  # Song 2's flourish still fires
+
+
+def test_merrygo_beat_is_marked_instrumental_only():
+    from app.planner import instrumental_beats
+    assert instrumental_beats.is_instrumental_only(
+        "4fc82b59807fcbd3071bca7f612e2311f044f0e203f8e82895d7682d67629480")
+
+
+def test_hand_marked_main_drop_anchors_the_hook(monkeypatch):
+    """A beat whose energy is too flat to auto-detect a drop can have its main drop marked by ear;
+    the vocal's hook must then land ON that marked drop, not spread blindly across the song."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    # A beat with a FLAT energy curve (no auto-detectable drop), marked at 40s.
+    a1 = make_analysis(bpm=85.0, n_bars=48, energy=None)  # energy=None -> flat 0.5 everywhere
+    a2 = make_analysis(bpm=90.0, vocal_regions=[(8.0, 30.0), (40.0, 70.0)])
+    from app.planner import main_drops as main_drops_mod
+    monkeypatch.setattr(planner.fence, "energy_drops", lambda *a, **k: [])  # force "no auto drop"
+    monkeypatch.setattr(planner.hooks, "hook_for", lambda sid: (8.0, 24.0))  # Song 2 has a signature hook
+    monkeypatch.setattr(main_drops_mod, "main_drops_for",
+                        lambda sid: [40.0] if sid == a1.song_id else [])
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    # some placement anchors on (near) the marked 40s downbeat...
+    assert any(abs(p.anchor - 40.0) <= 1.5 for p in plan.placements), \
+        f"no placement near the marked 40s drop: {[round(p.anchor, 1) for p in plan.placements]}"
+    # ...and it's the one carrying the HOOK region (~8s), not the setup region (~40s): the signature
+    # line lands on the drop. (Exact slice bounds shift under warp/snap, so assert the region, not ==.)
+    on_drop = min(plan.placements, key=lambda p: abs(p.anchor - 40.0))
+    assert on_drop.vocal_src[0] < 30.0, f"the setup region, not the hook, landed on the drop: {on_drop.vocal_src}"
+
+
+def test_merrygo_beat_has_a_hand_marked_main_drop():
+    from app.planner import main_drops
+    assert main_drops.main_drops_for(
+        "4fc82b59807fcbd3071bca7f612e2311f044f0e203f8e82895d7682d67629480") == [40.0]
+
+
 def test_shaky_song_plays_safe(monkeypatch):
     monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
     a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(60.0, 90.0)])

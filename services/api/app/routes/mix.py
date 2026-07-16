@@ -141,7 +141,16 @@ _S1_STEMS = ("drums", "bass", "other")
 #        clean-grid slices render identically. PLANNER change → ENGINE_VERSION. render.py/validate.py
 #        UNTOUCHED (segments stay in the referee's warp band; the tail uses R7's last-segment exemption).
 #        Zero Replicate (stems/analysis keyed by song_id).
-ENGINE_VERSION = "m6.6"  # m6.6: R1 hand-off fade — outgoing S1 vocal ducks under the Song-2 entry (render.py)
+# m6.7: instrumental-only beats (planner) — a beat that is really a vocal song (e.g. Merrygo, a D&B
+#        remix of Khuda Jaane) no longer weaves in Song 1's OWN vocal, which was overlapping Song 2's
+#        lyrics. Changes only mixes whose Song 1 is marked instrumental-only; all other pairs render
+#        identically. PLANNER change → ENGINE_VERSION (invalidates the stale cached Merrygo mixes).
+#        render.py/validate.py UNTOUCHED. Zero Replicate (stems/analysis keyed by song_id).
+# m6.8: hand-marked main drops (planner) — a beat with no detectable energy drop (e.g. the Merrygo
+#        D&B beat) can have its main drop marked by ear (app/planner/main_drops.py); the vocal's hook
+#        then lands on it instead of spreading blindly. Changes only mixes whose Song 1 has a marked
+#        drop; all others render identically. render.py/validate.py UNTOUCHED. Zero Replicate.
+ENGINE_VERSION = "m6.8"  # m6.8: hand-marked main drops — vocal hook lands on the marked drop for flat-energy beats
 
 # Phase 0 (turned ON 2026-07-14): the founder-approved vocal chain, tuned dial-by-dial by ear during the
 # tuning week and confirmed on the full-set A/B. The model default stays enabled=False (the disabled path

@@ -481,6 +481,25 @@ def predrop_licks(a1: TrackAnalysis, placements, stretch: float,
     return out
 
 
+def _hand_marked_drops(a1: TrackAnalysis, a1g: TrackAnalysis) -> list[float]:
+    """A beat's hand-marked main drop(s) (app/planner/main_drops.py), snapped to the nearest downbeat
+    and re-timed onto the planning grid a1g. Returns [] when the beat has no mark (auto-detect then).
+
+    Marks are in NATIVE seconds; we find the nearest NATIVE downbeat by index, then read that index off
+    a1g.downbeats — so it lands on a real grid downbeat whether or not the house was tempo-shifted
+    (a1g == a1 on the native path; scaled 1:1 in index when the movable master retimes the bed)."""
+    from app.planner import main_drops
+    marks = main_drops.main_drops_for(a1.song_id)
+    if not marks or not a1.downbeats or not a1g.downbeats:
+        return []
+    out: list[float] = []
+    for t in marks:
+        idx = min(range(len(a1.downbeats)), key=lambda i: abs(a1.downbeats[i] - t))
+        if idx < len(a1g.downbeats):
+            out.append(round(a1g.downbeats[idx], 4))
+    return sorted(set(out))
+
+
 def arrangement_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
     """The legal menu for a full arrangement: the M3 legal set plus ranked phrase
     anchors and the available vocal slices. Declines pass through unchanged."""
@@ -500,7 +519,9 @@ def arrangement_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
         "anchors_ranked": anchors_ranked,
         "vocal_slices": slices,
         "vocal_peaks": vocal_peaks(a2),  # Song 2's strongest slices, loudest first (recipe R1)
-        "drops": energy_drops(a1g.energy_curve, a1g.downbeats),  # the house track's real drops
+        # A hand-marked main drop (main_drops.py) OVERRIDES energy detection — for beats whose energy is
+        # too flat to detect a drop (e.g. a D&B remix), so the hook still lands on the real drop.
+        "drops": _hand_marked_drops(a1, a1g) or energy_drops(a1g.energy_curve, a1g.downbeats),
         "track_end": track_end,  # the whole song's length, so the arrangement can span it
         # Song 1's section labels — fed ONLY to the DISABLED AI arranger (a future menu-selection seat).
         # The active RULES decision path does NOT read this: drops are energy-first (`energy_drops`),

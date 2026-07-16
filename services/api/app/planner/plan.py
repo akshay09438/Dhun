@@ -16,7 +16,7 @@ import os
 
 from app.models import (DuckMove, MixPlan, Placement, TrackAnalysis, VocalChainConfig,
                         VocalProcessMove, chain_config_hash)
-from app.planner import fence, hooks, llm, window
+from app.planner import fence, hooks, instrumental_beats, llm, window
 
 # Phase 0 (T1): the AI arrangement engine is OFF by default. The founder prefers the
 # deterministic rules arrangement (`_default_arrangement`) — a note-for-note match to the loved
@@ -95,6 +95,14 @@ def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement],
             p.beat_breath = False
             p.fx = None
         return safe, []
+    # Instrumental-only beats (a remix/edit of a vocal song used as a beat, e.g. Merrygo = a D&B
+    # remix of Khuda Jaane): NEVER weave in Song 1's own vocal — it is a whole second song's lyrics
+    # and would overlap Song 2's vocal. Keep the Song 2 flourish (the filter sweep into the final
+    # entry); just return no Song 1 vocal regions so only Song 2 sings. (founder decision 2026-07-15)
+    if instrumental_beats.is_instrumental_only(a1.song_id):
+        if len(placements) >= 2:
+            placements[-1].fx = "sweep_in"
+        return placements, []
     # Both vocals trade: Song 1 leads its substantial sung passages in the gaps (keep the real
     # ones, drop the scraps), AND keeps its short vocal LICK right before each drop (the
     # vocal-into-the-drop a real DJ never cuts) — never over Song 2 (R1). Merge any overlap.

@@ -4,70 +4,53 @@ _The single source of truth for "where things stand" between sessions. `/handoff
 
 ## Last updated
 
-2026-07-15 (**BEST-PARTS RESEARCH — still 100% in the experiment clone `C:\Dhun-Experiment`, NOT the official app. No official product code changed (only pre-existing LF↔CRLF line-ending noise, not edited).** Big realization this session: the CURRENT live mixer is ALREADY hook+touches+arc, and the "best-parts" idea is a length-selection WINDOW that sits ON TOP — and that window is already BUILT in the engine, just switched OFF by a flag. **The multi-set PR from 2026-07-14 is STILL OPEN — not merged.**)
+2026-07-15 (**Catalog expansion session: +7 vocals and a Drum & Bass "bridge" beat ("Merrygo") that lets the slow vocals blend where house beats can't. Two new opt-in planner overrides shipped — instrumental-only beats + hand-marked main drops. Code committed on a branch (PR open); catalog AUDIO is LOCAL-ONLY. `render.py`/`validate.py` UNTOUCHED. 420 backend + 49 web + web-typecheck green.**)
 
 ## Where things stand (one breath)
 
-Two threads:
+`main` (@ `ab10f88`) is still the shipped MVP. On top of it, this session added catalog songs and two narrow planner behaviours (all backend/Python; the screens, flow, and mixing engine are unchanged):
 
-- **(A) Multi-set UI — still pending merge (unchanged since 2026-07-14).** Built + verified on `feat/multiset-ui` (`319d507`, pushed); PR one click from opening; NOT merged. Untouched this session.
-- **(B) Best-parts research (sandbox `C:\Dhun-Experiment`, no GitHub remote).** Proved find→cut→combine, then discovered most of it is already in the live engine. Latest sandbox commit `ce1ac5e`. Research/measurement only — nothing here is promoted into the official app.
-
-## THE BIG REALIZATION (read this first next session)
-
-Reading the live engine (`services/api/app/planner/plan.py`, `window.py`, `render.py`) showed the current mix method is **already richer than the "V3" we were rebuilding**:
-
-- **Full songs today** — the good-parts crop is disabled: `plan.py:32  _GOOD_PARTS_WINDOW_ENABLED = False` (founder decision 2026-07-09 to remix full songs). The window machinery (`window.py`) is kept "dormant + tested", a one-line revert.
-- **Vocal = hook + surrounding phrases** — hand-marked hook on the drop + the vocal's other phrases as "setup" (`plan.py:205-284`, `hooks.py`).
-- **Beat = full track, shaped** by builds / beat-up / breakdown / bass slams (`stem_moves`).
-- **Both songs' vocals trade** — Song 1's own vocals answer in the gaps + lick into the drop (`fence.lead_sections` / `predrop_licks`, `plan.py:101-103`), firing on confident grids.
-- `window.py:choose_window` already picks the MAIN drop by post-onset hit-intensity (it even fixed the "energy-average buries the drop" bug, `window.py:85-91`), a clean cue-in, a 30s tail, and take-rotation.
-
-**So the climb-finder is NOT a replacement mixer — it's a LENGTH-SELECTION layer on top.** Flipping the window ON turns the live method into the best-parts short automatically. The only genuinely NEW work the experiments surfaced: (a) **melodic-drop detection** (Innerbloom's drop is a synth swell, no drums — the detector may miss it), and (b) the **mid-word pickup fix** (a hook with a lead-in enters mid-word because the beat-lock starts on the downbeat).
+- **Catalog grew to 6 beats + 12 vocals (18 entries, LOCAL-ONLY).** +7 Bollywood/Punjabi vocals (Nadan Parinde, Uff Teri Ada, Jugni Ji, Wari Jawa, Tere Bin, Mera Yaar, Khuda Jaane), each split/analyzed with its hook marked. A reusable ingest tool was written: `scripts/ingest_catalog.py`.
+- **A D&B "bridge" beat, "Merrygo"** (an adiwav D&B remix of Khuda Jaane, ~85 BPM) — added because the 4 slowest new vocals (80–103 BPM) can't blend with the house beats (120–122) inside the ±11% safe stretch band. All four blend cleanly over Merrygo (+6% to −11%).
+- **Two per-song overrides, both dormant for every other song:** `instrumental_beats.py` (Merrygo contributes music only — fixes ~45s of its own Khuda Jaane vocal overlapping Song 2) and `main_drops.py` (Merrygo's drop hand-marked at 0:40, since its flat energy defeats auto-detection — the vocal's hook now lands on the drop).
+- Merrygo's piano intro (0:00–22.68s) was trimmed off and the beat re-ingested (final id `4fc82b59…`).
+- The app is running locally at `http://localhost:8000` (background process; stops when the machine/session ends). Nothing public.
 
 ## In flight - done vs left
 
-### (A) Multi-set (carry over — re-verify, don't trust the sentence)
+Nothing is half-done. Everything this session landed, is green, and is committed (code) — the catalog audio is local-only by design (gitignored).
 
-- On `feat/multiset-ui` (`319d507`), pushed. Suite was **415 backend + 49 web green** _as of 2026-07-14_ — a CLAIM to re-run before merge, not re-verified this session.
-- Left: founder ear-listen to a two-set join, then open + merge the PR; then the owed `storage.py` set-WAV cache eviction.
+**DONE this session (committed on the session branch):**
 
-### (B) Best-parts research — DONE this session (all sandbox)
+- 7 vocals + the Merrygo D&B beat ingested; hooks marked for all 7 vocals (2 to founder ear-marks: Nadan Parinde 1:35–2:05, Jugni Ji 0:09–0:29).
+- `instrumental_beats.py` + `main_drops.py` (new); `plan.py`, `fence.py`, `hooks.py`, `mix.py` (ENGINE_VERSION → m6.8) edited; 4 new tests; version-pin test updated.
+- Docs updated (functional spec, technical spec, implementation plan drift #49).
 
-- **Exp 3 mid-word pickup fix + LOCKED 3 pairs, all founder-ear-confirmed:**
-  - Father Ocean × Der Lagi (`exp3/V3_LOCKED_FatherOcean_x_DerLagi.wav`, `exp3_bestparts.py`) — the mid-word fix that clinched it: prepend the hook's half-bar pickup + pull the anchor back so the line sings INTO the drop. (A 4-bar delay was tried first, sounded worse, reverted.)
-  - I Adore You × Tujhe (`exp3/V3_LOCKED_IAdoreYou_x_Tujhe.wav`, `exp3_pair2.py`) — tempo slow-down; same pickup fix generalized.
-  - Innerbloom × Dooriyan (`exp3/LOCKED_Innerbloom_x_Dooriyan_SHORT.wav` + `_FULL`, `exp3_innerbloom_dooriyan.py`) — **both songs newly loaded** into the sandbox catalog (Replicate stem-split; catalog now 9 songs). Perfect tempo (122=122); key flagged incompatible (6B vs 7A) but founder said it sounds good. Short windowed around the founder-chosen MAIN drop (~5:54) — which is a MELODIC swell (drums out), so the "loudest bar" missed it (lesson: main drop ≠ energy argmax).
-- **The read-only engine analysis** (above) — the session's most valuable output.
+**LEFT (pre-launch, before the ~50-user test — not blocking, carried forward):**
 
-### (B) Best-parts — LEFT / IN FLIGHT (the next task, DESIGNED but NOT built — founder closed the session before rendering)
-
-- **The A/B test (requested, not rendered):** on Father Ocean × Der Lagi, build **A = current method, full song** (baseline) vs **B = same mixer fed only each song's climb-finder best-part WINDOW** (same arranging logic, shorter input). Question: does cropping make it **tighter-and-better**, or **thinner** because it starved the arranger of touches?
-- **Two risk-flags to surface BEFORE rendering B (founder asked for these explicitly):**
-  1. **Vocal collision** — does the climb-finder's vocal anchor (loudest hook) AGREE with where the mixer places the vocal (on the drop)? If not, report the gap in seconds.
-  2. **Starvation** — cropped to the window, does the arranger LOSE material it uses in A (predrop_licks, lead_sections, breakdown)? List full-song-available vs survives-in-window.
-- **Two real build gaps** (only these, everything else is a flag flip): melodic-drop detection; the mid-word pickup fix.
-
-### Parked (sandbox)
-
-- **Rapture + Anchor Point** — half-loaded beat songs. Replicate read-timeouts hit repeatedly: **Rapture has stems (analysis missing), Anchor Point has neither** (only the normalized WAV). Song files + any stems on disk. Retry with the loop in `scratchpad/retry_beats.py` if wanted. (Innerbloom + Dooriyan loaded fine.)
+- The **`storage.py` cache-eviction sweep** — now MORE urgent: the disk hit 0 bytes free TWICE this session (render caches + ~1.4 GB of stale pytest temp renders). Dangerous surface; still owed. Until then, disk must be watched by hand.
+- **Short-clip (15–30s) export + final loudness master** (M6 polish).
+- **Ear-check the new pairs by the founder** — BPM/analysis are verified by numbers, but the actual SOUND of each new vocal over Merrygo (and over the house beats where tempo allows) needs a listen. Indian/Punjabi analysis is the weaker link.
 
 ## Do first next session
 
-Ask the founder: run the **A/B test** (the designed-not-built task above), OR flip the window flag in a sandbox copy of the engine to test the "best-parts is a one-line switch" hypothesis directly, OR go ship multi-set. All three are teed up.
+Ask the founder which: (a) **ear-check the new mixes** — especially Merrygo × each of the 4 slow vocals (confirm the drop lands right at 0:40 and no lyric overlap), and the 3 tempo-compatible new vocals over the house beats; or (b) the **`storage.py` cache-eviction sweep** (now the most pressing owed item — the disk filled twice); or (c) **M6 polish** (short-clip export + loudness master), the last thing before the ~50-creator validation test.
 
 ## Verification evidence (which checks ran, what they returned)
 
-- **Official app: NO code changed, NO tests run this session** — nothing to verify. The 2026-07-14 suite result (415 backend + 49 web green, typecheck clean) is the last-known state; **re-run before any multi-set merge**, do not trust the sentence.
-- **Sandbox (`C:\Dhun-Experiment`) — verified by render + measurement + the founder's ear, not a test suite (throwaway research):**
-  - 3 mixes locked, each founder-confirmed by ear. Timing/drop diagnoses done with measured numbers (e.g. Father Ocean real slam 236.10s vs marked 235.1; Innerbloom main drop is a drumless swell ~5:54).
-  - **REAL Replicate calls were made** loading Innerbloom + Dooriyan (paid; stem-split + structure). First attempt 401'd (no charge — token not loaded); fixed by `load_dotenv`. Rapture/Anchor Point incurred some timed-out split attempts (Replicate may charge for compute even on client read-timeout — a small, real cost).
-  - Engine analysis is code-cited (plan.py:32/205-284, window.py:85-91/104), not guessed.
-- **Git:** sandbox committed through `ce1ac5e` (scripts + README; audio + catalog data gitignored per "never commit mixes"). Official repo: only this handoff committed (docs branch), plus pre-existing line-ending noise.
+- **Backend:** `cd services/api && ./.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider` → **420 passed** (~81s). Includes the 4 new tests: `test_instrumental_only_beat_places_no_song1_vocal`, `test_merrygo_beat_is_marked_instrumental_only`, `test_hand_marked_main_drop_anchors_the_hook`, `test_merrygo_beat_has_a_hand_marked_main_drop`.
+- **Web typecheck:** `cd apps/web && npx tsc --noEmit` → **exit 0** (clean).
+- **Web tests:** `npx vitest run --pool=forks --poolOptions.forks.singleFork=true` → **49 passed (8 files)**. NOTE: the default `npm test` (multi-worker) OOMs on this machine under load ("JavaScript heap out of memory") — it is a runner-memory flake, not a real failure; single-fork passes. Consider making the default single-fork (but `vitest.config` is a protected file — needs sign-off).
+- **Marked-drop behaviour (real data):** built plans for Merrygo × {Jugni Ji, Mera Yaar, Khuda Jaane} → vocal hook anchors at **0:40**; × Tere Bin → **0:37** (its grid is tempo-shifted, same musical spot). Instrumental-only: **0 s** of Merrygo's own vocal placed on all four pairs.
+- **Tempo fit (app's own `tempo_plan`):** Merrygo 85 BPM × Khuda Jaane 80 (+6%), Mera Yaar 94 (−10%), Jugni Ji 95 (−11%), Tere Bin 103 (−11%) — all inside the ±11% band. The 4 slow vocals remain DECLINED against the 120–122 house beats (by design).
 
 ## Open escalations / re-verify next session (claims, not settled facts)
 
-- **Multi-set "green" is a 2026-07-14 CLAIM** — re-run `cd services/api && ./.venv/Scripts/python.exe -m pytest -q` and `npm run typecheck && npm test` before merging.
-- **No dangerous-surface code was edited** (render.py / validate.py / config.py / storage.py / songs.py were READ, not changed; the sandbox used engine functions import-and-call only, incl. `separate_stems` which calls Replicate).
-- **Best-parts is NOT in the official app** — it's sandbox research + a code-reading finding that the window is built-but-disabled. Turning it on is a founder decision + the 2 build gaps, not "done."
-- **Sandbox catalog now has 9 songs** (added Innerbloom, Dooriyan). This is on-disk only (gitignored data), not version-controlled.
+- **`render.py` and `validate.py` were NOT edited this session** — the new behaviour is all in `plan.py`/`fence.py` + two new marker modules. CLAIM: re-verify with `git log --oneline -1 -- workers/render.py services/api/app/planner/validate.py` (should predate 2026-07-15) before trusting it.
+- **⚠️ ALL catalog additions are LOCAL-ONLY.** `data/library/manifest.json` + the songs' stems/analysis are gitignored, so the 8 new songs + Merrygo's trim live ONLY on the founder's machine — they will NOT transfer to another clone/machine/deploy. The instrumental-only + main-drop markers are keyed by content id `4fc82b59…`; on any re-ingest elsewhere the id must match or those markers won't apply. Re-verify the catalog on any new environment.
+- **`_GOOD_PARTS_WINDOW_ENABLED` is still `False`** and best-parts (post-render crop) is still the default — neither touched this session. Re-confirm.
+- **Merrygo's fixes are ear-unverified end-to-end.** The overlap fix, the trim, and the 0:40 drop are verified by numbers/plan inspection; the founder had confirmed the trimmed beat-only file is correct, but a full rendered Merrygo × vocal mix should be heard to confirm the drop and no-overlap by ear.
+- **`storage.py` cache-eviction sweep** (dangerous surface) is still owed and now the disk-pressure risk is proven (0 bytes free twice). Do not treat local disk as bounded.
+- **Pre-existing uncommitted WEB edits are in the working tree** (App.tsx, SetupScreen.tsx/.module.css, api.ts, api.test.ts, liveSchedule.test.ts, study.ts, study.test.ts) — they were there at session START, are NOT from this session, and were NOT committed here. The web suite passes with them (49/49), but their intent is unknown. Decide next session whether to finish or discard them.
+- **CORS lockdown** (44th) must be re-verified before any public exposure.
+- **Local dev server** `http://localhost:8000` runs from a background process; it stops when the machine/session ends — relaunch with `services/api/.venv/Scripts/python.exe -m uvicorn app.main:app --app-dir services/api --port 8000`, or `Start-PromptDJ.bat` for a public link.
