@@ -4,63 +4,72 @@ _The single source of truth for "where things stand" between sessions. `/handoff
 
 ## Last updated
 
-2026-07-16 (**SET TRANSITIONS: a set is never refused for tempo again — a seam whose tempos can't blend is CUT like a real DJ; everything else keeps the normal blend. Founder call, ear-A/B'd. MERGED to `main`. 427 backend green + lint clean. `render.py`/`validate.py` UNTOUCHED.**)
-
-**⚠️ Two agent errors this session worth carrying forward as a lesson:** the agent twice asserted, confidently and WITHOUT reading the code, that joining an 85 BPM mix with a 120 BPM one would make the vocals warble ("chipmunks"), and then that the overlap was "~4 bars". Both wrong. **`set_render.py` has no time-stretch at all** — a set join never changes anyone's speed, so nothing can warble; and the overlap is **8 bars = 22.6s**. The founder pushed back ("I want the rule to vanish") and was **right**. Lesson: read the engine before explaining what the engine does — especially when refusing a founder's request on the engine's behalf. A second bug was then caught only by measuring the rendered WAV instead of trusting the API's own reported duration (see below).
-
-**Do not trust these as settled — re-verify:** `_seam_positions` in `routes/set.py` is a SECOND copy of `assemble_beatmatched_set`'s sample accounting. It already drifted once (the cut shipped 282.33s of audio while the manifest claimed 259.75s). `test_seam_positions_match_the_rendered_set_across_a_cut` now pins it to the real WAV — **any new branch in the engine needs its twin there**, or the Play screen draws transitions in the wrong place.
-
-## Previously
-
-2026-07-16 (**Catalog expansion session: +7 vocals and a Drum & Bass "bridge" beat ("Merrygo") that lets the slow vocals blend where house beats can't. Two new opt-in planner overrides shipped — instrumental-only beats + hand-marked main drops. 🟢 MERGED to `main` @ `eb8098a` and pushed; catalog AUDIO is LOCAL-ONLY. `render.py`/`validate.py` UNTOUCHED. 420 backend green ON MERGED MAIN; web typecheck clean; 49 web tests passed.**)
-
-**⚠️ Process note (founder decision, 2026-07-16):** this batch was **merged straight to `main` with NO pull request** — the `gh` CLI is not installed on this machine, and when offered the options the founder explicitly chose "skip the PR — merge it directly." This deviates from the CLAUDE.md rule "never commit to the protected branch directly — branch and open a PR." It was a knowing, informed call by the repo owner on a solo project, with the full suite verified green before AND after the merge. **Do not treat this as a new default** — offer the PR path again next time. The long-term fix the founder declined-for-now: install `gh` so PRs can be opened without them touching GitHub.
+2026-07-16 (**Two merged batches: (1) catalog expansion — +7 vocals and a D&B "bridge" beat (Merrygo) + two per-song planner overrides; (2) set transitions — a set is NEVER refused for tempo again; a seam whose tempos can't blend is CUT like a real DJ. Both MERGED + pushed; `main` @ `05e2a8e`. 427 backend + 49 web + typecheck + lint all green. `render.py`/`validate.py` UNTOUCHED. Catalog AUDIO is LOCAL-ONLY.**)
 
 ## Where things stand (one breath)
 
-`main` (@ `ab10f88`) is still the shipped MVP. On top of it, this session added catalog songs and two narrow planner behaviours (all backend/Python; the screens, flow, and mixing engine are unchanged):
+`main` @ `05e2a8e` is the shipped app and everything below is IN it. The app runs locally at `http://localhost:8000` (a background process — it dies with the session; relaunch command at the bottom). Nothing is public.
 
-- **Catalog grew to 6 beats + 12 vocals (18 entries, LOCAL-ONLY).** +7 Bollywood/Punjabi vocals (Nadan Parinde, Uff Teri Ada, Jugni Ji, Wari Jawa, Tere Bin, Mera Yaar, Khuda Jaane), each split/analyzed with its hook marked. A reusable ingest tool was written: `scripts/ingest_catalog.py`.
-- **A D&B "bridge" beat, "Merrygo"** (an adiwav D&B remix of Khuda Jaane, ~85 BPM) — added because the 4 slowest new vocals (80–103 BPM) can't blend with the house beats (120–122) inside the ±11% safe stretch band. All four blend cleanly over Merrygo (+6% to −11%).
-- **Two per-song overrides, both dormant for every other song:** `instrumental_beats.py` (Merrygo contributes music only — fixes ~45s of its own Khuda Jaane vocal overlapping Song 2) and `main_drops.py` (Merrygo's drop hand-marked at 0:40, since its flat energy defeats auto-detection — the vocal's hook now lands on the drop).
-- Merrygo's piano intro (0:00–22.68s) was trimmed off and the beat re-ingested (final id `4fc82b59…`).
-- The app is running locally at `http://localhost:8000` (background process; stops when the machine/session ends). Nothing public.
+- **Catalog: 6 beats + 12 vocals (18 entries, LOCAL-ONLY).** +7 Bollywood/Punjabi vocals (Nadan Parinde, Uff Teri Ada, Jugni Ji, Wari Jawa, Tere Bin, Mera Yaar, Khuda Jaane), each split/analyzed with its hook marked. Reusable ingest tool: `scripts/ingest_catalog.py`.
+- **A D&B "bridge" beat, "Merrygo"** (~85 BPM) so the slow vocals (80–103) have a partner — the house beats (120–122) are too far for the ±11% mix band.
+- **Two per-song planner overrides, dormant for every other song:** `instrumental_beats.py` (Merrygo contributes music only) and `main_drops.py` (Merrygo's drop hand-marked at 0:40).
+- **Per-seam set transitions (the big one).** A set now picks each transition from the tempos either side of it: **blend where they agree** (unchanged), **CUT where they can't**. Nothing is ever dropped for tempo.
+
+**The catalog's two camps** (this explains almost every "why won't this work" question): the **fast camp** — I Adore You, Father Ocean, Innerbloom, Rapture, Anchor Point — all render at 120–127; the **slow camp** — Merrygo alone — renders at 85–92. Within a camp → blend. Across camps → cut. Merrygo is the only slow beat, so the cut is the rare escape hatch, not the norm.
+
+## ⚠️ Lesson from this session (carry it forward)
+
+The agent twice asserted, confidently and **without reading the code**, that joining an 85 BPM mix with a 120 BPM one would make vocals warble ("chipmunks"), then that the overlap was "~4 bars". **Both wrong.** `workers/set_render.py` contains **no time-stretch at all** — a set join never changes anyone's speed, so nothing there can warble; and the overlap is **8 bars = 22.6s**. `set_tempo_plan`'s master tempo was computed and **never applied**. The founder pushed back ("I want the rule to vanish") and was **right** — the ±11% band on the SET join was inherited from the MIX stage (where the stretch is real) and only ever guarded a messy seam.
+
+**Lesson: read the engine before explaining what the engine does — especially when refusing the founder's request on the engine's behalf.** A second bug (below) was then caught only by measuring the rendered WAV instead of trusting the API's own reported duration.
 
 ## In flight - done vs left
 
-Nothing is half-done. Everything this session landed, is green, and is committed (code) — the catalog audio is local-only by design (gitignored).
+**Nothing is half-done.** Everything this session built is merged, green, and pushed. Catalog audio is local-only by design (gitignored).
 
-**DONE this session (committed on the session branch):**
+**DONE (merged to `main`):**
 
-- 7 vocals + the Merrygo D&B beat ingested; hooks marked for all 7 vocals (2 to founder ear-marks: Nadan Parinde 1:35–2:05, Jugni Ji 0:09–0:29).
-- `instrumental_beats.py` + `main_drops.py` (new); `plan.py`, `fence.py`, `hooks.py`, `mix.py` (ENGINE_VERSION → m6.8) edited; 4 new tests; version-pin test updated.
-- Docs updated (functional spec, technical spec, implementation plan drift #49).
+- Catalog +7 vocals + Merrygo (trimmed its 0:00–22.68s piano intro, re-ingested → id `4fc82b59…`); hooks marked for all 7 (2 to founder ear-marks).
+- `instrumental_beats.py`, `main_drops.py`, `scripts/ingest_catalog.py` (new); `plan.py`, `fence.py`, `hooks.py`, `mix.py` (ENGINE_VERSION → m6.8).
+- **Set fix 1:** the set tempo is reconciled on each MIX's real playing tempo (`fence.arrangement_options()["master_bpm"]`), not the raw song BPMs — the old way voted with each vocal's ORIGINAL tempo, which the mix has already stretched away, and dropped joinable sets (even two on the SAME beat).
+- **Set fix 2:** `set_render.tempo_blendable()` + `CUT_RAMP_SECS`; `assemble_beatmatched_set` picks the transition PER SEAM. `routes/set.py` no longer declines for tempo. `SET_PLAN_VERSION` s2→s3 (invalidates sets only; mix renders stay cached).
+- Docs: functional spec, technical spec, implementation-plan drift #49, #49b, #50, #51.
 
-**LEFT (pre-launch, before the ~50-user test — not blocking, carried forward):**
+**LEFT (pre-launch, carried forward — not blocking):**
 
-- The **`storage.py` cache-eviction sweep** — now MORE urgent: the disk hit 0 bytes free TWICE this session (render caches + ~1.4 GB of stale pytest temp renders). Dangerous surface; still owed. Until then, disk must be watched by hand.
-- **Short-clip (15–30s) export + final loudness master** (M6 polish).
-- **Ear-check the new pairs by the founder** — BPM/analysis are verified by numbers, but the actual SOUND of each new vocal over Merrygo (and over the house beats where tempo allows) needs a listen. Indian/Punjabi analysis is the weaker link.
+- The **`storage.py` cache-eviction sweep** — the most pressing owed item. The disk hit 0 bytes free TWICE this session (~2.5 GB of regenerable renders + stale pytest temp cleared, with founder consent). Dangerous surface. Until then, disk must be watched by hand.
+- **Short-clip (15–30s) export + final loudness master** (M6 polish) — the last thing before the ~50-creator test.
+- **Founder ear-check still owed** on: the new vocals over Merrygo (drop at 0:40, no lyric overlap) and the **live in-app cut** (they approved the standalone `B - clean cut.wav` render, NOT yet a set built through the app).
+- **The Play screen still reports a drop badly** — a small grey "skipped" card AFTER rendering. Much less reachable now (only a fence-level mix decline drops anything), but the founder explicitly deferred the warn-up-front fix. Offer it again.
 
 ## Do first next session
 
-Ask the founder which: (a) **ear-check the new mixes** — especially Merrygo × each of the 4 slow vocals (confirm the drop lands right at 0:40 and no lyric overlap), and the 3 tempo-compatible new vocals over the house beats; or (b) the **`storage.py` cache-eviction sweep** (now the most pressing owed item — the disk filled twice); or (c) **M6 polish** (short-clip export + loudness master), the last thing before the ~50-creator validation test.
+Ask the founder which: (a) **ear-check** the live Merrygo cut + the new vocals; or (b) the **`storage.py` cache-eviction sweep** (most pressing owed item — the disk filled twice); or (c) **M6 polish** (short-clip export + loudness master); or (d) **a second slow beat (~80–95 BPM)** so the slow camp has variety, which they floated and did not decide.
 
 ## Verification evidence (which checks ran, what they returned)
 
-- **Backend:** `cd services/api && ./.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider` → **420 passed** (~81s). Includes the 4 new tests: `test_instrumental_only_beat_places_no_song1_vocal`, `test_merrygo_beat_is_marked_instrumental_only`, `test_hand_marked_main_drop_anchors_the_hook`, `test_merrygo_beat_has_a_hand_marked_main_drop`.
-- **Web typecheck:** `cd apps/web && npx tsc --noEmit` → **exit 0** (clean).
-- **Web tests:** `npx vitest run --pool=forks --poolOptions.forks.singleFork=true` → **49 passed (8 files)**. NOTE: the default `npm test` (multi-worker) OOMs on this machine under load ("JavaScript heap out of memory") — it is a runner-memory flake, not a real failure; single-fork passes. Consider making the default single-fork (but `vitest.config` is a protected file — needs sign-off).
-- **Marked-drop behaviour (real data):** built plans for Merrygo × {Jugni Ji, Mera Yaar, Khuda Jaane} → vocal hook anchors at **0:40**; × Tere Bin → **0:37** (its grid is tempo-shifted, same musical spot). Instrumental-only: **0 s** of Merrygo's own vocal placed on all four pairs.
-- **Tempo fit (app's own `tempo_plan`):** Merrygo 85 BPM × Khuda Jaane 80 (+6%), Mera Yaar 94 (−10%), Jugni Ji 95 (−11%), Tere Bin 103 (−11%) — all inside the ±11% band. The 4 slow vocals remain DECLINED against the 120–122 house beats (by design).
+All run on merged `main` @ `05e2a8e`, 2026-07-16:
+
+- **Backend:** `cd services/api && ./.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider` → **427 passed** (~99s).
+- **Web typecheck:** `cd apps/web && npx tsc --noEmit` → **exit 0**.
+- **Web tests:** `npx vitest run --pool=forks --poolOptions.forks.singleFork=true` → **8 files, 49 passed**.
+- **Lint:** `npm run lint` → **exit 0**.
+- **End-to-end on the LIVE API with real songs** (the set work — not just unit tests):
+  - Merrygo(85) + I Adore You(120) → **kept 2/2**, CUT at **90.335s** (= member 1's exact length, zero overlap), manifest **282.325s** == real WAV **282.33s**.
+  - Merrygo(85) + Merrygo(85) → kept 2/2, **BLEND** at 67.76s, manifest == WAV.
+  - All **64** I-Adore-You × Father-Ocean vocal combinations → **64 blend, 0 cut** (they render at 120 vs 122 = 1.7% apart).
+- **Red/green proof** on the tempo-model fix: `test_set_keeps_both_sets_on_one_beat_whatever_the_vocals_original_tempos` FAILS on the old code with the exact bug message ("too far from the set's tempo") and passes on the new. Verified by stashing only the fix.
+- **Marked-drop (earlier batch):** hook anchors at 0:40 on Merrygo × {Jugni Ji, Mera Yaar, Khuda Jaane}; 0:37 on Tere Bin (tempo-shifted grid, same musical spot). 0s of Song-1 vocal on all four.
 
 ## Open escalations / re-verify next session (claims, not settled facts)
 
-- **`render.py` and `validate.py` were NOT edited this session** — the new behaviour is all in `plan.py`/`fence.py` + two new marker modules. CLAIM: re-verify with `git log --oneline -1 -- workers/render.py services/api/app/planner/validate.py` (should predate 2026-07-15) before trusting it.
-- **⚠️ ALL catalog additions are LOCAL-ONLY.** `data/library/manifest.json` + the songs' stems/analysis are gitignored, so the 8 new songs + Merrygo's trim live ONLY on the founder's machine — they will NOT transfer to another clone/machine/deploy. The instrumental-only + main-drop markers are keyed by content id `4fc82b59…`; on any re-ingest elsewhere the id must match or those markers won't apply. Re-verify the catalog on any new environment.
-- **`_GOOD_PARTS_WINDOW_ENABLED` is still `False`** and best-parts (post-render crop) is still the default — neither touched this session. Re-confirm.
-- **Merrygo's fixes are ear-unverified end-to-end.** The overlap fix, the trim, and the 0:40 drop are verified by numbers/plan inspection; the founder had confirmed the trimmed beat-only file is correct, but a full rendered Merrygo × vocal mix should be heard to confirm the drop and no-overlap by ear.
-- **`storage.py` cache-eviction sweep** (dangerous surface) is still owed and now the disk-pressure risk is proven (0 bytes free twice). Do not treat local disk as bounded.
-- **Pre-existing uncommitted WEB edits are in the working tree** (App.tsx, SetupScreen.tsx/.module.css, api.ts, api.test.ts, liveSchedule.test.ts, study.ts, study.test.ts) — they were there at session START, are NOT from this session, and were NOT committed here. The web suite passes with them (49/49), but their intent is unknown. Decide next session whether to finish or discard them.
+- **`_seam_positions` (`routes/set.py`) is a SECOND copy of `assemble_beatmatched_set`'s sample accounting.** It ALREADY drifted once this session — the cut shipped a correct 282.33s of audio while the manifest claimed 259.75s and put the seam at 67.76s instead of 90.34s (the Play screen draws transitions from `seam_at`). `test_seam_positions_match_the_rendered_set_across_a_cut` now pins it to the real WAV. **Any new branch in the seam engine needs its twin there.** This duplication is a standing hazard — consider collapsing the two into one accounting function.
+- **`render.py` / `validate.py` were NOT edited this session.** CLAIM: re-verify with `git log --oneline -1 -- workers/render.py services/api/app/planner/validate.py` (should predate 2026-07-15) before trusting it. `workers/set_render.py` WAS edited — it is NOT on the dangerous list (only `workers/render.py` and `workers/**/storage*.py` are).
+- **⚠️ ALL catalog additions are LOCAL-ONLY.** `data/library/manifest.json` + stems/analyses are gitignored, so the 8 new songs live ONLY on the founder's machine — they will NOT transfer to another clone or a deploy. The instrumental-only + main-drop markers key off content id `4fc82b59…`; on any re-ingest elsewhere the id must match or the markers silently won't apply.
+- **Both batches were merged straight to `main` with NO pull request**, at the founder's explicit request (`gh` is not installed; they chose "skip the PR — merge it directly", then "give me everything updated in the project folder and GitHub"). Deviates from CLAUDE.md's "never commit to the protected branch directly". Mitigations run: work committed on a branch first, merged `--no-ff` (each batch is a distinct revertable merge commit), suite green before AND after. **Not a new default — offer the PR path again.** Durable fix: install `gh` (founder declined for now).
+- **`test_mix_is_cached` fails with a JSONDecodeError if a live uvicorn server runs concurrently with the suite** (it reads the real data dir mid-write). Green with the server stopped — 427 passed. Spawned as a separate task; a test-isolation gap, not a product bug. **Stop the server before trusting a red suite.**
+- **The default `npm test` OOMs on this machine** ("JavaScript heap out of memory") under load — a runner-memory flake, not a real failure. Single-fork passes 49/49. Making single-fork the default needs sign-off (`vitest.config.*` is a dangerous-surface glob).
+- **`_GOOD_PARTS_WINDOW_ENABLED` is still `False`**; best-parts (post-render crop) is still the default. Neither touched. Re-confirm.
+- **Pre-existing uncommitted WEB edits remain in the working tree** (App.tsx, SetupScreen.tsx/.module.css, api.ts, api.test.ts, liveSchedule.test.ts, study.ts, study.test.ts). They predate 2026-07-15, are NOT from these sessions, and were deliberately NOT committed. Suite is green with them (49/49) but their intent is unknown. **Decide next session: finish or discard.**
 - **CORS lockdown** (44th) must be re-verified before any public exposure.
-- **Local dev server** `http://localhost:8000` runs from a background process; it stops when the machine/session ends — relaunch with `services/api/.venv/Scripts/python.exe -m uvicorn app.main:app --app-dir services/api --port 8000`, or `Start-PromptDJ.bat` for a public link.
+- **Local dev server:** relaunch with `services/api/.venv/Scripts/python.exe -m uvicorn app.main:app --app-dir services/api --port 8000`, or `Start-PromptDJ.bat` for a public link. It does not survive the session.
