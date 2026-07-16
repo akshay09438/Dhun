@@ -259,3 +259,70 @@ def test_beatmatched_set_never_clips(tmp_path):
     y, _ = sf.read(out, dtype="float32", always_2d=True)
     peak = float(np.max(np.abs(y)))
     assert 0.0 < peak <= set_render._CEILING
+
+
+# ---- per-seam transition: blend when the tempos agree, CUT when they can't (founder call 2026-07-16)
+
+
+def test_tempo_blendable_band():
+    assert set_render.tempo_blendable(120.0, 122.0)      # 1.7% apart — the normal house case
+    assert set_render.tempo_blendable(85.0, 91.67)       # 7.8% — two Merrygo sets
+    assert not set_render.tempo_blendable(85.0, 122.0)   # 44% — Merrygo vs house: must CUT
+    assert not set_render.tempo_blendable(122.0, 85.0)   # and symmetrically
+    assert set_render.tempo_blendable(None, 122.0)       # unknown tempo -> old behaviour (blend)
+    assert set_render.tempo_blendable(0.0, 122.0)
+
+
+def test_seam_is_CUT_when_tempos_are_too_far_apart_to_blend(tmp_path):
+    """A cut adds NO overlap: the set is the full sum of its members (bar a 15ms declick). This is
+    what stops 85 and 120 grinding against each other for a whole 8-bar crossfade."""
+    a, b = tmp_path / "a.wav", tmp_path / "b.wav"
+    _tone(a, freq=220.0, secs=5.0)
+    _tone(b, freq=440.0, secs=5.0)
+    out = tmp_path / "set.wav"
+    ps = [0.0, 1.0, 2.0, 3.0, 4.0]  # a grid rich enough that a BLEND would have been possible
+    set_render.assemble_beatmatched_set(
+        [{"wav": a, "phrase_starts": ps, "bpm": 85.0},
+         {"wav": b, "phrase_starts": ps, "bpm": 122.0}],
+        out,
+    )
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    assert abs(len(y) / sr - (10.0 - set_render.CUT_RAMP_SECS)) < 0.05  # 5 + 5, no overlap
+
+
+def test_seam_still_BLENDS_when_the_tempos_agree(tmp_path):
+    """The normal path is untouched: close tempos still overlap (so the set is SHORTER than the sum)."""
+    a, b = tmp_path / "a.wav", tmp_path / "b.wav"
+    _tone(a, freq=220.0, secs=5.0)
+    _tone(b, freq=440.0, secs=5.0)
+    out = tmp_path / "set.wav"
+    ps = [0.0, 1.0, 2.0, 3.0, 4.0]
+    set_render.assemble_beatmatched_set(
+        [{"wav": a, "phrase_starts": ps, "bpm": 120.0},
+         {"wav": b, "phrase_starts": ps, "bpm": 122.0}],
+        out,
+    )
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    assert len(y) / sr < 10.0 - 0.5  # a real overlap happened — not a cut
+
+
+def test_a_far_off_mix_only_CUTS_at_its_own_seam(tmp_path):
+    """The founder's rule: one odd-tempo mix must not turn the whole set into cuts. Only the seams
+    TOUCHING it are cut; every other seam keeps the normal blend."""
+    a, b, c = tmp_path / "a.wav", tmp_path / "b.wav", tmp_path / "c.wav"
+    for p, f in ((a, 220.0), (b, 440.0), (c, 330.0)):
+        _tone(p, freq=f, secs=5.0)
+    ps = [0.0, 1.0, 2.0, 3.0, 4.0]
+    # 120 -> 120 blends (overlap), then 120 -> 85 cuts (no overlap).
+    out = tmp_path / "set.wav"
+    set_render.assemble_beatmatched_set(
+        [{"wav": a, "phrase_starts": ps, "bpm": 120.0},
+         {"wav": b, "phrase_starts": ps, "bpm": 120.0},
+         {"wav": c, "phrase_starts": ps, "bpm": 85.0}],
+        out,
+    )
+    y, sr = sf.read(out, dtype="float32", always_2d=True)
+    dur = len(y) / sr
+    # 15s total; seam 1 overlapped (blend), seam 2 did not (cut) -> strictly between the two extremes
+    assert dur < 15.0 - 0.5   # the first seam really blended
+    assert dur > 10.5         # but the second did NOT (a second blend would drop it much lower)

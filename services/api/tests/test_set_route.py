@@ -126,23 +126,48 @@ def test_set_declines_a_tempo_outlier_pair_and_builds_the_rest(tmp_path, monkeyp
     assert "tempo" in (by_index[2]["reason"] or "").lower()
 
 
-def test_set_declines_a_mix_whose_PLAYING_tempo_is_the_outlier(tmp_path, monkeypatch):
-    """The set-level decline: both pairs mix fine on their own, but the two FINISHED mixes play
-    too far apart (85 vs 122) to share one set tempo — so one sits out rather than warble."""
+def test_seam_positions_match_the_rendered_set_across_a_cut(tmp_path, monkeypatch):
+    """`_seam_positions` is a SECOND copy of the engine's sample accounting, so it can silently drift
+    from the audio. Pin them together on a CUT seam: the reported duration must match the real WAV,
+    and the reported seam must be where the cut actually lands (member 1's full length).
+    (Caught for real: the cut shipped 282.3s of audio while the manifest claimed 259.75s.)"""
     _use_tmp(monkeypatch, tmp_path)
     _beat(tmp_path, BEAT1, 85.0)
-    _vocal(tmp_path, VOC1, 85.0)   # mixes at ~85
+    _vocal(tmp_path, VOC1, 85.0)
     _beat(tmp_path, BEAT2, 122.0)
-    _vocal(tmp_path, VOC2, 122.0)  # mixes at ~122 — a 1.44x spread, far outside the safe band
+    _vocal(tmp_path, VOC2, 122.0)
 
     r = client.post("/set", json=_payload((BEAT1, VOC1), (BEAT2, VOC2)))
     ready = _poll(r.json()["set_id"], "ready")
     assert ready["status"] == "ready"
 
-    kept = [m for m in ready["members"] if m["kept"]]
-    dropped = [m for m in ready["members"] if not m["kept"]]
-    assert len(kept) == 1 and len(dropped) == 1  # one sits out; the set still builds
-    assert "tempo" in (dropped[0]["reason"] or "").lower()
+    import soundfile as sf
+    real = sf.info(str(tmp_path / f"{ready['set_id']}.set.wav")).duration
+    assert abs(ready["duration"] - real) < 0.05, (
+        f"manifest says {ready['duration']}s but the WAV is {real}s"
+    )
+    seam = {m["index"]: m for m in ready["members"]}[2]["seam_at"]
+    member1 = sf.info(str(tmp_path / f"{ready['set_id']}_1.bestparts.wav")).duration
+    assert abs(seam - member1) < 0.1, f"cut reported at {seam}s but member 1 is {member1}s long"
+
+
+def test_set_CUTS_between_mixes_too_far_apart_to_blend_and_keeps_both(tmp_path, monkeypatch):
+    """A tempo gap must never drop a member. Both pairs mix fine on their own but the FINISHED mixes
+    play 85 vs 122 — too far apart to CROSSFADE (nothing is stretched at a seam, so an 8-bar overlap
+    would just grind). That seam is CUT instead, and BOTH sets play. (Founder call, 2026-07-16.)"""
+    _use_tmp(monkeypatch, tmp_path)
+    _beat(tmp_path, BEAT1, 85.0)
+    _vocal(tmp_path, VOC1, 85.0)   # mixes at ~85
+    _beat(tmp_path, BEAT2, 122.0)
+    _vocal(tmp_path, VOC2, 122.0)  # mixes at ~122 — a 1.44x gap, far outside the blendable band
+
+    r = client.post("/set", json=_payload((BEAT1, VOC1), (BEAT2, VOC2)))
+    ready = _poll(r.json()["set_id"], "ready")
+    assert ready["status"] == "ready"
+
+    assert all(m["kept"] for m in ready["members"]), [m["reason"] for m in ready["members"]]
+    assert len(ready["members"]) == 2  # nothing sits out any more
+    assert ready["duration"] and ready["duration"] > 0
 
 
 def test_set_keeps_both_sets_on_one_beat_whatever_the_vocals_original_tempos(tmp_path, monkeypatch):

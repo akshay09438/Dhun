@@ -2,11 +2,12 @@
 
 A "set" is 1 or 2 beat+vocal pairs (V1 caps at two, to keep render time and the finished
 WAV small). Each pair is rendered through the SAME /mix pipeline — reusing mix._run_mix,
-never a special render path — then the finished mixes are joined by the shipped beat-matched
-seam engine (workers.set_render.assemble_beatmatched_set), after reconciling every song to
-ONE master tempo and declining any outlier (set_tempo_plan). Sets are added on the Setup
-screen only (there is no live "add a set" during playback), so this route builds the whole
-set up front and serves one continuous WAV.
+never a special render path — then the finished mixes are joined by the shipped seam engine
+(workers.set_render.assemble_beatmatched_set), which picks each transition from the tempos
+either side of it: the beat-matched phrase blend where they agree, a DJ cut where they are too
+far apart to blend. A tempo gap never drops a member. Sets are added on the Setup screen only
+(there is no live "add a set" during playback), so this route builds the whole set up front and
+serves one continuous WAV.
 
 Async start-then-poll, exactly like /mix: POST kicks off a background job and returns at once;
 GET reports processing / ready (url + the per-set line-up) / error. Cached by a content id
@@ -39,11 +40,12 @@ _REPO = Path(__file__).resolve().parents[4]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 from workers.set_render import (  # noqa: E402  (shipped engine — reuse, never copy)
+    CUT_RAMP_SECS,
     SR,
     SetRenderError,
     _phrase_seam,
     assemble_beatmatched_set,
-    set_tempo_plan,
+    tempo_blendable,
 )
 
 router = APIRouter()
@@ -53,10 +55,12 @@ log = logging.getLogger("promptdj.set")
 MAX_SETS = 2
 
 # Bump when the set-ASSEMBLY logic changes, so stale sets aren't re-served while the per-mix renders
-# (unaffected, and expensive) stay cached. s2: the set tempo is reconciled on each MIX's real playing
-# tempo (plan master_bpm) instead of the raw song BPMs — the old way voted with each vocal's ORIGINAL
-# tempo, which the mix has already stretched away, and wrongly dropped joinable sets.
-SET_PLAN_VERSION = "s2"
+# (unaffected, and expensive) stay cached.
+#   s2 — the set tempo is reconciled on each MIX's real playing tempo (plan master_bpm) instead of the
+#        raw song BPMs; the old way voted with each vocal's ORIGINAL tempo, which the mix has already
+#        stretched away, and wrongly dropped joinable sets.
+#   s3 — a tempo gap no longer drops a member at all: the seam is CUT instead of blended.
+SET_PLAN_VERSION = "s3"
 
 # set_id -> (status, message). "ready" is inferred from the stored WAV + manifest; absent with no
 # files is "idle". In-memory is fine for single-worker validation (same pattern as the mix route).
@@ -126,14 +130,21 @@ def _seam_positions(seq: list[dict]) -> tuple[list[float], float]:
     """Seam times (seconds into the finished set) + total length, mirroring
     assemble_beatmatched_set's sample accounting via the shipped `_phrase_seam` — so we can label
     where each transition lands without re-analyzing the rendered set. `seq` items carry
-    `frames` (int) and `phrase_starts` (secs)."""
+    `frames` (int), `phrase_starts` (secs) and `bpm` (float|None).
+
+    This MIRRORS the engine, so every branch there needs its twin here or the manifest lies about the
+    set's length and draws the transition in the wrong place. `test_seam_positions_match_the_rendered_set`
+    pins the two together against a real render."""
     y_len = seq[0]["frames"]
     y_ps = list(seq[0]["phrase_starts"])
     seams: list[float] = []
     for i in range(1, len(seq)):
         nxt_len, nxt_ps = seq[i]["frames"], seq[i]["phrase_starts"]
-        seam = _phrase_seam(y_ps, y_len / SR, nxt_ps, 1)
-        if seam is None:
+        blendable = tempo_blendable(seq[i - 1].get("bpm"), seq[i].get("bpm"))
+        seam = _phrase_seam(y_ps, y_len / SR, nxt_ps, 1) if blendable else None
+        if not blendable:  # CUT — mirrors the engine: no overlap, just the declick ramp
+            a_len, b_skip, xf, b_len = y_len, 0, int(SR * CUT_RAMP_SECS), nxt_len
+        elif seam is None:
             a_len, b_skip, xf, b_len = y_len, 0, int(SR * 4.0), nxt_len
         else:
             a_end, b_start, xf_t = seam
@@ -160,37 +171,33 @@ def _run_set(set_id: str, pairs: list[tuple[str, str]]) -> None:
     its ~180s best-parts highlight (workers.best_parts, post-render) -> join. Best-parts is the DEFAULT
     output. A crop that fails falls back to that mix's full render, so a set never fails on the crop."""
     try:
-        # 1. ONE tempo across the whole set, reconciled on the tempo each MIX will actually PLAY at.
-        #    A set joins finished mixes, not raw songs: inside a mix the vocal is already stretched
-        #    onto the beat's grid, so the mix plays at a single tempo — its plan's `master_bpm`.
-        #    Reconciling on the raw song BPMs (the vocal's ORIGINAL tempo, which no longer exists in
-        #    the render) wrongly declined pairs whose finished mix sat well inside the band — even
-        #    two sets on the SAME beat, which by definition join perfectly. `arrangement_options` is
-        #    the fence: pure arithmetic, no AI, no audio, no render, so this stays cheap.
+        # 1. Work out the tempo each MIX will actually PLAY at. A set joins finished mixes, not raw
+        #    songs: inside a mix the vocal is already stretched onto the beat's grid, so the mix plays
+        #    at a single tempo — its plan's `master_bpm`. `arrangement_options` is the fence: pure
+        #    arithmetic, no AI, no audio, no render, so this stays cheap and pre-render.
+        #
+        #    A tempo gap NO LONGER drops a member. Nothing is time-stretched at a seam, so a far-off
+        #    mix was never a warble risk — only a messy overlap — and the seam engine now CUTS such a
+        #    seam instead (workers.set_render.tempo_blendable). Every mixable pair is kept; the tempos
+        #    only decide how each seam is joined. A pair the fence can't mix AT ALL is still dropped —
+        #    that is a mix-level decline (a real stretch), not a set-level one.
         members: list[SetMember] = []
-        unmixable: dict[int, str] = {}  # index -> reason; can't be mixed at all, so it never votes
-        mixes: list[dict] = []          # ONE entry per pair, at the tempo it will really play
+        unmixable: dict[int, str] = {}   # index -> reason; there is no mix to join
+        bpm_of: dict[int, float] = {}    # index -> the tempo that mix really plays at
         for i, (s1, s2) in enumerate(pairs, start=1):
             a1, a2 = mixroute._load_analysis(s1), mixroute._load_analysis(s2)
             opts = fence.arrangement_options(a1, a2) if (a1 and a2) else None
             if not (opts and opts.get("mixable") and opts.get("master_bpm")):
                 unmixable[i] = (opts or {}).get("reason") or "This pair couldn't be mixed."
                 continue
-            mixes.append({"id": i, "bpm": opts["master_bpm"]})
-        declined_idx = {d["id"] for d in set_tempo_plan(mixes)["declined"]}
+            bpm_of[i] = opts["master_bpm"]
 
         # 2. Render each kept pair through the real /mix pipeline. Cache-reuse an already-rendered mix.
-        rendered: list[dict] = []  # {"index", "wav", "phrase_starts", "frames"}
+        rendered: list[dict] = []  # {"index", "wav", "phrase_starts", "frames", "bpm"}
         for i, (s1, s2) in enumerate(pairs, start=1):
             if i in unmixable:
                 members.append(SetMember(
                     index=i, song1_id=s1, song2_id=s2, kept=False, reason=unmixable[i],
-                ))
-                continue
-            if i in declined_idx:
-                members.append(SetMember(
-                    index=i, song1_id=s1, song2_id=s2, kept=False,
-                    reason="This pair is too far from the set's tempo to blend, so it sits out.",
                 ))
                 continue
             mid = mixroute.mix_id_for(s1, s2, "", 1)
@@ -216,12 +223,12 @@ def _run_set(set_id: str, pairs: list[tuple[str, str]]) -> None:
                     s1_voc if s1_voc.exists() else None,
                     settings.data_dir / f"{set_id}_{i}.bestparts.wav",
                 )
-                rendered.append({"index": i, "wav": cr["wav"],
+                rendered.append({"index": i, "wav": cr["wav"], "bpm": p.master_bpm,
                                  "phrase_starts": cr["phrase_starts"], "frames": cr["frames"]})
             except Exception:  # noqa: BLE001 — a crop failure falls back to the full mix, never fails the set
                 log.exception("best-parts crop failed for set %s member %d; using the full mix", set_id, i)
                 info = sf.info(str(wav))
-                rendered.append({"index": i, "wav": wav,
+                rendered.append({"index": i, "wav": wav, "bpm": p.master_bpm,
                                  "phrase_starts": list(p.out_phrase_starts or []), "frames": info.frames})
             members.append(SetMember(index=i, song1_id=s1, song2_id=s2, kept=True))
 
@@ -229,9 +236,12 @@ def _run_set(set_id: str, pairs: list[tuple[str, str]]) -> None:
             _jobs[set_id] = ("error", "None of these sets could be built — try different songs.")
             return
 
-        # 3. Join the kept mixes with the shipped beat-matched seam engine.
+        # 3. Join the kept mixes with the shipped seam engine. Each member carries the tempo it plays
+        #    at, so the engine picks the transition PER SEAM: the normal beat-matched phrase blend
+        #    where the tempos agree, a DJ cut where they are too far apart to blend.
         assemble_beatmatched_set(
-            [{"wav": r["wav"], "phrase_starts": r["phrase_starts"]} for r in rendered],
+            [{"wav": r["wav"], "phrase_starts": r["phrase_starts"], "bpm": r["bpm"]}
+             for r in rendered],
             _set_wav(set_id),
         )
 

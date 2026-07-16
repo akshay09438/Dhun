@@ -4,6 +4,14 @@ _The single source of truth for "where things stand" between sessions. `/handoff
 
 ## Last updated
 
+2026-07-16 (**SET TRANSITIONS: a set is never refused for tempo again — a seam whose tempos can't blend is CUT like a real DJ; everything else keeps the normal blend. Founder call, ear-A/B'd. MERGED to `main`. 427 backend green + lint clean. `render.py`/`validate.py` UNTOUCHED.**)
+
+**⚠️ Two agent errors this session worth carrying forward as a lesson:** the agent twice asserted, confidently and WITHOUT reading the code, that joining an 85 BPM mix with a 120 BPM one would make the vocals warble ("chipmunks"), and then that the overlap was "~4 bars". Both wrong. **`set_render.py` has no time-stretch at all** — a set join never changes anyone's speed, so nothing can warble; and the overlap is **8 bars = 22.6s**. The founder pushed back ("I want the rule to vanish") and was **right**. Lesson: read the engine before explaining what the engine does — especially when refusing a founder's request on the engine's behalf. A second bug was then caught only by measuring the rendered WAV instead of trusting the API's own reported duration (see below).
+
+**Do not trust these as settled — re-verify:** `_seam_positions` in `routes/set.py` is a SECOND copy of `assemble_beatmatched_set`'s sample accounting. It already drifted once (the cut shipped 282.33s of audio while the manifest claimed 259.75s). `test_seam_positions_match_the_rendered_set_across_a_cut` now pins it to the real WAV — **any new branch in the engine needs its twin there**, or the Play screen draws transitions in the wrong place.
+
+## Previously
+
 2026-07-16 (**Catalog expansion session: +7 vocals and a Drum & Bass "bridge" beat ("Merrygo") that lets the slow vocals blend where house beats can't. Two new opt-in planner overrides shipped — instrumental-only beats + hand-marked main drops. 🟢 MERGED to `main` @ `eb8098a` and pushed; catalog AUDIO is LOCAL-ONLY. `render.py`/`validate.py` UNTOUCHED. 420 backend green ON MERGED MAIN; web typecheck clean; 49 web tests passed.**)
 
 **⚠️ Process note (founder decision, 2026-07-16):** this batch was **merged straight to `main` with NO pull request** — the `gh` CLI is not installed on this machine, and when offered the options the founder explicitly chose "skip the PR — merge it directly." This deviates from the CLAUDE.md rule "never commit to the protected branch directly — branch and open a PR." It was a knowing, informed call by the repo owner on a solo project, with the full suite verified green before AND after the merge. **Do not treat this as a new default** — offer the PR path again next time. The long-term fix the founder declined-for-now: install `gh` so PRs can be opened without them touching GitHub.
