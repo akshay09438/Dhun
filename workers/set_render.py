@@ -181,17 +181,43 @@ def _phrase_seam(a_ps: list[float], a_dur: float, b_ps: list[float], phrases: in
     return (a_end, b_start, xf) if xf > 0 else None
 
 
+# A CUT's declick ramp. Long enough to kill the click, far too short for two tempos to audibly
+# collide — that is the whole point of cutting instead of blending.
+CUT_RAMP_SECS = 0.015
+
+
+def tempo_blendable(bpm_a: float | None, bpm_b: float | None,
+                    lo: float = SAFE_STRETCH_LO, hi: float = SAFE_STRETCH_HI) -> bool:
+    """Can these two finished mixes be joined by a phrase CROSSFADE, or must the seam be a CUT?
+
+    A crossfade overlaps ~8 bars of both mixes at once, so their grids have to agree — nothing is
+    time-stretched at a seam (the set engine never resamples; each mix plays at its own tempo). Two
+    mixes further apart than the safe band would grind against each other for the whole overlap
+    (measured: 85 vs 120 = 22.6s of collision), so that seam is CUT instead. An unknown tempo assumes
+    blendable, preserving the pre-tempo-aware behaviour."""
+    if not bpm_a or not bpm_b or bpm_a <= 0 or bpm_b <= 0:
+        return True
+    return lo <= (bpm_b / bpm_a) <= hi
+
+
 def assemble_beatmatched_set(mixes: list[dict], out_path: Path, phrases: int = 1,
                              fallback_xfade_secs: float = 4.0) -> Path:
-    """Join finished mixes into a set with BEAT-ALIGNED, phrase-boundary crossfades.
+    """Join finished mixes into a set, choosing the transition PER SEAM from the two tempos.
 
-    `mixes`: in play order, each a dict {"wav": Path, "phrase_starts": [secs…]} (a mix's persisted
-    `out_phrase_starts` from 3.1). Assumes every mix shares ONE master tempo (3.2), so equal bar
-    lengths make the seam a plain phrase overlap: A's last `phrases`×8 bars fade out over B's first
-    `phrases`×8 bars, both starting on a phrase boundary so the beats line up (never a mid-sentence
-    cut). A seam whose grids can't support that falls back to a plain `fallback_xfade_secs` equal-power
-    crossfade — never worse than `assemble_set`. Peak-safe via the shared `_finalize` (3.4). An empty
-    list raises SetRenderError."""
+    `mixes`: in play order, each a dict {"wav": Path, "phrase_starts": [secs…], "bpm": float|None}
+    (a mix's persisted `out_phrase_starts` from 3.1 and its plan's `master_bpm`).
+
+    - **Tempos that agree** (`tempo_blendable`) -> today's BEAT-ALIGNED phrase crossfade: A's last
+      `phrases`×8 bars fade out over B's first `phrases`×8 bars, both starting on a phrase boundary
+      so the beats line up (never a mid-sentence cut). Unchanged.
+    - **Tempos too far apart to blend** -> a DJ-style CUT: A plays out, B drops in cold, joined by a
+      `CUT_RAMP_SECS` declick. This is how a human DJ bridges an unbridgeable tempo gap — nothing is
+      stretched, so nothing warbles, and the seam is 15ms instead of a 22s grind. Both mixes are
+      already shaped for it: best-parts gives A a wind-down and B a build-up.
+
+    A seam whose grids can't support a phrase overlap falls back to a plain `fallback_xfade_secs`
+    equal-power crossfade — never worse than `assemble_set`. Peak-safe via the shared `_finalize`
+    (3.4). An empty list raises SetRenderError."""
     if not mixes:
         raise SetRenderError("no mixes to assemble a set from")
 
@@ -201,8 +227,15 @@ def assemble_beatmatched_set(mixes: list[dict], out_path: Path, phrases: int = 1
     for i in range(1, len(mixes)):
         nxt = clips[i]
         nxt_ps = list(mixes[i].get("phrase_starts") or [])
-        seam = _phrase_seam(y_ps, len(y) / SR, nxt_ps, phrases)
-        if seam is None:  # grids too thin -> plain timed crossfade (never worse than assemble_set)
+        # The seam is decided by the tempos EITHER SIDE of it, so one far-off mix cuts only at its own
+        # joins and leaves every other seam in the set on the normal blend.
+        blendable = tempo_blendable(mixes[i - 1].get("bpm"), mixes[i].get("bpm"))
+        seam = _phrase_seam(y_ps, len(y) / SR, nxt_ps, phrases) if blendable else None
+        if not blendable:  # CUT: no overlap — A plays out, B drops in cold.
+            a, b = y, nxt
+            xf = int(SR * CUT_RAMP_SECS)
+            b_skip_s = 0
+        elif seam is None:  # grids too thin -> plain timed crossfade (never worse than assemble_set)
             a, b = y, nxt
             xf = int(SR * fallback_xfade_secs) if fallback_xfade_secs > 0 else 0
             b_skip_s = 0

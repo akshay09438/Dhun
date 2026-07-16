@@ -126,6 +126,72 @@ def test_set_declines_a_tempo_outlier_pair_and_builds_the_rest(tmp_path, monkeyp
     assert "tempo" in (by_index[2]["reason"] or "").lower()
 
 
+def test_seam_positions_match_the_rendered_set_across_a_cut(tmp_path, monkeypatch):
+    """`_seam_positions` is a SECOND copy of the engine's sample accounting, so it can silently drift
+    from the audio. Pin them together on a CUT seam: the reported duration must match the real WAV,
+    and the reported seam must be where the cut actually lands (member 1's full length).
+    (Caught for real: the cut shipped 282.3s of audio while the manifest claimed 259.75s.)"""
+    _use_tmp(monkeypatch, tmp_path)
+    _beat(tmp_path, BEAT1, 85.0)
+    _vocal(tmp_path, VOC1, 85.0)
+    _beat(tmp_path, BEAT2, 122.0)
+    _vocal(tmp_path, VOC2, 122.0)
+
+    r = client.post("/set", json=_payload((BEAT1, VOC1), (BEAT2, VOC2)))
+    ready = _poll(r.json()["set_id"], "ready")
+    assert ready["status"] == "ready"
+
+    import soundfile as sf
+    real = sf.info(str(tmp_path / f"{ready['set_id']}.set.wav")).duration
+    assert abs(ready["duration"] - real) < 0.05, (
+        f"manifest says {ready['duration']}s but the WAV is {real}s"
+    )
+    seam = {m["index"]: m for m in ready["members"]}[2]["seam_at"]
+    member1 = sf.info(str(tmp_path / f"{ready['set_id']}_1.bestparts.wav")).duration
+    assert abs(seam - member1) < 0.1, f"cut reported at {seam}s but member 1 is {member1}s long"
+
+
+def test_set_CUTS_between_mixes_too_far_apart_to_blend_and_keeps_both(tmp_path, monkeypatch):
+    """A tempo gap must never drop a member. Both pairs mix fine on their own but the FINISHED mixes
+    play 85 vs 122 — too far apart to CROSSFADE (nothing is stretched at a seam, so an 8-bar overlap
+    would just grind). That seam is CUT instead, and BOTH sets play. (Founder call, 2026-07-16.)"""
+    _use_tmp(monkeypatch, tmp_path)
+    _beat(tmp_path, BEAT1, 85.0)
+    _vocal(tmp_path, VOC1, 85.0)   # mixes at ~85
+    _beat(tmp_path, BEAT2, 122.0)
+    _vocal(tmp_path, VOC2, 122.0)  # mixes at ~122 — a 1.44x gap, far outside the blendable band
+
+    r = client.post("/set", json=_payload((BEAT1, VOC1), (BEAT2, VOC2)))
+    ready = _poll(r.json()["set_id"], "ready")
+    assert ready["status"] == "ready"
+
+    assert all(m["kept"] for m in ready["members"]), [m["reason"] for m in ready["members"]]
+    assert len(ready["members"]) == 2  # nothing sits out any more
+    assert ready["duration"] and ready["duration"] > 0
+
+
+def test_set_keeps_both_sets_on_one_beat_whatever_the_vocals_original_tempos(tmp_path, monkeypatch):
+    """REGRESSION: two sets on the SAME beat always play at (near) the same tempo, so they must
+    always join. The tempo reconciliation used to vote on the RAW song BPMs — including each
+    vocal's ORIGINAL tempo, which no longer exists once the mix stretches it onto the beat's grid.
+    Vocals at 80 and 103 look 1.29x apart raw (outside the 1.247x band) and one set was thrown
+    away, even though both mixes actually play at ~85 and ~92 — a 1.08x gap that joins fine.
+    This is the real Merrygo + Khuda Jaane / Tere Bin case the founder hit."""
+    _use_tmp(monkeypatch, tmp_path)
+    _beat(tmp_path, BEAT1, 85.0)
+    _vocal(tmp_path, VOC1, 80.0)   # raw 80  -> stretched onto the 85 grid
+    _vocal(tmp_path, VOC2, 103.0)  # raw 103 -> mix rides a moved master (~92)
+
+    r = client.post("/set", json=_payload((BEAT1, VOC1), (BEAT1, VOC2)))
+    ready = _poll(r.json()["set_id"], "ready")
+    assert ready["status"] == "ready"
+
+    by_index = {m["index"]: m for m in ready["members"]}
+    assert by_index[1]["kept"] is True, by_index[1]["reason"]
+    assert by_index[2]["kept"] is True, by_index[2]["reason"]  # was wrongly dropped before the fix
+    assert by_index[2]["seam_at"] and by_index[2]["seam_at"] > 0  # a real transition was created
+
+
 def test_set_enforces_the_two_set_cap(tmp_path, monkeypatch):
     _use_tmp(monkeypatch, tmp_path)
     three = _payload((BEAT1, VOC1), (BEAT2, VOC2), (BEAT1, VOC2))
