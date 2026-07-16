@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.models import MixPlan
+from app.planner import fence
 from app.routes import mix as mixroute
 
 # workers/ lives at the repo root; mixroute already puts it on the path, but be defensive.
@@ -50,6 +51,12 @@ log = logging.getLogger("promptdj.set")
 
 # V1 hard cap: a session holds 1 or 2 sets. Kept small on purpose (render time + file size).
 MAX_SETS = 2
+
+# Bump when the set-ASSEMBLY logic changes, so stale sets aren't re-served while the per-mix renders
+# (unaffected, and expensive) stay cached. s2: the set tempo is reconciled on each MIX's real playing
+# tempo (plan master_bpm) instead of the raw song BPMs — the old way voted with each vocal's ORIGINAL
+# tempo, which the mix has already stretched away, and wrongly dropped joinable sets.
+SET_PLAN_VERSION = "s2"
 
 # set_id -> (status, message). "ready" is inferred from the stored WAV + manifest; absent with no
 # files is "idle". In-memory is fine for single-worker validation (same pattern as the mix route).
@@ -88,9 +95,15 @@ class SetJob(BaseModel):
 def set_id_for(pairs: list[tuple[str, str]]) -> str:
     """Content id for a set: the engine + chain + the ordered pairs. Best-parts is the default output
     now, so ':bestparts' is permanent — it invalidates any pre-best-parts full-length set cached under
-    the old key. Identical requests hit cache."""
+    the old key. Identical requests hit cache.
+
+    `SET_PLAN_VERSION` invalidates SETS ONLY when the set-assembly logic changes, leaving the far more
+    expensive per-mix renders cached (they are unaffected — a set never re-arranges a mix, it only
+    joins finished ones). Bumping mixroute.ENGINE_VERSION for a set-only change would needlessly
+    re-render every mix."""
     body = "|".join(f"{a}:{b}" for a, b in pairs)
-    raw = f"{mixroute.ENGINE_VERSION}:{mixroute._CHAIN_CONFIG_HASH}:set:bestparts:{body}".encode()
+    raw = (f"{mixroute.ENGINE_VERSION}:{mixroute._CHAIN_CONFIG_HASH}"
+           f":set:bestparts:{SET_PLAN_VERSION}:{body}").encode()
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -147,24 +160,34 @@ def _run_set(set_id: str, pairs: list[tuple[str, str]]) -> None:
     its ~180s best-parts highlight (workers.best_parts, post-render) -> join. Best-parts is the DEFAULT
     output. A crop that fails falls back to that mix's full render, so a set never fails on the crop."""
     try:
-        # 1. ONE tempo across the whole set; decline outliers (shipped set_tempo_plan).
-        songs: list[dict] = []
-        seen: set[str] = set()
-        for s1, s2 in pairs:
-            for sid in (s1, s2):
-                if sid not in seen:
-                    seen.add(sid)
-                    a = mixroute._load_analysis(sid)
-                    songs.append({"id": sid, "bpm": (a.bpm if a else 0.0) or 0.0})
-        declined_ids = {d["id"] for d in set_tempo_plan(songs)["declined"]}
-
-        # 2. Render each pair through the real /mix pipeline (a pair is kept only if BOTH its
-        #    songs survived the tempo reconciliation). Cache-reuse an already-rendered mix.
+        # 1. ONE tempo across the whole set, reconciled on the tempo each MIX will actually PLAY at.
+        #    A set joins finished mixes, not raw songs: inside a mix the vocal is already stretched
+        #    onto the beat's grid, so the mix plays at a single tempo — its plan's `master_bpm`.
+        #    Reconciling on the raw song BPMs (the vocal's ORIGINAL tempo, which no longer exists in
+        #    the render) wrongly declined pairs whose finished mix sat well inside the band — even
+        #    two sets on the SAME beat, which by definition join perfectly. `arrangement_options` is
+        #    the fence: pure arithmetic, no AI, no audio, no render, so this stays cheap.
         members: list[SetMember] = []
+        unmixable: dict[int, str] = {}  # index -> reason; can't be mixed at all, so it never votes
+        mixes: list[dict] = []          # ONE entry per pair, at the tempo it will really play
+        for i, (s1, s2) in enumerate(pairs, start=1):
+            a1, a2 = mixroute._load_analysis(s1), mixroute._load_analysis(s2)
+            opts = fence.arrangement_options(a1, a2) if (a1 and a2) else None
+            if not (opts and opts.get("mixable") and opts.get("master_bpm")):
+                unmixable[i] = (opts or {}).get("reason") or "This pair couldn't be mixed."
+                continue
+            mixes.append({"id": i, "bpm": opts["master_bpm"]})
+        declined_idx = {d["id"] for d in set_tempo_plan(mixes)["declined"]}
+
+        # 2. Render each kept pair through the real /mix pipeline. Cache-reuse an already-rendered mix.
         rendered: list[dict] = []  # {"index", "wav", "phrase_starts", "frames"}
         for i, (s1, s2) in enumerate(pairs, start=1):
-            declined = [sid for sid in (s1, s2) if sid in declined_ids]
-            if declined:
+            if i in unmixable:
+                members.append(SetMember(
+                    index=i, song1_id=s1, song2_id=s2, kept=False, reason=unmixable[i],
+                ))
+                continue
+            if i in declined_idx:
                 members.append(SetMember(
                     index=i, song1_id=s1, song2_id=s2, kept=False,
                     reason="This pair is too far from the set's tempo to blend, so it sits out.",

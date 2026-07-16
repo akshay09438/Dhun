@@ -126,6 +126,47 @@ def test_set_declines_a_tempo_outlier_pair_and_builds_the_rest(tmp_path, monkeyp
     assert "tempo" in (by_index[2]["reason"] or "").lower()
 
 
+def test_set_declines_a_mix_whose_PLAYING_tempo_is_the_outlier(tmp_path, monkeypatch):
+    """The set-level decline: both pairs mix fine on their own, but the two FINISHED mixes play
+    too far apart (85 vs 122) to share one set tempo — so one sits out rather than warble."""
+    _use_tmp(monkeypatch, tmp_path)
+    _beat(tmp_path, BEAT1, 85.0)
+    _vocal(tmp_path, VOC1, 85.0)   # mixes at ~85
+    _beat(tmp_path, BEAT2, 122.0)
+    _vocal(tmp_path, VOC2, 122.0)  # mixes at ~122 — a 1.44x spread, far outside the safe band
+
+    r = client.post("/set", json=_payload((BEAT1, VOC1), (BEAT2, VOC2)))
+    ready = _poll(r.json()["set_id"], "ready")
+    assert ready["status"] == "ready"
+
+    kept = [m for m in ready["members"] if m["kept"]]
+    dropped = [m for m in ready["members"] if not m["kept"]]
+    assert len(kept) == 1 and len(dropped) == 1  # one sits out; the set still builds
+    assert "tempo" in (dropped[0]["reason"] or "").lower()
+
+
+def test_set_keeps_both_sets_on_one_beat_whatever_the_vocals_original_tempos(tmp_path, monkeypatch):
+    """REGRESSION: two sets on the SAME beat always play at (near) the same tempo, so they must
+    always join. The tempo reconciliation used to vote on the RAW song BPMs — including each
+    vocal's ORIGINAL tempo, which no longer exists once the mix stretches it onto the beat's grid.
+    Vocals at 80 and 103 look 1.29x apart raw (outside the 1.247x band) and one set was thrown
+    away, even though both mixes actually play at ~85 and ~92 — a 1.08x gap that joins fine.
+    This is the real Merrygo + Khuda Jaane / Tere Bin case the founder hit."""
+    _use_tmp(monkeypatch, tmp_path)
+    _beat(tmp_path, BEAT1, 85.0)
+    _vocal(tmp_path, VOC1, 80.0)   # raw 80  -> stretched onto the 85 grid
+    _vocal(tmp_path, VOC2, 103.0)  # raw 103 -> mix rides a moved master (~92)
+
+    r = client.post("/set", json=_payload((BEAT1, VOC1), (BEAT1, VOC2)))
+    ready = _poll(r.json()["set_id"], "ready")
+    assert ready["status"] == "ready"
+
+    by_index = {m["index"]: m for m in ready["members"]}
+    assert by_index[1]["kept"] is True, by_index[1]["reason"]
+    assert by_index[2]["kept"] is True, by_index[2]["reason"]  # was wrongly dropped before the fix
+    assert by_index[2]["seam_at"] and by_index[2]["seam_at"] > 0  # a real transition was created
+
+
 def test_set_enforces_the_two_set_cap(tmp_path, monkeypatch):
     _use_tmp(monkeypatch, tmp_path)
     three = _payload((BEAT1, VOC1), (BEAT2, VOC2), (BEAT1, VOC2))
