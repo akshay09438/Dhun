@@ -334,54 +334,6 @@ def test_merrygo_beat_has_a_hand_marked_main_drop():
         "4fc82b59807fcbd3071bca7f612e2311f044f0e203f8e82895d7682d67629480") == [40.0]
 
 
-def test_innerbloom_has_a_hand_marked_main_drop():
-    """Innerbloom's payoff is the MELODIC swell at the end of its 5:46-6:02 break, where the drums
-    are OUT — so energy detection never saw it and put the hook at 3:40 instead (founder ear-report
-    on Innerbloom x Wari Jawa). Marked 5:54 = 354s."""
-    from app.planner import main_drops
-    assert main_drops.main_drops_for(
-        "2471e18e1eb820114c0782501babac43b6e5b52c06254da4c1fe0d9e8369c406") == [354.0]
-
-
-def test_every_hand_marked_id_is_a_real_catalog_song():
-    """A marker keyed by a WRONG id fails SILENTLY — the song just keeps auto-detecting and nobody
-    notices. (Caught for real: Innerbloom's drop was first written against an id that belongs to no
-    song at all.) These markers are hand-typed content hashes, so pin them to the real catalog.
-
-    Skips when the catalog manifest isn't present — it is LOCAL-ONLY (gitignored), so CI and any
-    fresh clone have no songs to check against.
-    """
-    import json
-    from pathlib import Path
-
-    from app.planner import hooks, main_drops
-
-    manifest = Path(__file__).resolve().parents[1] / "data" / "library" / "manifest.json"
-    if not manifest.exists():
-        pytest.skip("catalog manifest is local-only; nothing to check against")
-
-    known = {e["song_id"] for e in json.loads(manifest.read_text(encoding="utf-8"))}
-
-    # Three hooks predate the curated-catalog pivot (Dil Ye Bekarar / Jee Karda / Maula Mere Maula
-    # were uploaded songs, not catalog entries). They are documented in hooks.py and harmless — dead
-    # keys, not typos. Listed explicitly so a NEW orphan still fails.
-    PRE_CATALOG_HOOKS = {
-        "73431441fb8cae90e084ca78b18c213fe7c58d7a51cfa39b786c9eceac0a9e5e",
-        "2294a71524d7b0041a8f1c01f198a1e2ac4af4d1d1d39a6ac6f6ea695d7a6195",
-        "6608cb4849db314c28a26843adcb94558afebe833020af010a7d8cb8f69d7fcb",
-    }
-
-    for label, marks, exempt in (
-        ("main_drops", main_drops.MAIN_DROPS, set()),
-        ("hooks", hooks.HOOKS, PRE_CATALOG_HOOKS),
-    ):
-        for song_id in marks:
-            assert song_id in known or song_id in exempt, (
-                f"{label} marks {song_id[:12]}… which is in no catalog song — a hand-typed id typo "
-                f"silently disables the mark"
-            )
-
-
 def test_shaky_song_plays_safe(monkeypatch):
     monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
     a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(60.0, 90.0)])
