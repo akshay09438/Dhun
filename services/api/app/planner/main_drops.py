@@ -18,6 +18,12 @@ MAIN_DROPS: dict[str, list[float]] = {
     # Merrygo beat (trimmed) — a D&B remix of Khuda Jaane; flat energy gave the detector no drop.
     # Founder-marked main drop at 0:40 (the drop section runs 0:40-1:03). 2026-07-15.
     "4fc82b59807fcbd3071bca7f612e2311f044f0e203f8e82895d7682d67629480": [40.0],
+    # Innerbloom (RÜFÜS DU SOL) — 6:17, where its own lyrics start: the moment Song 2 rides in with
+    # them (paired with its vocal-entry floor in vocal_windows.py, same time). Marked because the hook
+    # must land HERE by the founder's rule, not on whichever anchor happens to be loudest — energy
+    # detection ranks 7:05 above 6:17, so without this mark the signature line drifts off the hand-over
+    # (measured: the hook slid to 7:05 and 6:17 got an 8s scrap). 2026-07-16.
+    "2471e18e1eb820114c0782501babac43b6e5b52c06254da4c1fe0d9e8369c406": [377.0],
 }
 
 

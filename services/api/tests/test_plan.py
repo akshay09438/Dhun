@@ -1018,3 +1018,94 @@ def test_build_mix_plan_falls_back_full_track_without_a_drop(monkeypatch):
     flat = flat.model_copy(update={"energy_curve": [0.2] * len(flat.downbeats)})  # no drop
     p = planner.build_mix_plan("m2", flat, _vocal_song())
     assert p.window is None                                    # today's full-track behaviour
+
+
+def test_innerbloom_is_held_out_until_its_own_verse():
+    """Founder call (2026-07-16): Innerbloom plays AS ITSELF until its lyrics start at 6:17, then
+    Song 2 rides in with them. Its buildup runs from ~5:45; nothing of Song 2 before the floor."""
+    from app.planner import vocal_windows
+    assert vocal_windows.vocal_entry_earliest_for(
+        "2471e18e1eb820114c0782501babac43b6e5b52c06254da4c1fe0d9e8369c406") == 377.0
+
+
+def test_unmarked_beats_have_no_vocal_entry_floor():
+    """The floor is opt-in per beat: every other beat keeps today's whole-song arrangement."""
+    from app.planner import vocal_windows
+    assert vocal_windows.vocal_entry_earliest_for("z" * 64) == 0.0
+    assert vocal_windows.vocal_entry_earliest_for("") == 0.0
+
+
+def test_vocal_entry_floor_holds_song2_out_and_hands_song1_its_own_vocal(monkeypatch):
+    """The two halves of the founder's rule, together: NO Song-2 vocal before the floor, and the beat
+    sings its OWN vocal across the held-out head (the engine's bed excludes Song 1's vocal, so without
+    this the head would play as a long instrumental instead of the record)."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    FLOOR = 120.0
+    a1 = make_analysis(bpm=120.0, n_bars=200, vocal_regions=[(20.0, 60.0), (70.0, 110.0),
+                                                             (130.0, 170.0)])
+    a2 = make_analysis(bpm=120.0, vocal_regions=[(0.0, 20.0), (30.0, 50.0)])
+    monkeypatch.setattr(
+        "app.planner.vocal_windows.vocal_entry_earliest_for",
+        lambda song_id: FLOOR if song_id == a1.song_id else 0.0,
+    )
+    plan = planner.build_mix_plan("v" * 64, a1, a2)
+
+    assert plan.placements, "the floor must not strand the arrangement"
+    assert all(p.anchor >= FLOOR - 1e-6 for p in plan.placements), (
+        f"Song 2 entered before the floor: {[p.anchor for p in plan.placements]}"
+    )
+    head = [r for r in (plan.s1_vocal_regions or []) if r[0] < FLOOR]
+    assert head, "the beat must sing its OWN vocal across the held-out head, not play instrumental"
+
+
+def test_a_floor_with_no_legal_anchor_is_ignored_not_stranded():
+    """Never emit a vocal-less mix: if the floor leaves no legal anchor, drop the floor instead."""
+    from app.planner import fence
+    a1 = make_analysis(bpm=120.0, n_bars=16, vocal_regions=[(2.0, 8.0)])
+    a2 = make_analysis(bpm=120.0, vocal_regions=[(0.0, 10.0)])
+    import app.planner.vocal_windows as vw
+    real = vw.vocal_entry_earliest_for
+    try:
+        vw.vocal_entry_earliest_for = lambda song_id: 9_999.0  # past the end of the song
+        opts = fence.arrangement_options(a1, a2)
+        assert opts["vocal_entry_floor"] == 0.0, "an impossible floor must be ignored"
+        assert opts["anchors_ranked"], "anchors must survive an impossible floor"
+    finally:
+        vw.vocal_entry_earliest_for = real
+
+
+def test_held_out_window_gets_more_entries_than_a_normal_song(monkeypatch):
+    """Founder call (2026-07-16): "I just want that for longer in more parts". 3 entries are sized to
+    span a WHOLE song; in a held-out window they leave big instrumental holes (measured: a 94s hole in
+    Innerbloom's 6:17->9:14). The count scales to the window instead — capped by how many distinct
+    slices Song 2 has, so we never invent entries there is no vocal for."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    opts = {"track_end": 578.0, "vocal_slices": [(0, 40), (60, 100), (120, 160), (180, 220)]}
+    assert planner._placement_count(opts, entry_floor=0.0) == planner._MAX_PLACEMENTS
+    assert planner._placement_count(opts, entry_floor=377.0) == 4  # ~177s window -> 4, not 3
+    # never more entries than there are distinct slices to fill them with
+    assert planner._placement_count({**opts, "vocal_slices": [(0, 40)]}, entry_floor=377.0) == 3
+    # and never unbounded on a very long held-out window
+    assert planner._placement_count(
+        {"track_end": 5000.0, "vocal_slices": [(i, i + 10) for i in range(0, 200, 20)]},
+        entry_floor=10.0) == planner._MAX_HELD_OUT_PLACEMENTS
+
+
+def test_held_out_setup_prefers_the_LONGEST_vocal_not_the_loudest(monkeypatch):
+    """`vocal_peaks` ranks by loudness — right for spreading a few entries across a whole song, wrong
+    for filling a held-out window. Measured on Wari Jawa it ranked an 8s scrap FIRST and omitted a 40s
+    passage entirely. In a held-out window the setup draws longest-first so the window is real singing."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    FLOOR = 120.0
+    a1 = make_analysis(bpm=120.0, n_bars=200, vocal_regions=[(20.0, 60.0)])
+    a2 = make_analysis(bpm=120.0, vocal_regions=[(0.0, 8.0), (30.0, 70.0), (90.0, 130.0)])
+    monkeypatch.setattr(
+        "app.planner.vocal_windows.vocal_entry_earliest_for",
+        lambda song_id: FLOOR if song_id == a1.song_id else 0.0,
+    )
+    plan = planner.build_mix_plan("w" * 64, a1, a2)
+    used = [p.vocal_src for p in plan.placements]
+    assert used, "the held-out window must still get vocal"
+    # the 8s scrap must not crowd out the long passages
+    longest = max(e - s for s, e in used)
+    assert longest > 20.0, f"held-out setup picked only short scraps: {used}"

@@ -407,19 +407,27 @@ def energy_drops(energy_curve: list[float], downbeats: list[float],
 
 
 def synced_anchors(anchors_ranked: list[float], drops: list[float], track_end: float,
-                   count: int = 3, take: int = 1) -> list[float]:
+                   count: int = 3, take: int = 1, start: float = 0.0) -> list[float]:
     """Energy-synced arc: one vocal entry per third, PREFERRING a real drop in that third (so the
     vocal lands on the house drop — recipe R1), and falling back to the loudest phrase-anchor in
     that third when the third has no detected drop. Same whole-song span guarantee as `arc_anchors`
     (every band gets an entry, backfilled if sparse), just drop-aware. `take` rotates the pick
-    within a band for Regenerate variety. Returns anchors in time order."""
+    within a band for Regenerate variety. Returns anchors in time order.
+
+    `start` is the vocal ENTRY FLOOR (fence._vocal_entry_floor): the arc spans `start`->`track_end`
+    rather than 0->`track_end`, so a beat held out until its own verse still gets its entries spread
+    across the part where Song 2 is allowed to sing — instead of every early band coming back empty
+    and collapsing the arrangement. Defaults to 0.0 = the whole song, today's behaviour."""
     if not anchors_ranked or track_end <= 0:
         return sorted(anchors_ranked)
     if len(anchors_ranked) <= count and not drops:
         return sorted(anchors_ranked)
+    span = track_end - start
+    if span <= 0:
+        return sorted(anchors_ranked)
     picks: list[float] = []
     for i in range(count):
-        lo, hi = track_end * i / count, track_end * (i + 1) / count
+        lo, hi = start + span * i / count, start + span * (i + 1) / count
         band_drops = [d for d in drops if lo <= d < hi]  # a real drop in this third wins
         if band_drops:
             picks.append(band_drops[(take - 1) % len(band_drops)])
@@ -481,6 +489,21 @@ def predrop_licks(a1: TrackAnalysis, placements, stretch: float,
     return out
 
 
+def _vocal_entry_floor(a1: TrackAnalysis, a1g: TrackAnalysis) -> float:
+    """The earliest time Song 2's vocal may enter over this beat (app/planner/vocal_windows.py),
+    snapped to the nearest downbeat and re-timed onto the planning grid a1g. 0.0 = no restriction.
+
+    Same native->grid mapping as `_hand_marked_drops`: find the nearest NATIVE downbeat by index, then
+    read that index off a1g.downbeats, so the floor lands on a real grid downbeat whether or not the
+    house was tempo-shifted."""
+    from app.planner import vocal_windows
+    t = vocal_windows.vocal_entry_earliest_for(a1.song_id)
+    if not t or not a1.downbeats or not a1g.downbeats:
+        return 0.0
+    idx = min(range(len(a1.downbeats)), key=lambda i: abs(a1.downbeats[i] - t))
+    return round(a1g.downbeats[idx], 4) if idx < len(a1g.downbeats) else 0.0
+
+
 def _hand_marked_drops(a1: TrackAnalysis, a1g: TrackAnalysis) -> list[float]:
     """A beat's hand-marked main drop(s) (app/planner/main_drops.py), snapped to the nearest downbeat
     and re-timed onto the planning grid a1g. Returns [] when the beat has no mark (auto-detect then).
@@ -514,6 +537,21 @@ def arrangement_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
         a1g.beats[-1] if a1g.beats
         else (max(anchors_ranked) + need if anchors_ranked else need)
     )
+    drops = _hand_marked_drops(a1, a1g) or energy_drops(a1g.energy_curve, a1g.downbeats)
+    # A hand-marked VOCAL ENTRY FLOOR (vocal_windows.py) holds Song 2 out until the beat has said its
+    # own piece — for a long track with a strong first act, where a guest vocal spread across the whole
+    # song just interrupts it. Everything before the floor becomes illegal to enter on, so the arc
+    # spans floor->end instead of 0->end. 0.0 (every unmarked beat) leaves all of this untouched.
+    entry_floor = _vocal_entry_floor(a1, a1g)
+    if entry_floor > 0:
+        floored = [a for a in anchors_ranked if a >= entry_floor]
+        floored_drops = [d for d in drops if d >= entry_floor]
+        # Never strand the arrangement: if the floor leaves nothing legal, ignore it rather than
+        # emit a vocal-less mix.
+        if floored:
+            anchors_ranked, drops = floored, (floored_drops or drops)
+        else:
+            entry_floor = 0.0
     return {
         **base,
         "anchors_ranked": anchors_ranked,
@@ -521,7 +559,8 @@ def arrangement_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
         "vocal_peaks": vocal_peaks(a2),  # Song 2's strongest slices, loudest first (recipe R1)
         # A hand-marked main drop (main_drops.py) OVERRIDES energy detection — for beats whose energy is
         # too flat to detect a drop (e.g. a D&B remix), so the hook still lands on the real drop.
-        "drops": _hand_marked_drops(a1, a1g) or energy_drops(a1g.energy_curve, a1g.downbeats),
+        "drops": drops,
+        "vocal_entry_floor": entry_floor,  # 0.0 = no restriction (every beat but the marked ones)
         "track_end": track_end,  # the whole song's length, so the arrangement can span it
         # Song 1's section labels — fed ONLY to the DISABLED AI arranger (a future menu-selection seat).
         # The active RULES decision path does NOT read this: drops are energy-first (`energy_drops`),

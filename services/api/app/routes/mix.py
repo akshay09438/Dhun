@@ -150,7 +150,10 @@ _S1_STEMS = ("drums", "bass", "other")
 #        D&B beat) can have its main drop marked by ear (app/planner/main_drops.py); the vocal's hook
 #        then lands on it instead of spreading blindly. Changes only mixes whose Song 1 has a marked
 #        drop; all others render identically. render.py/validate.py UNTOUCHED. Zero Replicate.
-ENGINE_VERSION = "m6.8"  # m6.8: hand-marked main drops — vocal hook lands on the marked drop for flat-energy beats
+ENGINE_VERSION = "m6.11"  # m6.11: held-out beats — the floor, PLUS a window-scaled entry count and longest-first setup
+#          slices so the held-out window is FULL of vocal, not holes (founder: "more parts").
+#         (NOT m6.9: that string was already burned by a reverted experiment, so its stale renders
+#          would have been served as cache hits. A version string must be unique PER BEHAVIOUR.)
 
 # Phase 0 (turned ON 2026-07-14): the founder-approved vocal chain, tuned dial-by-dial by ear during the
 # tuning week and confirmed on the full-set A/B. The model default stays enabled=False (the disabled path

@@ -81,8 +81,8 @@ def _confident(a1: TrackAnalysis) -> bool:
     return a1.bpm_confidence is None or a1.bpm_confidence >= 0.5
 
 
-def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement],
-                      stretch: float) -> tuple[list[Placement], list[tuple[float, float]]]:
+def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement], stretch: float,
+                      entry_floor: float = 0.0) -> tuple[list[Placement], list[tuple[float, float]]]:
     """On a confident Song 1: let Song 1 LEAD with its own vocal in the gaps (both songs trade —
     Step 1) and put a filter-sweep into the final (big) entry. On a shaky Song 1, play safe — no
     flourishes and at most two placements — rather than bet fancy moves on bad data."""
@@ -108,10 +108,52 @@ def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement],
     # vocal-into-the-drop a real DJ never cuts) — never over Song 2 (R1). Merge any overlap.
     leads = fence.lead_sections(a1, placements, stretch)
     licks = fence.predrop_licks(a1, placements, stretch)
-    s1_regions = fence._merge_regions(leads + licks, max_gap=0.0)
+    if entry_floor > 0:
+        # A held-out beat has already had its own say (the whole head is its vocal). From the floor on
+        # it HANDS OVER: Song 2 leads and the beat's own vocal rings out underneath and stays gone —
+        # "it will blend with that and have nothing to do with the vocal of Innerbloom, because it will
+        # automatically fade out" (founder, 2026-07-16). So keep only the passages that START before
+        # the floor: that preserves the hand-off lick ringing INTO Song 2's first entry (m5f.1) and
+        # drops the later trade-backs. Those trade-backs also collided with Song 2 for real (R1: an
+        # 8:39-8:44 lick landed 3.0s inside an 8:08-8:42 line) once the floor packed the entries into
+        # a shorter window — the referee caught it, and handing over is the right fix, not a wider
+        # overlap allowance.
+        leads = [r for r in leads if r[0] < entry_floor]
+        licks = [r for r in licks if r[0] < entry_floor]
+    s1_regions = fence._merge_regions(leads + licks + _held_out_lead_in(a1, placements, entry_floor),
+                                      max_gap=0.0)
     if len(placements) >= 2:  # one filter sweep, into the final (biggest) entry
         placements[-1].fx = "sweep_in"
     return placements, s1_regions
+
+
+def _held_out_lead_in(a1: TrackAnalysis, placements: list[Placement],
+                      entry_floor: float, margin: float = 2.0) -> list[tuple[float, float]]:
+    """Song 1's OWN vocal across the stretch before a hand-marked vocal-entry floor.
+
+    `lead_sections` only fills the gaps BETWEEN Song 2's placements — the head (0 -> the first entry)
+    has never been a gap, because the first entry is normally early and the short instrumental intro
+    is deliberate. A marked beat (vocal_windows.py) holds Song 2 out for MINUTES, and the engine's bed
+    is drums+bass+other with Song 1's vocal EXCLUDED, so that head would play as a long instrumental —
+    not the record. The founder's call (2026-07-16) is that a held-out beat plays AS ITSELF until its
+    floor, so hand its own vocal back for the whole head.
+
+    Returns [] for every unmarked beat (entry_floor == 0), so nothing else changes. R1 (one voice at a
+    time) holds by construction: the head ends `margin` before the first Song-2 entry, and the floor is
+    that entry's anchor.
+    """
+    if entry_floor <= 0 or not a1.vocal_regions:
+        return []
+    head_end = min([p.anchor for p in placements] or [entry_floor]) - margin
+    if head_end <= 0:
+        return []
+    out: list[tuple[float, float]] = []
+    for r in a1.vocal_regions:
+        s, e = (r.start, r.end) if hasattr(r, "start") else (r[0], r[1])
+        s, e = max(0.0, s), min(e, head_end)
+        if e - s > 0.5:  # skip a sliver clipped to nothing
+            out.append((round(s, 3), round(e, 3)))
+    return out
 
 
 _BUILD_BARS = 3  # bars of rising filter+volume build the engine lays before a produced drop
@@ -210,6 +252,32 @@ def _flag_chop_on_biggest_drop(placements: list[Placement], a1: TrackAnalysis) -
     max(produced, key=_anchor_energy).chop = True
 
 
+# A held-out window wants roughly one vocal entry per this many seconds, so the guest vocal keeps
+# coming back instead of leaving long instrumental holes. Chosen from the real case the founder
+# ear-tested: Innerbloom's 6:17->9:14 window is ~177s, and at 3 entries it left a 94s hole between
+# 6:34 and 8:08 ("I just want that for longer in more parts"). At ~40s that window takes 4 entries,
+# and since a slice runs up to MAX_VOCAL_SECS (40s) the vocal is close to continuous across it.
+_HELD_OUT_ENTRY_EVERY_SECS = 40.0
+_MAX_HELD_OUT_PLACEMENTS = 6  # a ceiling, so a very long held-out window can't spam entries
+
+
+def _placement_count(opts: dict, entry_floor: float) -> int:
+    """How many vocal entries to place.
+
+    Unmarked beats keep `_MAX_PLACEMENTS` (3) — one per third, the whole-song energy arc (Handbook
+    H1/H2), untouched. A HELD-OUT beat (vocal_windows.py) is different: Song 2 only gets the stretch
+    from the floor to the end, so 3 entries — sized for spanning a whole song — leave big instrumental
+    holes in it. Scale the count to the window instead, capped by how many distinct vocal slices Song 2
+    actually has (never invent entries there is no vocal for) and by `_MAX_HELD_OUT_PLACEMENTS`.
+    """
+    if entry_floor <= 0:
+        return _MAX_PLACEMENTS
+    span = max(0.0, opts.get("track_end", 0.0) - entry_floor)
+    want = int(span // _HELD_OUT_ENTRY_EVERY_SECS)
+    slices_available = len(opts.get("vocal_slices") or [])
+    return max(_MAX_PLACEMENTS, min(want, slices_available, _MAX_HELD_OUT_PLACEMENTS))
+
+
 def _default_arrangement(opts: dict, take: int) -> list[Placement]:
     """Deterministic ENERGY-SYNCED arrangement: 2-3 anchors spread across the song's thirds
     (an energy ARC, not a cluster — Handbook H1/H2), PREFERRING the house track's real drops
@@ -230,8 +298,10 @@ def _default_arrangement(opts: dict, take: int) -> list[Placement]:
         return [Placement(anchor=anchors_ranked[0] if anchors_ranked else 0.0,
                           vocal_src=hook or asis[0])]
 
-    n = min(_MAX_PLACEMENTS, len(anchors_ranked))
-    chosen = fence.synced_anchors(anchors_ranked, drops, opts["track_end"], count=n, take=take)  # drop-aware arc
+    entry_floor = opts.get("vocal_entry_floor", 0.0)
+    n = min(_placement_count(opts, entry_floor), len(anchors_ranked))
+    chosen = fence.synced_anchors(anchors_ranked, drops, opts["track_end"], count=n, take=take,
+                                  start=entry_floor)  # drop-aware arc
     # Pair Song 2's loudest peak onto the strongest anchor (a real drop beats a mere loud phrase),
     # rotating the pairing by `take` so regenerate pulls different vocal content (R1 + variety).
     drops_set = set(drops)
@@ -257,7 +327,15 @@ def _default_arrangement(opts: dict, take: int) -> list[Placement]:
         # Land the signature HOOK on the strongest anchor (the drop); the other entries get the SETUP
         # — the song's other vocal parts, never the hook again, rotated by `take` for regenerate variety.
         drop_idx = by_strength[0]
-        setup = [p for p in peaks if p != hook] or peaks
+        setup_pool = peaks
+        if entry_floor > 0:
+            # Filling a HELD-OUT window: pick the LONGEST vocal passages, not the loudest. `vocal_peaks`
+            # ranks by loudness, which is right for spreading a few entries across a whole song but wrong
+            # here — measured on Wari Jawa it puts an 8s scrap FIRST and omits a 40s passage entirely,
+            # so the window the founder wants filled ("more of the vocals are played") stays full of
+            # instrumental holes. Longest-first spends the window on real singing.
+            setup_pool = sorted(opts["vocal_slices"], key=lambda r: r[1] - r[0], reverse=True)
+        setup = [p for p in setup_pool if p != hook] or setup_pool
         slice_for = {drop_idx: hook}
         for rank, idx in enumerate(by_strength[1:]):
             slice_for[idx] = setup[(rank + take - 1) % len(setup)]
@@ -461,7 +539,8 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         rebuilt = _attach_warp(_default_arrangement(opts, take), a1g, a2, opts["vocal_stretch"])
         placements = _dedupe_nonoverlapping(rebuilt, opts["vocal_stretch"])
         source = "rules"
-    placements, s1_regions = _apply_flourishes(a1g, placements, opts["vocal_stretch"])
+    placements, s1_regions = _apply_flourishes(a1g, placements, opts["vocal_stretch"],
+                                               opts.get("vocal_entry_floor", 0.0))
     stem_moves: list = []
     if _confident(a1g):  # only produce (build/echo/stem-moves) on a trustworthy grid — shaky songs stay safe
         placements = _produce_drops(placements, opts.get("drops", []), s1_regions,
