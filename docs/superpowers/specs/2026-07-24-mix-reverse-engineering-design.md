@@ -8,7 +8,9 @@
 
 ## The idea in one paragraph
 
-Give a machine three things: Song A (the beat), Song B (the vocal), and a finished human-made mashup of exactly those two songs, downloaded from YouTube. The machine's job is to work backwards — to produce that same mashup from those same two songs, by any means. Along the way it records what it had to do and what it noticed. Do this across many examples and the recorded learnings become a **playbook** for mixing songs the machine has never seen.
+Give a machine three things: two songs, and a finished human-made mashup of exactly those two songs, downloaded from YouTube. The machine's job is to work backwards — to produce that same mashup from those same two songs, by any means. Along the way it records what it had to do and what it noticed. Do this across many examples and the recorded learnings become a **playbook** for mixing songs the machine has never seen.
+
+Note what is _not_ given: which song supplied the beat and which supplied the vocal. There is no such assignment. See "Role assignment is a finding" below — it is the single most important constraint in this design.
 
 ## What this is called
 
@@ -27,10 +29,10 @@ A bit-identical copy of the YouTube file is impossible for anyone — that audio
 
 What must match is everything a listener notices:
 
-- tempo, and how it was changed from the source
-- key / pitch shift
-- the exact moment the vocal enters, and every moment it leaves
-- which piece of which song is playing at every second
+- tempo, and how it was changed from each source
+- key / pitch shift, per source
+- which element of which song is playing at every second — including both songs' vocals if that is what the human did
+- the exact moment each element enters, and every moment it leaves
 - relative loudness of each element
 - where it cuts, where it drops, how the energy moves
 
@@ -51,6 +53,24 @@ If the experiment can only make moves the shipped engine allows, **it can only e
 
 Therefore the experiment gets its own **rule-free renderer**. No fence, no validator, no taste. It must be able to produce mixes the shipped engine would reject. The rules are the _output_ of this work, not the input.
 
+## Role assignment is a finding, not an input
+
+**The two source songs are handed over unlabelled and interchangeable.** Nothing tells the machine which one is "the beat song" and which is "the vocal song", because that is precisely one of the things it is supposed to discover.
+
+The shipped app hardcodes Song 1 = beat, Song 2 = vocal. That is a product decision, and a defensible one for a two-slot uploader. It is a _catastrophic_ thing to assume here. A human mashup may use:
+
+- either song's beat under either song's vocal
+- **both** vocals, trading verses or stacked
+- one song's drums with the other's bass
+- one song for the first half and the other for the second
+- any element of either song, at any moment
+
+If the experiment were told the roles up front it could only ever find mashups built the one way we happen to build them, and would be structurally blind to the rest. Worse, it would return our own assumption to us dressed as a discovery — the exact failure mode this whole design exists to avoid.
+
+Note that the "both vocals" case is not hypothetical: the founder already established by ear that for vocal-dense pairs the right move is to keep _both_ vocals and let the lyrics trade. The shipped engine cannot express that. An experiment that inherited the shipped engine's role model could never have found it.
+
+**Concretely, this means:** every source song is split into its elements (vocals, drums, bass, other), so a triplet presents up to eight candidate element streams — four from each song. For every moment of the target, the question is not "is the vocal present" but "**which of these eight is present, and how loud**". Which song contributed what, and when, comes out as a per-triplet finding, and the distribution of those findings across many triplets is itself one of the most valuable pages of the playbook ("in N% of mashups only one vocal is used; in M% both trade").
+
 ---
 
 ## Architecture: three brains, one body
@@ -63,22 +83,27 @@ Turns any mix into numbers over time, and turns two such descriptions into a sin
 
 Per moment in time, it reports:
 
-- is a vocal sounding, and how loud
-- is the beat sounding, and how loud
+- **for each of the eight candidate element streams** (vocals / drums / bass / other, from each of the two songs): is it sounding, and how loud
 - tempo
 - key
 - overall energy / loudness
 - section boundaries
 
+The eight-stream breakdown is what makes the scorer role-blind. It never asks "is the vocal present"; it asks which specific element, from which specific song, is present. A mashup using both vocals scores just as legibly as one using only one.
+
 Comparison happens on **these curves, never on raw waveforms.** Two mixes can be perceptually identical and waveform-wise completely different because of compression, mastering and phase — a raw comparison would score a good attempt as a failure.
 
-**Key enabling move:** the reference mashup gets stem-split too, using the same splitter already used for catalogue songs. Holding the reference's vocal and beat separately turns "where is the vocal in theirs vs. mine" from an inference into a direct measurement.
+**Key enabling move:** the reference mashup gets stem-split too, using the same splitter already used for catalogue songs. Holding the target's vocals, drums, bass and other separately turns "which element is where in theirs vs. mine" from an inference into a direct measurement.
+
+**Consequence worth naming:** when both songs' vocals appear in a target, the target's single "vocals" stem contains _both_ of them mixed together. Telling them apart means matching that stream against both sources' vocal stems and attributing energy to each — harder than the single-vocal case, and the reason this must be designed in from the start rather than retrofitted.
 
 This component is the single point of failure for the whole project. If the score is blurry, every method hill-climbs confidently toward garbage. It is built and validated first.
 
 ### Component 2 — The dumb hands (rule-free renderer)
 
-Knobs in, audio out. Deliberately stupid. Parameters cover at minimum: tempo ratio, pitch shift, per-source time offset, which source section plays when, per-element gain over time, cut points, crossfades.
+Knobs in, audio out. Deliberately stupid. Parameters cover at minimum: per-source tempo ratio, per-source pitch shift, per-source time offset, which source section plays when, cut points, crossfades, and **an independent gain-over-time curve for every one of the eight element streams**.
+
+That last point is the role-blindness requirement made concrete: because all eight streams are independently addressable, the renderer can produce both songs' vocals at once, either song's beat under either song's vocal, one song's drums with the other's bass — or any combination nobody has thought of yet. Any move a human made is _expressible_. If the renderer cannot express a move, no method can ever discover it, so the renderer's permissiveness is a hard requirement rather than a nice-to-have.
 
 It is allowed to make illegal, ugly and wrong mixes. The score does the punishing.
 
@@ -90,7 +115,9 @@ It is allowed to make illegal, ugly and wrong mixes. The score does the punishin
 
 ### Method 1 — The Decompiler
 
-Measure rather than guess. Split the target into stems, align each against the corresponding source, and read the numbers off directly: tempo ratio, pitch shift, timeline offset. Then walk the timeline second by second recording which element is present and at what level. The output is a complete recipe, derived rather than searched.
+Measure rather than guess. Split the target into stems, then align **every target stem against every candidate source stem** — all pairings, both songs, no assumed roles — and read the numbers off directly: tempo ratio, pitch shift, timeline offset. The alignment scores themselves reveal who contributed what: if the target's vocal stem locks cleanly onto Song Two's vocal at a 4% stretch, that is the answer, discovered rather than assumed. If it locks partially onto _both_ songs' vocals at different moments, that is a both-vocals mashup, also discovered.
+
+Then walk the timeline second by second recording which of the eight elements is present and at what level. The output is a complete recipe, derived rather than searched — including the role assignment.
 
 - **Strength:** fast, exact, works on the first triplet with no training, and every number carries its reason — the playbook writes itself in readable form.
 - **Weakness:** recovers only moves it was built to look for. An unmodelled move (filter sweep, reverse, stutter edit) is missed or misreported.
@@ -107,7 +134,9 @@ Set the knobs, render, score, keep what improved, mutate, repeat — thousands o
 
 ### Method 3 — The Apprentice
 
-Claude never touches audio. It receives numbers: Song A's structure, Song B's structure, the target's structure, and precisely how the last attempt differed ("your vocal entered 4 bars late; the reference runs beat-only for 16 bars first; the reference is 3% faster"). Claude writes the next recipe. Render, measure, feed the difference back, loop.
+Claude never touches audio. It receives numbers: both songs' structures, the target's structure, and precisely how the last attempt differed ("the reference has Song Two's vocal from 0:31 and Song One's vocal joining at 2:04; yours only ever uses one of them; the reference is 3% faster"). Claude writes the next recipe. Render, measure, feed the difference back, loop.
+
+Claude is told the roles are unknown and is explicitly free to assign any element of either song to any moment — including both vocals. Its priors are musical, not Prompt-DJ's.
 
 - **Strength:** far more sample-efficient than blind search, because it brings musical priors. And it is **the only method whose learnings come out in English by construction** — it writes down what it noticed as it works, which is the requested playbook generated as a side effect rather than mined afterwards.
 - **Weakness:** can plateau; can confabulate confidently; costs an API call per attempt; convergence is not guaranteed.
@@ -134,6 +163,7 @@ They fail in genuinely different ways. Method 1 is blind to the unmodelled; Meth
 - **Minimum:** on one triplet, we produce a mix that a listener would call the same mix as the reference.
 - **The real prize, which arrives earlier:** an automatic scoreboard. Today every quality judgement in Prompt-DJ is made by the founder's ears, which is the bottleneck on everything. The moment the measuring tape works, "how close is this mix to what a human did with the same two songs" becomes a number — and the existing engine can be tuned and regression-checked without anyone listening.
 - **The stated goal:** across many triplets, a written playbook of rules — the constants and the variables — in a form that can be promoted into the shipped planner by hand.
+- **A finding we cannot get any other way:** how often real mashups actually follow the shipped app's one-beat-one-vocal model, versus using both vocals, swapped roles, or split elements. If that number is low, it is direct evidence that the shipped app's central assumption is too narrow — and no amount of listening would have quantified it.
 
 ## Kill criteria
 
@@ -145,18 +175,22 @@ Stop and reconsider if:
 
 ## Risks
 
-| Risk                                           | Impact                                      | Mitigation                                                                      |
-| ---------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------- |
-| Blurry score                                   | Fatal — all methods optimise toward garbage | Build and validate it first, standalone, against hand-made controls             |
-| Wrong source version/master used by the human  | That triplet is unusable                    | Method 1's residual detects it in minutes                                       |
-| Human used a third ingredient                  | That triplet is unusable                    | Same — residual detection                                                       |
-| Search space too large for Method 2            | Method 2 never converges                    | Measure what is measurable; reserve search for taste decisions only; warm start |
-| Sourcing clean triplets is the real bottleneck | Slows the 100–300 stage                     | Prove on one first; only scale after Step 4                                     |
+| Risk                                           | Impact                                      | Mitigation                                                                                                                         |
+| ---------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Blurry score                                   | Fatal — all methods optimise toward garbage | Build and validate it first, standalone, against hand-made controls                                                                |
+| Wrong source version/master used by the human  | That triplet is unusable                    | Method 1's residual detects it in minutes                                                                                          |
+| Human used a third ingredient                  | That triplet is unusable                    | Same — residual detection                                                                                                          |
+| Search space too large for Method 2            | Method 2 never converges                    | Measure what is measurable; reserve search for taste decisions only; warm start                                                    |
+| Sourcing clean triplets is the real bottleneck | Slows the 100–300 stage                     | Prove on one first; only scale after Step 4                                                                                        |
+| Both songs' vocals present in one target stem  | Attribution is ambiguous                    | Match the target vocal stream against both source vocals and attribute energy to each; designed in from the start, not retrofitted |
+| Eight streams instead of two widens the search | Method 2 slows further                      | Method 1 resolves role assignment by measurement before any search begins                                                          |
 
 ## Open questions for the founder
 
 1. Which pair to start with, and how the reference audio gets supplied (file dropped locally, or a link with explicit permission to fetch).
 2. Confirmation that the code belongs in the `C:\DJ-AI-Experiment` sandbox rather than the official repo.
+
+Drop folder for triplets: `C:\DJ-AI-Experiment\mashup-triplets\` — one folder per triplet, three unlabelled slots inside (`1-SONG-ONE`, `2-SONG-TWO`, `3-TARGET-the-human-mix`). Deliberately no beat/vocal slots, per "Role assignment is a finding".
 
 ## Escalation path (not proposed now)
 
