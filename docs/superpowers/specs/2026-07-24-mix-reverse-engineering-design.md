@@ -165,6 +165,60 @@ They fail in genuinely different ways. Method 1 is blind to the unmodelled; Meth
 - **The stated goal:** across many triplets, a written playbook of rules — the constants and the variables — in a form that can be promoted into the shipped planner by hand.
 - **A finding we cannot get any other way:** how often real mashups actually follow the shipped app's one-beat-one-vocal model, versus using both vocals, swapped roles, or split elements. If that number is low, it is direct evidence that the shipped app's central assumption is too narrow — and no amount of listening would have quantified it.
 
+## First run — results (2026-07-24/25, triplet-01: Tere Bina × Father Ocean)
+
+Built in the `C:\DJ-AI-Experiment` sandbox under `experiments/revmix/`. All three
+methods ran end-to-end on the first triplet. **Preliminary — the founder judges by
+ear in the morning; the scores below are a guide, not a verdict.**
+
+**The gate did its job.** The scorer was validated against nine known-answer
+controls before anything depended on it, and it caught two real bugs that would
+have made every method optimise toward garbage: chroma cosine similarity has a
+high floor on non-negative vectors (white noise scored 82% against the real
+mashup), and a whole-mix comparison is vocal-blind (deleting the entire vocal
+scored 93%, beating a 2% trim). Both fixed; final scorer passes 8/8. The same
+uncentred-chroma bug then surfaced a third time in the aligner and was fixed there
+too.
+
+**What was measured about the human mix (no roles assumed):**
+
+- Father Ocean kept at its native tempo (123 BPM), untouched.
+- Tere Bina slowed ~15.6% (143.5 → ~121 BPM) to meet it. A +5-semitone pitch
+  reading came with low confidence and is treated as a hint, not a fact.
+- Drums, bass and instrumental → Father Ocean, decisively. Vocals → **both songs**.
+  The both-vocals case the shipped engine cannot express was found by measurement.
+
+**Method scores (50% = no relationship, not "half as good"):**
+
+| Method              | Score                       |
+| ------------------- | --------------------------- |
+| Guesser, cold start | 85.9%                       |
+| Guesser, warm start | 83.0%                       |
+| Decompiler          | 70.8%                       |
+| Apprentice, warm    | 70.8% (never beat its seed) |
+| Apprentice, cold    | 65.6%                       |
+
+**The most important finding is that score and ear diverge.** A scorer-independent
+diagnostic (glitch rate, dynamics, structure) shows the Decompiler's reconstruction
+is choppy (284 abrupt jumps/min vs the human's 2) — its score partly reflects
+fragments, not a mix. The Guessers are smooth but flat (dynamics 0.16 vs the
+human's 0.46). The lowest-_scoring_ attempt (Apprentice-cold, 65.6%) is the
+smoothest and most dynamic. So the highest score is unlikely to be the best sound —
+a real limit of the current metric, and exactly why ear-judgement remains the
+tiebreaker.
+
+**Honest method read (pending the ear):** black-box search (Guesser) moved the
+number most and cheaply (~105k attempts in 11 min, free/local). The Apprentice
+under-delivered: a 24-bucket summary is too coarse for it to place edges precisely,
+and it never improved on the Decompiler's seed. The Decompiler is the only method
+that outputs _why_ in readable form, but its audio needs a smoothing/segmentation
+pass. No method rivalled the human — expected on night one.
+
+**Open follow-ups surfaced by the run:** give the renderer a de-glitch/segment
+pass; add a dynamics term to the score so flat mixes are penalised; feed the
+Apprentice a finer timeline than 24 buckets; investigate whether the Guesser's
+cold-beats-warm result is a better optimum or partial score-gaming.
+
 ## Kill criteria
 
 Stop and reconsider if:
