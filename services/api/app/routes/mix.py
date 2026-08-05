@@ -32,8 +32,8 @@ from app.models import Mix, MixPlan, TrackAnalysis, VocalChainConfig, chain_conf
 from app.planner import validate
 from app.planner import name as name_planner
 from app.planner import window
-from app.planner.plan import MixDeclined, build_mix_plan
-from app.storage import path_for
+from app.planner.plan import MixDeclined, build_mix_plan, effect_pool_enabled, rule4_enabled
+from app.storage import maybe_sweep, path_for
 
 # workers/ lives at the repo root; put it on the path so we can import the engine.
 _REPO = Path(__file__).resolve().parents[4]
@@ -150,7 +150,14 @@ _S1_STEMS = ("drums", "bass", "other")
 #        D&B beat) can have its main drop marked by ear (app/planner/main_drops.py); the vocal's hook
 #        then lands on it instead of spreading blindly. Changes only mixes whose Song 1 has a marked
 #        drop; all others render identically. render.py/validate.py UNTOUCHED. Zero Replicate.
-ENGINE_VERSION = "m6.11"  # m6.11: held-out beats — the floor, PLUS a window-scaled entry count and longest-first setup
+# DERIVED from the effect-pool flag so turning the pool on auto-invalidates the pool-OFF mix + set caches
+# (both fold ENGINE_VERSION into their id). OFF => "m6.11" (byte-identical to pre-pool; existing caches
+# stay valid). ON => "m6.11+m7pool" (fresh ids => every mix re-renders WITH the pool). Bump the BASE only
+# for a non-pool engine/plan change.
+_ENGINE_VERSION_BASE = "m6.11"  # held-out beats — floor + window-scaled entries + longest-first setup
+ENGINE_VERSION = (_ENGINE_VERSION_BASE
+                  + ("+m8echo" if rule4_enabled() else "")           # Rule 4: gap-sized echo + reverb bed
+                  + ("+m7pool" if effect_pool_enabled() else ""))    # effect pool (superseded, stays off)
 #          slices so the held-out window is FULL of vocal, not holes (founder: "more parts").
 #         (NOT m6.9: that string was already burned by a reverted experiment, so its stale renders
 #          would have been served as cache hits. A version string must be unique PER BEHAVIOUR.)
@@ -291,6 +298,7 @@ def _attach_set_grid(plan: MixPlan, a1: TrackAnalysis, wav: Path) -> None:
 def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int) -> None:
     """Background worker: plan -> validate -> render -> validate the audio."""
     try:
+        maybe_sweep()  # free disk (evict old regenerable renders) before this render-heavy job
         a1, a2 = _load_analysis(song1_id), _load_analysis(song2_id)
         plan = build_mix_plan(mix_id, a1, a2, prompt, take=take, chain=SHIPPED_CHAIN)
         # Phase 0 (T1.2): log the key-fit on every render — informational only, never gated. Lets us

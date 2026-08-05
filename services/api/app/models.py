@@ -79,6 +79,18 @@ class Placement(BaseModel):
     # the vocal to the matching Song 1 bar length so it re-locks to the beat and can't drift.
     # Empty => the legacy single global-atempo stretch (M3/M4a–c cached plans still parse).
     warp: list[tuple[float, float, float]] = []
+    # Effect pool (2026-08-05): one optional SPACE effect + one optional WIDTH effect layered on
+    # top of the base vocal chain, chosen per-take by the planner for regenerate variety. Both
+    # additive + default None => the exact pre-pool render path (byte-identical). SPACE names:
+    # room/hall/plate/predelay (length-preserving reverbs, any placement) and throw/freeze
+    # (tail-extending, FINAL placement only — the referee enforces this). WIDTH: double.
+    space: str | None = None  # one of the pool's SPACE effects, or None
+    width: str | None = None  # one of the pool's WIDTH effects, or None
+    # Rule 4 (simplified, 2026-08-05): when True, the engine adds a gap-sized echo at each line-end + a
+    # continuous reverb bed on this vocal (always both together), sizing/containing the echo from the
+    # vocal itself — there is no per-throw plan data. False => neither => byte-identical to the pre-Rule-4
+    # render. (The old phrase-throw `throws` field was removed with the cut-ratio model.)
+    reverb_bed: bool = False
 
 
 class StemMove(BaseModel):
@@ -231,6 +243,11 @@ class MixPlan(BaseModel):
     chain_config_hash: str = ""  # Phase 0: the vocal-chain config this mix was rendered under (cache + reproducibility)
     vocal_moves: list[VocalProcessMove] = []  # Phase 0 G5: vocal-processing instructions; [] = today's plain vocal
     duck_moves: list[DuckMove] = []  # Phase 0 stage 9: bed ducks under the vocal; [] = no ducking (today)
+    # Effect pool (2026-08-05): a plain-language record of which pool effects this take selected
+    # (e.g. ["space:hall", "width:double"]), so a take the founder likes tells him what produced
+    # it. effect_variety records whether the pool ran (False => the fixed pre-pool treatment).
+    effects_selected: list[str] = []
+    effect_variety: bool = True
     # Set transitions (3.1): the rendered mix's OWN beat grid in OUTPUT seconds + its length, written
     # next to the WAV so joining mixes into a continuous set (set_render) is ARITHMETIC over the plans —
     # never a re-analysis of the output audio ("the pipeline must not listen to itself"). Derived at

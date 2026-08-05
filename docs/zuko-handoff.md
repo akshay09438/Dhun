@@ -1,75 +1,44 @@
 # Zuko handoff - Prompt-DJ
 
-_The single source of truth for "where things stand" between sessions. `/handoff` rewrites this at the end of a session; `/start` and the SessionStart hook replay it at the beginning. Dangerous-surface status is written as a CLAIM to re-verify, never as a settled fact._
+_The single source of truth for "where things stand" between sessions. Dangerous-surface status is written as a CLAIM to re-verify, never as a settled fact._
 
 ## Last updated
 
-2026-07-16 (**Two merged batches: (1) catalog expansion — +7 vocals and a D&B "bridge" beat (Merrygo) + two per-song planner overrides; (2) set transitions — a set is NEVER refused for tempo again; a seam whose tempos can't blend is CUT like a real DJ. Both MERGED + pushed; `main` @ `05e2a8e`. 427 backend + 49 web + typecheck + lint all green. `render.py`/`validate.py` UNTOUCHED. Catalog AUDIO is LOCAL-ONLY.**)
+2026-08-05 — **Rule 4 (Regenerate variety) is FINALLY nailed: a real tempo-synced DELAY echo + reverb bed, FOUNDER EAR-APPROVED, built into the real engine with full ceremony, ships OFF. Nothing merged to `main`.** This session also adopted a new working rule that made it fast: **prototype the SOUND in a throwaway script and get ear-approval BEFORE the production build.**
 
 ## Where things stand (one breath)
 
-`main` @ `05e2a8e` is the shipped app and everything below is IN it. The app runs locally at `http://localhost:8000` (a background process — it dies with the session; relaunch command at the bottom). Nothing is public.
+- **`main` is untouched.** All work is on branch `design/mix-reverse-engineering` (pushed to `origin`). Rule 4 ships **OFF** behind `plan._RULE4_ENABLED = False`; with it off the render is **byte-identical to `main`** (golden gate verified this session). `ENGINE_VERSION` = `m6.11` when off.
+- **Rule 4 = a REAL echo (a tempo-synced feedback DELAY) on the vocal + the continuous reverb bed.** Founder ear-approved the sound (prototype variant `d_quarter_long`: **1/4-note delay, feedback 0.55, wet 0.45**). The real engine (`render_mix`, flag ON) reproduces that approved prototype at **0.993 full-mix correlation**, passes the plan + finished-audio referee, peak 0.891 (no clip).
+- **How we got there (the productive part):** three earlier Rule-4 shapes were rejected BY EAR — a chop-and-repeat re-fire, a "forceful" gap-sized echo, and a phrase-tail STAMP (which is chop/stutter, not an echo). Once we prototyped the actual sound (throwaway scripts → dated Desktop folders → founder listens → change a number → re-render in minutes), it converged in one sitting. **This is now a standing rule (memory: `prototype-sound-before-ceremony`).**
+- **The approved delay echo replaced the earlier gap-echo engine** (deleted `_gap_echo`/`_voiced_runs`/`_gap_echo_events`/`_duck_bed_under_echoes`/`_GAP_ECHO_*` and its tests). The **breath-safe re-fire helper is still parked** intact in `workers/rule3_parked.py` for a future Rule 3.
 
-- **Catalog: 6 beats + 12 vocals (18 entries, LOCAL-ONLY).** +7 Bollywood/Punjabi vocals (Nadan Parinde, Uff Teri Ada, Jugni Ji, Wari Jawa, Tere Bin, Mera Yaar, Khuda Jaane), each split/analyzed with its hook marked. Reusable ingest tool: `scripts/ingest_catalog.py`.
-- **A D&B "bridge" beat, "Merrygo"** (~85 BPM) so the slow vocals (80–103) have a partner — the house beats (120–122) are too far for the ±11% mix band.
-- **Two per-song planner overrides, dormant for every other song:** `instrumental_beats.py` (Merrygo contributes music only) and `main_drops.py` (Merrygo's drop hand-marked at 0:40).
-- **Per-seam set transitions (the big one).** A set now picks each transition from the tempos either side of it: **blend where they agree** (unchanged), **CUT where they can't**. Nothing is ever dropped for tempo.
+## In flight — honest state
 
-**The catalog's two camps** (this explains almost every "why won't this work" question): the **fast camp** — I Adore You, Father Ocean, Innerbloom, Rapture, Anchor Point — all render at 120–127; the **slow camp** — Merrygo alone — renders at 85–92. Within a camp → blend. Across camps → cut. Merrygo is the only slow beat, so the cut is the rare escape hatch, not the norm.
-
-## ⚠️ Lesson from this session (carry it forward)
-
-The agent twice asserted, confidently and **without reading the code**, that joining an 85 BPM mix with a 120 BPM one would make vocals warble ("chipmunks"), then that the overlap was "~4 bars". **Both wrong.** `workers/set_render.py` contains **no time-stretch at all** — a set join never changes anyone's speed, so nothing there can warble; and the overlap is **8 bars = 22.6s**. `set_tempo_plan`'s master tempo was computed and **never applied**. The founder pushed back ("I want the rule to vanish") and was **right** — the ±11% band on the SET join was inherited from the MIX stage (where the stretch is real) and only ever guarded a messy seam.
-
-**Lesson: read the engine before explaining what the engine does — especially when refusing the founder's request on the engine's behalf.** A second bug (below) was then caught only by measuring the rendered WAV instead of trusting the API's own reported duration.
-
-## In flight - done vs left
-
-**Nothing is half-done.** Everything this session built is merged, green, and pushed. Catalog audio is local-only by design (gitignored).
-
-**DONE (merged to `main`):**
-
-- Catalog +7 vocals + Merrygo (trimmed its 0:00–22.68s piano intro, re-ingested → id `4fc82b59…`); hooks marked for all 7 (2 to founder ear-marks).
-- `instrumental_beats.py`, `main_drops.py`, `scripts/ingest_catalog.py` (new); `plan.py`, `fence.py`, `hooks.py`, `mix.py` (ENGINE_VERSION → m6.8).
-- **Set fix 1:** the set tempo is reconciled on each MIX's real playing tempo (`fence.arrangement_options()["master_bpm"]`), not the raw song BPMs — the old way voted with each vocal's ORIGINAL tempo, which the mix has already stretched away, and dropped joinable sets (even two on the SAME beat).
-- **Set fix 2:** `set_render.tempo_blendable()` + `CUT_RAMP_SECS`; `assemble_beatmatched_set` picks the transition PER SEAM. `routes/set.py` no longer declines for tempo. `SET_PLAN_VERSION` s2→s3 (invalidates sets only; mix renders stay cached).
-- Docs: functional spec, technical spec, implementation-plan drift #49, #49b, #50, #51.
-
-**LEFT (pre-launch, carried forward — not blocking):**
-
-- The **`storage.py` cache-eviction sweep** — the most pressing owed item. The disk hit 0 bytes free TWICE this session (~2.5 GB of regenerable renders + stale pytest temp cleared, with founder consent). Dangerous surface. Until then, disk must be watched by hand.
-- **Short-clip (15–30s) export + final loudness master** (M6 polish) — the last thing before the ~50-creator test.
-- **Founder ear-check still owed** on: the new vocals over Merrygo (drop at 0:40, no lyric overlap) and the **live in-app cut** (they approved the standalone `B - clean cut.wav` render, NOT yet a set built through the app).
-- **The Play screen still reports a drop badly** — a small grey "skipped" card AFTER rendering. Much less reachable now (only a fence-level mix decline drops anything), but the founder explicitly deferred the warn-up-front fix. Offer it again.
+- **Nothing half-done in the code.** Rule 4 is complete, committed (`b6ef52e`), pushed, ceremony-passed, ships OFF. The remaining step is a **human decision**, not code: flip `_RULE4_ENABLED` to `True` to turn it on for real.
+- **The PR was NOT opened** — `gh` (GitHub CLI) is not installed on this machine. The branch is pushed; open the PR at `https://github.com/akshay09438/Dhun/pull/new/design/mix-reverse-engineering` (or just flip the flag + merge as the founder prefers — the catalog work earlier merged without a PR at his request).
+- **Suite is GREEN** (see evidence). One **pre-existing, unrelated flaky test** exists — see open items.
 
 ## Do first next session
 
-Ask the founder which: (a) **ear-check** the live Merrygo cut + the new vocals; or (b) the **`storage.py` cache-eviction sweep** (most pressing owed item — the disk filled twice); or (c) **M6 polish** (short-clip export + loudness master); or (d) **a second slow beat (~80–95 BPM)** so the slow camp has variety, which they floated and did not decide.
+1. **Founder ear-confirm the codebase render** (a WAV was sent this session — `services/api/data/listening/…` was cleaned up; re-render via `render_mix` flag-ON if needed). It measured 0.993 identical to the approved prototype, so this is a formality.
+2. **Flip `_RULE4_ENABLED = True`** when the founder says go. That is a dangerous-surface activation of a user-facing audio path — re-run the adversarial review at that point (the reviewer explicitly gated its `safe` verdict to the OFF ship only). The ON path now HAS an integration test (`test_render.py::test_rule4_on_render_*`), which it previously lacked.
+3. **Decide whether to also delete the dormant effect-pool subsystem** (superseded, still shipping OFF behind `_EFFECT_POOL_ENABLED=False`). Out of scope this session; flagged for a clean-up call.
 
-## Verification evidence (which checks ran, what they returned)
+## Verification evidence
 
-All run on merged `main` @ `05e2a8e`, 2026-07-16:
+- **Full backend suite, 2026-08-05:** `pytest -q` (from `services/api`) → **500 passed in ~201 s.** (The pre-existing `test_cache_sweep.py` flake did NOT surface this run — it is order-dependent, so it can still appear; see open items.)
+- **Affected subset (re-run several times):** `pytest tests/test_echo.py tests/test_echo_independent.py tests/test_render.py tests/test_plan.py tests/test_validate.py tests/test_rule3_parked.py tests/test_effect_pool_dsp.py tests/test_effect_pool_referee.py tests/test_mix_route.py -q` → **236 passed.**
+- **Golden byte-identical-OFF gate:** `test_render.py::test_golden_enabled_false_is_byte_identical_to_m6_0` **passes** → flags-off render == `main`. `ENGINE_VERSION` prints `m6.11` with the flag off.
+- **Real render (flag ON), iadoreyou × tujhe:** `validate_plan`/`validate_render` = no violations; peak 0.891; **0.993 full-mix correlation to the approved prototype `d_quarter_long`.**
+- **Ceremony:** founder ear-approval + `.zuko/approve.js` file approval recorded/cleared on `render.py` (each burst); independent **test-author** wrote 11 hermetic tests (no bugs; pinned the approved constants); independent **adversarial reviewer** verdict **`safe` for the OFF ship** — byte-identical-OFF held, containment (Song-1 R1) held, level/clip attack REFUTED empirically (crest rises; peak +1–2 dB), determinism held, no dead refs. It found **echo-length inflation** (a placement carried trailing silence past the audible echo) → **FIXED** (tail bounded to the audible decay via `_DELAY_ECHO_DECAY_TAPS`); re-verified the sound unchanged at 0.993.
+- **A real bug the golden gate caught mid-build:** the new Rule-4 knobs were first named `_ECHO_*` and one (`_ECHO_FEEDBACK`) **collided** with the legacy produced-drop echo constant, silently changing the OFF path. Renamed to `_DELAY_ECHO_*`; golden byte-identity restored. (The safety net worked.)
 
-- **Backend:** `cd services/api && ./.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider` → **427 passed** (~99s).
-- **Web typecheck:** `cd apps/web && npx tsc --noEmit` → **exit 0**.
-- **Web tests:** `npx vitest run --pool=forks --poolOptions.forks.singleFork=true` → **8 files, 49 passed**.
-- **Lint:** `npm run lint` → **exit 0**.
-- **End-to-end on the LIVE API with real songs** (the set work — not just unit tests):
-  - Merrygo(85) + I Adore You(120) → **kept 2/2**, CUT at **90.335s** (= member 1's exact length, zero overlap), manifest **282.325s** == real WAV **282.33s**.
-  - Merrygo(85) + Merrygo(85) → kept 2/2, **BLEND** at 67.76s, manifest == WAV.
-  - All **64** I-Adore-You × Father-Ocean vocal combinations → **64 blend, 0 cut** (they render at 120 vs 122 = 1.7% apart).
-- **Red/green proof** on the tempo-model fix: `test_set_keeps_both_sets_on_one_beat_whatever_the_vocals_original_tempos` FAILS on the old code with the exact bug message ("too far from the set's tempo") and passes on the new. Verified by stashing only the fix.
-- **Marked-drop (earlier batch):** hook anchors at 0:40 on Merrygo × {Jugni Ji, Mera Yaar, Khuda Jaane}; 0:37 on Tere Bin (tempo-shifted grid, same musical spot). 0s of Song-1 vocal on all four.
+## Open escalations / re-verify next session (claims, not facts)
 
-## Open escalations / re-verify next session (claims, not settled facts)
-
-- **`_seam_positions` (`routes/set.py`) is a SECOND copy of `assemble_beatmatched_set`'s sample accounting.** It ALREADY drifted once this session — the cut shipped a correct 282.33s of audio while the manifest claimed 259.75s and put the seam at 67.76s instead of 90.34s (the Play screen draws transitions from `seam_at`). `test_seam_positions_match_the_rendered_set_across_a_cut` now pins it to the real WAV. **Any new branch in the seam engine needs its twin there.** This duplication is a standing hazard — consider collapsing the two into one accounting function.
-- **`render.py` / `validate.py` were NOT edited this session.** CLAIM: re-verify with `git log --oneline -1 -- workers/render.py services/api/app/planner/validate.py` (should predate 2026-07-15) before trusting it. `workers/set_render.py` WAS edited — it is NOT on the dangerous list (only `workers/render.py` and `workers/**/storage*.py` are).
-- **⚠️ ALL catalog additions are LOCAL-ONLY.** `data/library/manifest.json` + stems/analyses are gitignored, so the 8 new songs live ONLY on the founder's machine — they will NOT transfer to another clone or a deploy. The instrumental-only + main-drop markers key off content id `4fc82b59…`; on any re-ingest elsewhere the id must match or the markers silently won't apply.
-- **Both batches were merged straight to `main` with NO pull request**, at the founder's explicit request (`gh` is not installed; they chose "skip the PR — merge it directly", then "give me everything updated in the project folder and GitHub"). Deviates from CLAUDE.md's "never commit to the protected branch directly". Mitigations run: work committed on a branch first, merged `--no-ff` (each batch is a distinct revertable merge commit), suite green before AND after. **Not a new default — offer the PR path again.** Durable fix: install `gh` (founder declined for now).
-- **`test_mix_is_cached` fails with a JSONDecodeError if a live uvicorn server runs concurrently with the suite** (it reads the real data dir mid-write). Green with the server stopped — 427 passed. Spawned as a separate task; a test-isolation gap, not a product bug. **Stop the server before trusting a red suite.**
-- **The default `npm test` OOMs on this machine** ("JavaScript heap out of memory") under load — a runner-memory flake, not a real failure. Single-fork passes 49/49. Making single-fork the default needs sign-off (`vitest.config.*` is a dangerous-surface glob).
-- **`_GOOD_PARTS_WINDOW_ENABLED` is still `False`**; best-parts (post-render crop) is still the default. Neither touched. Re-confirm.
-- **Pre-existing uncommitted WEB edits remain in the working tree** (App.tsx, SetupScreen.tsx/.module.css, api.ts, api.test.ts, liveSchedule.test.ts, study.ts, study.test.ts). They predate 2026-07-15, are NOT from these sessions, and were deliberately NOT committed. Suite is green with them (49/49) but their intent is unknown. **Decide next session: finish or discard.**
-- **CORS lockdown** (44th) must be re-verified before any public exposure.
-- **Local dev server:** relaunch with `services/api/.venv/Scripts/python.exe -m uvicorn app.main:app --app-dir services/api --port 8000`, or `Start-PromptDJ.bat` for a public link. It does not survive the session.
+- **DANGEROUS surfaces on this branch vs `main` — RE-VERIFY before trusting "OFF == main":** `workers/render.py` (delay echo, this session), and from earlier superseded-but-committed work on this branch: `services/api/app/planner/validate.py` (removed `_throw_violations`), `models.py` (removed `Placement.throws`), `plan.py`, `mix.py`. All ship OFF; re-confirm `_RULE4_ENABLED`/`_EFFECT_POOL_ENABLED` are both `False` and the golden gate passes at the start of next session.
+- **Activation is its own dangerous change.** The adversarial `safe` verdict covers ONLY the OFF ship. Flipping `_RULE4_ENABLED` ON activates a user-facing audio path → re-run the review (now backed by the ON integration test).
+- **Pre-existing flaky test (NOT Rule 4):** the full suite can intermittently fail ONE `test_cache_sweep.py` test — proven cross-file state pollution from `test_mix_route.py` (both untouched by this work; each passes in isolation; reproduces as the 2-file pair `test_mix_route.py test_cache_sweep.py`). Spun off as its own task chip. It did not fire in this session's full run, but it is latent.
+- **Founder decision pending:** (a) flip Rule 4 on; (b) whether to delete the dormant effect-pool subsystem.
+- **Older open item (carried, re-verify):** the Export screen "Download full mix" defect from the 2026-07-21 handoff — not touched; status unknown.
+- **Listening artefacts on the founder's Desktop (throwaway):** `Prompt-DJ Rule4 PROTOTYPE real echo (2026-08-05)` (the approved `d_quarter_long` + variants), `Prompt-DJ Rule4 PROTOTYPE beat-grid echo (2026-08-05)` (rejected chop versions), `Prompt-DJ Rule4 gap-echo listening (2026-08-05)` (rejected gap-echo).
