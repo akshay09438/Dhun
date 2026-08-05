@@ -44,6 +44,19 @@ MIN_AUDIBLE_FRACTION = 0.02
 # "sweep-in") would silently render no effect — for a product whose worst outcome is a
 # worse-sounding mix, we fail it loudly instead of shipping it quietly.
 _KNOWN_FX = {"sweep_in"}
+# Effect pool (2026-08-05): the referee keeps its OWN copy of the pool vocabulary (never imports the
+# engine — independence), matching workers/render.py; a cross-check test asserts they agree. SPACE is at
+# most one per placement, WIDTH at most one (by field construction => <=2 total). TAIL-EXTENDING spaces
+# ring past the dry, so they are legal ONLY on the final placement (nothing follows to overrun, R1).
+_POOL_SPACE_LENGTH_PRESERVING = {"room", "hall", "plate", "predelay"}
+_POOL_SPACE_TAIL_EXTENDING = {"throw", "freeze"}
+_POOL_SPACE = _POOL_SPACE_LENGTH_PRESERVING | _POOL_SPACE_TAIL_EXTENDING
+_POOL_WIDTH = {"double"}
+# A tail-extender (throw/freeze) rings PAST the dry placement_end. This is a CONSERVATIVE upper bound
+# on that ring-out (throw ≈ 16 beats ≈ 10.7 s at 90 BPM; freeze ≈ 3 s) — larger than any real tail, so
+# over-flagging (never under-flagging) an overlap with a Song-1 outro lead. The planner keeps a matching
+# copy and substitutes a length-preserving reverb before it ever reaches here (cross-check test asserts).
+_POOL_TAIL_MAX_SECS = 10.0
 # The Song-1 bed stems a Step-3 beat move may ride. An unknown stem would silently do nothing
 # in the engine (like an unknown fx), so we fail it loudly.
 _BED_STEMS = {"drums", "bass", "other"}
@@ -252,6 +265,39 @@ def _vocal_chain_violations(plan: MixPlan, downbeats: list[float]) -> list[str]:
     return [v for v in out if not (v in seen or seen.add(v))]
 
 
+def _pool_violations(placements: list) -> list[str]:
+    """Effect-pool compatibility rules (2026-08-05). Each placement carries at most one SPACE + one
+    WIDTH effect (<=2, by field construction); every effect name must be one the engine implements (an
+    unknown name would silently render nothing — fail loud, mirroring _KNOWN_FX); and a TAIL-EXTENDING
+    space (throw/freeze) may sit ONLY on the final placement (latest anchor), whose tail rings into the
+    outro with nothing after it to overrun (R1). No space/width on any placement => no checks =>
+    pre-pool behaviour. Re-derives 'final' independently (max anchor), matching the engine."""
+    out: list[str] = []
+    if not placements:
+        return out
+    final = max(range(len(placements)), key=lambda k: placements[k].anchor)
+    for i, p in enumerate(placements):
+        space = getattr(p, "space", None)
+        width = getattr(p, "width", None)
+        if space is not None and space not in _POOL_SPACE:
+            out.append(f"unknown space effect '{space}' (the engine would silently do nothing)")
+        if width is not None and width not in _POOL_WIDTH:
+            out.append(f"unknown width effect '{width}' (the engine would silently do nothing)")
+        if space in _POOL_SPACE_TAIL_EXTENDING and i != final:
+            out.append(f"a tail-extending space effect '{space}' is not on the final placement "
+                       f"(its tail would overrun the next vocal, R1)")
+    seen: set[str] = set()
+    return [v for v in out if not (v in seen or seen.add(v))]
+
+
+# NOTE (2026-08-05): the phrase-throw containment check (_throw_violations) was REMOVED with the
+# cut-ratio/throw model. Rule 4's gap-sized echo carries NO plan data (the engine detects line-ends and
+# sizes each tail to the gap from the vocal itself), so there is nothing throw-shaped in the plan to
+# check here. Its independent containment net lives RENDER-SIDE (render._echo_overruns raises if an
+# echoed placement would reach the next vocal), the same pattern as P2 — a check that needs the audio
+# runs where the audio is. The plan-side dry-R1 overlap check below is unchanged.
+
+
 def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[str]:
     """Return the list of hard-rule violations in the plan (empty == clean)."""
     violations: list[str] = []
@@ -314,6 +360,22 @@ def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[s
                     violations.append("Song 1 and Song 2 vocals overlap beyond a crossfade (R1)")
                     break
 
+    # Effect-pool tail safety (2026-08-05): a TAIL-EXTENDING space effect (throw/freeze) on the final
+    # placement rings PAST the dry placement_end — but the R1 checks above measure only the dry length,
+    # so a Song-1 outro lead starting inside that ring-out would play OVER the tail (two voices). The
+    # planner substitutes a length-preserving reverb to avoid this, but the referee re-derives it
+    # INDEPENDENTLY (an AI / future plan must not be able to slip a tail into Song 1's vocal). Uses a
+    # conservative tail bound, so it can only over-reject, never miss a real collision.
+    if ordered:
+        final = ordered[-1]  # sorted ascending => the latest anchor (the only placement a tail may extend)
+        if getattr(final, "space", None) in _POOL_SPACE_TAIL_EXTENDING:
+            dry_end = placement_end(final.anchor, final.vocal_src, plan.vocal_stretch, getattr(final, "warp", None))
+            tail_end = dry_end + _POOL_TAIL_MAX_SECS
+            for s, e in getattr(plan, "s1_vocal_regions", []):
+                if s < tail_end - 1e-6 and e > dry_end + 1e-6:  # the ring-out overlaps a Song-1 lead
+                    violations.append("a tail-extending vocal effect rings into Song 1's vocal (R1)")
+                    break
+
     # Step 3: the auto-performed beat moves (bass pull-and-slam, etc.). Checked against the SAME
     # (possibly retimed) a1.downbeats the placements above used, so a move on a movable-master grid
     # is judged on the beats the audio actually plays. Empty stem_moves => no checks => as before.
@@ -322,6 +384,11 @@ def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[s
     # windowed) grid as everything above. P2 (pre-master ceiling) is enforced render-side. Empty
     # vocal/duck moves ⇒ no checks ⇒ validated exactly as before.
     violations.extend(_vocal_chain_violations(plan, a1.downbeats))
+    # Effect pool (2026-08-05): compatibility rules on the per-placement space/width picks. Judged on
+    # the SAME placements the engine renders. No picks => no checks => validated exactly as before.
+    violations.extend(_pool_violations(_placements_of(plan)))
+    # Rule 4 (2026-08-05): the gap-echo's containment net is render-side (render._echo_overruns) — see
+    # the note above _pool_violations. Nothing throw-shaped in the plan to check here anymore.
     return violations
 
 

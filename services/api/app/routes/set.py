@@ -34,6 +34,7 @@ from app.config import settings
 from app.models import MixPlan
 from app.planner import fence
 from app.routes import mix as mixroute
+from app.storage import maybe_sweep
 
 # workers/ lives at the repo root; mixroute already puts it on the path, but be defensive.
 _REPO = Path(__file__).resolve().parents[4]
@@ -171,6 +172,7 @@ def _run_set(set_id: str, pairs: list[tuple[str, str]]) -> None:
     its ~180s best-parts highlight (workers.best_parts, post-render) -> join. Best-parts is the DEFAULT
     output. A crop that fails falls back to that mix's full render, so a set never fails on the crop."""
     try:
+        maybe_sweep()  # free disk (evict old regenerable renders) before this render-heavy job
         # 1. Work out the tempo each MIX will actually PLAY at. A set joins finished mixes, not raw
         #    songs: inside a mix the vocal is already stretched onto the beat's grid, so the mix plays
         #    at a single tempo — its plan's `master_bpm`. `arrangement_options` is the fence: pure
