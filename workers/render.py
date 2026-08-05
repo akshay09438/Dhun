@@ -782,17 +782,17 @@ def _duck_bed(bed: np.ndarray, duck_moves: list, prepared: list, sr: int) -> np.
 
 
 # ---------------------------------------------------------------- Continuous reverb bed (Rule 4, 2026-08-05)
-# A convolution reverb blended UNDER the placed vocal, rings into the gaps between lines (where the gap-
-# sized echo also lives), TRUNCATED to the vocal length so it never rings past the placement into the
-# next vocal (F1 containment). Paired with _gap_echo as Rule 4's "always both together" treatment; with
-# the Rule-4 flag OFF (no reverb_bed) this never runs => byte-identical to the pre-Rule-4 render.
+# A convolution reverb blended UNDER the placed vocal, rings into the gaps between lines, TRUNCATED to the
+# vocal length so it never rings past the placement itself. Paired with the delay echo (_delay_echo, below)
+# as Rule 4's "always both together" treatment; with the Rule-4 flag OFF (no reverb_bed) this never runs
+# => byte-identical to the pre-Rule-4 render.
 _REVERB_BED_SECS = 1.2        # IR length of the continuous reverb bed
 _REVERB_BED_DECAY = 3.0
-_REVERB_BED_WET = 0.45        # bed level (audible where it matters: ringing into the carry gaps)
+_REVERB_BED_WET = 0.45        # bed level (audible where it matters: ringing into the gaps)
 _REVERB_BED_HEADROOM_DB = 2.0  # cap the bed's peak contribution (joint-trimmed) so it never trips P2 (+3 dB)
-# NOTE: the phrase-throw / cut-ratio / re-fire machinery (the OLD Rule-4) was DELETED here (2026-08-05) —
-# it was chop-and-repeat (Rule 3 leaking in). The breath-safe re-fire helper is PARKED, intact, in
-# workers/rule3_parked.py for a future Rule 3. Rule 4 is now _gap_echo + this reverb bed (see below).
+# NOTE: the phrase-throw / cut-ratio / re-fire machinery AND the later gap-sized echo (both earlier Rule-4
+# attempts, founder-rejected by ear) were removed. The breath-safe re-fire helper is PARKED, intact, in
+# workers/rule3_parked.py for a future Rule 3. Rule 4 is now _delay_echo + this reverb bed (see below).
 
 
 def _reverb_bed(voc: np.ndarray) -> np.ndarray:
@@ -819,168 +819,69 @@ def _reverb_bed(voc: np.ndarray) -> np.ndarray:
     return (voc + g * wet).astype(np.float32)
 
 
-# ---------------------------------------------------------------- Rule 4: gap-sized echo (2026-08-05, simplified)
-# Take Rule 1's vocal EXACTLY as placed — never cut / shorten / chop / re-fire it. On top, throw a
-# decaying echo at the END of each sung line, its tail SIZED TO THE GAP before the next line (longer
-# gap -> longer tail; no gap -> no echo). A continuous reverb bed (_reverb_bed, above) rings underneath.
-# One variation, always both together — no per-take effect selection.
-#
-# The gap is measured on the ISOLATED placement vocal by LOUDNESS (a 40 ms RMS envelope + hysteresis +
-# a voiced floor) — the reliable signal. NEVER vocal_regions, which is an over-merged blob on real
-# uploads. Validated across all 36 catalog vocals (median 15 echo-worthy gaps/vocal; correct silence on
-# the 2 wall-to-wall vocals). Every failure mode errs toward a SHORTER or ABSENT echo, never an overrun.
+# ---------------------------------------------------------------- Rule 4: a real echo (delay) — 2026-08-05
+# Take Rule 1's vocal EXACTLY as placed. On top, a REAL echo — a tempo-synced feedback DELAY on the vocal:
+# the words echo back spaced a musical note apart, each pass quieter (a normal echo, NOT a chop/stutter).
+# A continuous reverb bed (_reverb_bed, above) rings underneath. One variation, always both together.
+# Founder EAR-APPROVED 2026-08-05 (prototyped as variant "d_quarter_long"). Ships OFF behind the flag =>
+# byte-identical to main. The echo/reverb are jointly level-trimmed and the tail is kept off a Song-1
+# lead, so R1 (one lead voice at a time) and the pre-master ceiling hold.
 #
 # ===================== TASTE KNOBS — tune BY EAR; expect these to MOVE after a listen =====================
-# The tail cap is in BARS, not seconds, ON PURPOSE: one bar is a different DURATION at 85 vs 127 BPM and
-# the catalog spans both camps, so a fixed number of seconds would be wrong for one of them.
-_GAP_ECHO_TAIL_CAP_BARS = 1.0    # longest echo tail, in BARS (tempo-derived): the tail grows with the gap
-                                 #   up to this many bars, then SATURATES (a 70 s gap must not give a 70 s echo)
-_GAP_ECHO_MIN_GAP_SECS = 0.30    # a gap shorter than this gets NO echo (too tight — it would smear the next line).
-                                 #   Lowered 0.50→0.30 (2026-08-05 ear-test) so the OPENING's short gaps (~0.3-0.5s
-                                 #   between the entry lines) get short echoes instead of ringing dry like Rule 1.
-_GAP_ECHO_SEG_BARS = 0.5         # how much of the just-sung line feeds the echo (its last ~half-bar, a word or two)
-_GAP_ECHO_DELAY_BEATS = 0.375    # echo delay = a sixteenth-ish of the beat. Shortened 0.75→0.375 (2026-08-05
-                                 #   ear-test): the old dotted-eighth was LONGER than the opening's short gaps, so
-                                 #   no repeat fit; a shorter delay lets a quick echo land inside a small gap.
-_GAP_ECHO_WET = 0.8              # LEVEL of the first (loudest) echo tap, as a fraction of the sung line. Raised
-                                 #   from 0.5 (2026-08-05 ear-test: "can't feel the echo") — the first throw is now
-                                 #   a bold −2 dB, then decays by _GAP_ECHO_FEEDBACK. Pairs with the bed duck below.
-_GAP_ECHO_FEEDBACK = 0.5         # each repeat is this fraction of the PREVIOUS (a decaying tail)
-_GAP_ECHO_BED_DUCK_DB = 10.0     # duck the BEAT (drums+bass) by this much UNDER each echo, so the echo pokes
-                                 #   through the gap instead of being masked (measured: echo sat −16 dB under the
-                                 #   bed). The duck is only in the echo's gap and snaps back when the vocal returns.
-_GAP_ECHO_GUARD_SECS = 0.05      # keep the tail this far short of the next line's entry (never touch it)
+# (Named _DELAY_ECHO_* to avoid colliding with the legacy produced-drop `_ECHO_*` constants above.)
+_DELAY_ECHO_BEATS = 1.0     # delay time = a 1/4 note — the approved spacing (repeats well separated)
+_DELAY_ECHO_FEEDBACK = 0.55  # each repeat is this fraction of the previous (0.55 => a long, musical tail)
+_DELAY_ECHO_WET = 0.45      # how loud the echo sits vs the dry vocal (the approved level)
+_DELAY_ECHO_HEADROOM_DB = 2.5  # joint-trim the echo+reverb so a placement's peak stays within this of the dry
+_DELAY_ECHO_GUARD_SECS = 0.05  # keep the echo tail this far short of a Song-1 lead (never ring over it)
 # =========================================================================================================
-# Detection thresholds (not taste — the validated detector's shape). Hysteresis: a line OPENS above ONSET
-# and CLOSES below the voiced floor. _VOICED_FLOOR (0.08) is the SAME trusted breath/voiced floor the
-# parked Rule-3 helper uses (workers/rule3_parked.py) — a fragment below it is a breath, not singing.
-_GAP_ECHO_ENV_MS = 40.0
-_GAP_ECHO_ONSET = 0.15
-_VOICED_FLOOR = 0.08
+_DELAY_ECHO_MAX_TAPS = 16   # hard cap on repeats (belt-and-braces; the tail also stops at the floor below)
+_DELAY_ECHO_TAP_FLOOR = 0.02  # stop adding repeats once feedback**k drops below this (inaudible, ~ -34 dB)
+# How many repeats are actually AUDIBLE (feedback**k >= the floor) — the REAL tail length. Bound max_tail by
+# this, not by _DELAY_ECHO_MAX_TAPS, so a placement never carries trailing silence past the echo's own decay
+# (which would push the next placement's build off / cause heavy overlap). ~7 taps at feedback 0.55.
+_DELAY_ECHO_DECAY_TAPS = min(_DELAY_ECHO_MAX_TAPS,
+                             int(np.ceil(np.log(_DELAY_ECHO_TAP_FLOOR) / np.log(_DELAY_ECHO_FEEDBACK))))
+_VOICED_FLOOR = 0.08        # RMS-below-this-of-peak = a breath, not singing (shared with rule3_parked)
 
 
-def _voiced_runs(voc: np.ndarray) -> list[tuple[int, int]]:
-    """Voiced spans [(onset_sample, end_sample), ...] of the isolated placement vocal, via a 40 ms RMS
-    envelope + HYSTERESIS: a span OPENS when the envelope rises above `_GAP_ECHO_ONSET` x peak and CLOSES
-    when it falls below `_VOICED_FLOOR` x peak. Two thresholds (not one) so reverb decay / breaths don't
-    flicker a line into pieces. Loudness on the isolated stem is the reliable signal — NOT vocal_regions.
-    Vectorized (forward-fill the last decided state through the hysteresis band). [] for silence/empty."""
+def _delay_echo(voc: np.ndarray, delay_secs: float, fb: float, wet: float,
+                max_tail_secs: float) -> np.ndarray:
+    """A REAL feedback-delay echo of the vocal — the WET ONLY (the dry is laid separately by render_mix).
+    Repeat k is the WHOLE vocal delayed by k*delay_secs at gain fb**k; summed and scaled by `wet`, so the
+    words echo back spaced a musical note apart and fade. NOT a chop — every repeat is the intact vocal,
+    delayed. The tail is bounded by `max_tail_secs` (so it can be kept off a Song-1 lead) AND by the
+    feedback dropping below `_DELAY_ECHO_TAP_FLOOR` / `_DELAY_ECHO_MAX_TAPS`. Length = len(voc) + tail."""
     n = len(voc)
     if n == 0:
-        return []
-    mono = np.abs(voc).mean(axis=1) if voc.ndim == 2 else np.abs(voc)
-    win = max(1, int(_GAP_ECHO_ENV_MS / 1000.0 * SR))
-    env = np.sqrt(np.convolve(mono.astype(np.float64) ** 2, np.ones(win) / win, mode="same"))
-    peak = float(env.max())
-    if peak <= 0.0:
-        return []
-    hi, lo = _GAP_ECHO_ONSET * peak, _VOICED_FLOOR * peak
-    state = np.zeros(n, dtype=np.int8)
-    state[env >= hi] = 1        # decided voiced
-    state[env < lo] = -1        # decided unvoiced; the band in between stays 0 (undecided)
-    idx = np.where(state != 0, np.arange(n), 0)
-    np.maximum.accumulate(idx, out=idx)     # each position inherits the last DECIDED state's index
-    voiced = state[idx] > 0                  # leading undecided band (idx->0, state[0]==0) reads unvoiced
-    d = np.diff(voiced.astype(np.int8))
-    starts = (np.where(d == 1)[0] + 1).tolist()
-    ends = (np.where(d == -1)[0] + 1).tolist()
-    if voiced[0]:
-        starts = [0] + starts
-    if voiced[-1]:
-        ends = ends + [n]
-    return list(zip(starts, ends))
+        return np.zeros((0, 2), dtype=np.float32)
+    if delay_secs <= 0.0:
+        return np.zeros_like(voc)
+    d = max(1, int(delay_secs * SR))
+    max_off = min(d * _DELAY_ECHO_MAX_TAPS, max(0, int(max_tail_secs * SR)))
+    out = np.zeros((n + max_off + 1, 2), dtype=np.float32)
+    g = fb
+    k = 1
+    while g >= _DELAY_ECHO_TAP_FLOOR:
+        off = d * k
+        if off > max_off:
+            break
+        m = min(n, len(out) - off)
+        if m > 0:
+            out[off:off + m] += (voc[:m] * g).astype(np.float32)
+        g *= fb
+        k += 1
+    return _guard_duration((out * wet).astype(np.float32))
 
 
-def _gap_echo_events(voc: np.ndarray, bpm: float, tail_after_end_secs: float) -> list[tuple[int, int]]:
-    """The echo plan: (line_end_sample, tail_samples) for each sung line that has a big-enough gap after
-    it. Shared by `_gap_echo` (which renders the echo) and the render loop (which ducks the beat under the
-    same regions) — one source of truth for WHERE the echo rings. Internal gaps are measured within `voc`;
-    the FINAL line's gap adds `tail_after_end_secs` (the room before the next voice). Empty => no echo."""
-    n = len(voc)
-    if bpm <= 0 or n == 0:
-        return []
-    runs = _voiced_runs(voc)
-    if not runs:
-        return []
-    beat = 60.0 / bpm
-    cap = int(_GAP_ECHO_TAIL_CAP_BARS * beat * 4.0 * SR)
-    guard = int(_GAP_ECHO_GUARD_SECS * SR)
-    min_gap = int(_GAP_ECHO_MIN_GAP_SECS * SR)
-    events: list[tuple[int, int]] = []
-    for i, (_s, e) in enumerate(runs):
-        gap = (runs[i + 1][0] - e) if i + 1 < len(runs) else (n - e) + int(tail_after_end_secs * SR)
-        if gap < min_gap:
-            continue                       # no gap / too tight -> no echo (never smear the next line)
-        tail = min(gap - guard, cap)
-        if tail > 0:
-            events.append((e, tail))
-    return events
-
-
-def _gap_echo(voc: np.ndarray, bpm: float, tail_after_end_secs: float) -> np.ndarray:
-    """Throw a decaying echo at the END of each sung line, its tail sized to the gap that follows it and
-    CAPPED at `_GAP_ECHO_TAIL_CAP_BARS` bars (tempo-derived). The DRY vocal plays through UNTOUCHED — the
-    echo only ever adds into the gaps. The first (loudest) tap is at `_GAP_ECHO_WET`, decaying by
-    `_GAP_ECHO_FEEDBACK`. The final line's tail may ring PAST `voc` but only INTO the given room (contained
-    by construction; `_echo_overruns` re-checks). No gap / a gap under the floor => no echo."""
-    n = len(voc)
-    events = _gap_echo_events(voc, bpm, tail_after_end_secs)
-    if not events:
-        return voc
-    beat = 60.0 / bpm
-    delay = max(1, int(beat * _GAP_ECHO_DELAY_BEATS * SR))
-    seg_len = max(1, int(_GAP_ECHO_SEG_BARS * beat * 4.0 * SR))
-    out_len = max(n, max(e + tail for e, tail in events))
-    out = np.zeros((out_len, 2), dtype=np.float32)
-    out[:n] += voc                          # the DRY vocal, unchanged — the echo only fills the gaps
-    for e, tail in events:
-        seg = _edge_fade(voc[max(0, e - seg_len):e].copy())
-        if len(seg) == 0:
-            continue
-        g = _GAP_ECHO_WET                    # first tap is a bold, clearly-heard throw...
-        k = 1
-        while delay * k < tail:              # ...each later repeat one delay deeper into the gap, decaying
-            off = e + delay * k
-            m = min(len(seg), e + tail - off)  # CLAMP so nothing rings past e+tail (containment)
-            if m > 0:
-                out[off:off + m] += _edge_fade((seg[:m] * g).astype(np.float32))
-            g *= _GAP_ECHO_FEEDBACK
-            k += 1
-    return _guard_duration(out.astype(np.float32))
-
-
-def _duck_bed_under_echoes(bed: np.ndarray, anchor: int, events: list[tuple[int, int]]) -> np.ndarray:
-    """Duck the BEAT by `_GAP_ECHO_BED_DUCK_DB` under each echo region so the echo pokes through the gap
-    instead of being masked by drums+bass (measured: the echo sat ~−16 dB under the bed). The duck lives
-    ONLY in the echo's own gap [anchor+e, anchor+e+tail], with short ramps in/out (declick) so the beat
-    snaps back the instant the vocal returns. Regions are disjoint by construction (one echo per gap)."""
-    if not events:
-        return bed
-    duck = 10.0 ** (-_GAP_ECHO_BED_DUCK_DB / 20.0)
-    ramp = max(1, int(_FADE_MS / 1000.0 * SR))
-    for e, tail in events:
-        s0 = anchor + e
-        s1 = min(anchor + e + tail, len(bed))
-        if s1 - s0 < ramp * 2:
-            continue
-        env = np.full(s1 - s0, duck, dtype=np.float32)
-        env[:ramp] = np.linspace(1.0, duck, ramp, dtype=np.float32)     # ease the beat down as the line ends
-        env[-ramp:] = np.linspace(duck, 1.0, ramp, dtype=np.float32)    # snap back up before the next line
-        bed[s0:s1] *= env[:, None]
-    return bed
-
-
-def _echo_overruns(anchor: float, placed_secs: float, next_anchor: float | None,
+def _echo_overruns(anchor: float, placed_secs: float,
                    s1_starts_after: "list[float] | tuple[float, ...]" = ()) -> bool:
-    """The independent containment NET: True if a placement's ECHOED length would reach the NEXT VOICE —
-    Song 2's next entry (`next_anchor`, None on the last placement) OR any Song-1 lead that starts after
-    this placement's dry end (`s1_starts_after`, the trading-vocal case). Either collision is two voices
-    at once (R1). Kept even though `_gap_echo` sizes each tail to its gap BY CONSTRUCTION — a clamp AND an
-    independent referee, the same layered defence the engine and the validator already run. (3-arg form,
-    no Song-1 starts => Song-2-only behaviour, unchanged.)"""
+    """The independent containment NET: True if a placement's ECHOED length would ring OVER a Song-1 lead
+    that trades in the gap (`s1_starts_after` = Song-1 lead starts after this placement's dry end). That is
+    two DIFFERENT voices at once (R1). The echo ringing over Song 2's OWN next line is just delay of the
+    same voice — allowed, and NOT flagged. Re-derives the containment the engine already bounds by
+    `max_tail` (clamp AND referee), the same layered defence the validator runs plan-side."""
     end = anchor + placed_secs
-    if next_anchor is not None and end > next_anchor + 1e-9:
-        return True
     return any(end > s + 1e-9 for s in s1_starts_after)
 
 
@@ -1057,15 +958,11 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
         # so lifting it out of the lay loop below leaves the bed's arithmetic order — and therefore the
         # rendered bytes — unchanged. The vocal chain (stages 1-8) applies HERE, length-preserving.
         prepared: list = []  # [(placement, voc_array), ...]
-        _echo_events_by_idx: dict = {}  # Rule 4: placement index -> [(line_end, tail)] to duck the beat under
         all_placements = _placements_of(plan)
         # Effect pool: the FINAL placement (latest anchor) is the only one whose tail may ring past the
         # dry (throw/freeze) — nothing follows it. -1 when there are no placements.
         _final_idx = (max(range(len(all_placements)), key=lambda k: all_placements[k].anchor)
                       if all_placements else -1)
-        # Rule-4 gap-echo needs, per placement, the ROOM before the NEXT vocal entry (pure arithmetic
-        # from the plan — the entry times sorted). The final line's echo tail is sized to fit this room.
-        _anchors_sorted = sorted(pp.anchor for pp in all_placements)
         for i, p in enumerate(all_placements):
             warp = getattr(p, "warp", None)
             if warp:  # M4d: per-bar beat-lock — each bar re-locked to Song 1's grid (no drift)
@@ -1088,26 +985,30 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
             if getattr(p, "reverb_bed", False):
                 before_r4 = voc
                 dry_end = p.anchor + len(voc) / SR                      # placement_end of the DRY vocal
-                nxt = next((x for x in _anchors_sorted if x > p.anchor + 1e-6), None)  # next Song-2 entry, or None
-                bar_secs = (60.0 / plan.master_bpm) * 4.0 if plan.master_bpm else 0.0
-                # The "next vocal" the tail must fit before is whichever sings next — Song 2's next entry OR
-                # Song 1's own lead trading in the gap (the both-vocals case). Bound the room by the SOONER.
+                beat = (60.0 / plan.master_bpm) if plan.master_bpm else 0.5
+                delay_secs = _DELAY_ECHO_BEATS * beat
+                # Keep the echo tail off a Song-1 lead trading in the gap (R1 — two DIFFERENT voices).
+                # Ringing over Song 2's OWN next line is just delay of the same voice, so it is allowed.
                 s1_starts_after = [s for s, _e in getattr(plan, "s1_vocal_regions", []) or [] if s > dry_end + 1e-6]
-                ceilings = ([nxt] if nxt is not None else []) + s1_starts_after
-                room = (min(ceilings) - dry_end) if ceilings else (_GAP_ECHO_TAIL_CAP_BARS * bar_secs)
-                # capture WHERE the echo rings (on the DRY vocal, before the echo is added) so Pass 2 can
-                # duck the beat under exactly those gaps — the same event list the echo itself uses.
-                _echo_events_by_idx[i] = _gap_echo_events(voc, plan.master_bpm, max(0.0, room))
-                voc = _gap_echo(voc, plan.master_bpm, max(0.0, room))   # echo at each line-end, sized to the gap
-                voc = _reverb_bed(voc)                                  # continuous reverb underneath (kept)
+                natural = _DELAY_ECHO_DECAY_TAPS * delay_secs          # the echo's own AUDIBLE decay length
+                max_tail = (max(0.0, min(natural, min(s1_starts_after) - dry_end - _DELAY_ECHO_GUARD_SECS))
+                            if s1_starts_after else natural)
+                echo = _delay_echo(voc, delay_secs, _DELAY_ECHO_FEEDBACK, _DELAY_ECHO_WET, max_tail)  # WET only
+                voc = _reverb_bed(voc)                                  # dry + continuous reverb (kept)
+                if len(echo) > 0:                                       # add the echo, jointly level-trimmed
+                    L = max(len(voc), len(echo))
+                    drybuf = np.zeros((L, 2), dtype=np.float32); drybuf[:len(voc)] += voc
+                    wetbuf = np.zeros((L, 2), dtype=np.float32); wetbuf[:len(echo)] += echo
+                    pk = float(np.max(np.abs(before_r4))) if before_r4.size else 0.0
+                    g = _max_wet_gain(drybuf, wetbuf, pk, headroom_db=_DELAY_ECHO_HEADROOM_DB)
+                    voc = (drybuf + g * wetbuf).astype(np.float32)
                 bad = chain_guards.check_vocal_chain_output(before_r4, voc)  # independent level backstop
                 if bad is not None:
                     raise RenderError(bad)
-                # INDEPENDENT containment net: the echoed length must not reach the next voice — Song 2's
-                # next entry OR a Song-1 lead in the gap (R1). Sized to the gap BY CONSTRUCTION; re-derived
-                # here anyway (clamp AND referee), the same layered defence validate + the engine run today.
-                if _echo_overruns(p.anchor, len(voc) / SR, nxt, s1_starts_after):
-                    raise RenderError("Rule 4 echo tail would overrun the next vocal (R1)")
+                # INDEPENDENT containment net: the echoed length must not ring OVER a Song-1 lead (R1).
+                # Bounded by max_tail BY CONSTRUCTION; re-derived here (clamp AND referee).
+                if _echo_overruns(p.anchor, len(voc) / SR, s1_starts_after):
+                    raise RenderError("Rule 4 echo tail would ring over Song 1's vocal (R1)")
             else:
                 if getattr(p, "chop", False):  # Step 4: re-fire the hook onset over this entry's FIRST bar
                     k = min(bar, len(voc))       # (a vocal chop). Replaces bar 1 -> voc length is unchanged,
@@ -1135,7 +1036,7 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
         # Pass 2 — lay each vocal on the bed with its entry moves (build / breath / sweep). Same order
         # and same arithmetic as before the split.
         prev_voc_end = 0  # sample where the last placed vocal ended — a build never reaches back over it
-        for i, (p, voc) in enumerate(prepared):
+        for p, voc in prepared:
             anchor = max(0, int(p.anchor * SR))  # never place before the start
             b0 = max(0, anchor - bar)
             build_bars = getattr(p, "build_bars", 0)
@@ -1155,9 +1056,6 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
             # arithmetic (and the rendered bytes) are unchanged.
             if getattr(p, "space", None) or getattr(p, "width", None):
                 bed[anchor:need] *= _POOL_BED_DUCK
-            # Rule 4: duck the beat under each echo's gap so the echo pokes through (snaps back for the
-            # next line). Only inside the echo regions; no Rule 4 => empty events => bed unchanged.
-            bed = _duck_bed_under_echoes(bed, anchor, _echo_events_by_idx.get(i, []))
             bed[anchor:need] += voc
             prev_voc_end = need
 

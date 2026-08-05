@@ -119,6 +119,53 @@ def test_golden_enabled_false_is_byte_identical_to_m6_0(tmp_path):
         f"enabled=False render changed vs m6.0 baseline!\n  got:      {h}\n  expected: {_GOLDEN_ENABLED_FALSE}")
 
 
+# ---------------------------------------------------------------- Rule 4 ON: the delay-echo render path
+def _rule4_plan():
+    """The golden plan with Rule 4 ON — reverb_bed on both placements exercises the ON branch end-to-end
+    (_delay_echo -> _reverb_bed -> joint level-trim -> chain_guards -> _echo_overruns), which the hermetic
+    unit tests (test_echo.py) cannot reach on their own."""
+    p = _golden_plan()
+    for pl in p.placements:
+        pl.reverb_bed = True
+    return p
+
+
+def _render_bytes(plan, tmp_path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    stems, vocal = _stems(tmp_path)
+    out = tmp_path / "r4.wav"
+    for _attempt in range(2):  # Windows temp/ffmpeg race retry (same pattern the golden helper uses)
+        try:
+            render.render_mix(plan, stems, vocal, out)
+            break
+        except Exception:
+            if _attempt == 1:
+                raise
+    y, _ = sf.read(out, dtype="float32", always_2d=True)
+    return y, out
+
+
+def test_rule4_on_render_passes_the_referee_and_adds_the_echo(tmp_path):
+    """INTEGRATION (the ON path CI otherwise never exercises): a plan with reverb_bed=True renders through
+    render_mix, PASSES the finished-audio referee (no clip / not silent), and AUDIBLY DIFFERS from the same
+    plan with Rule 4 off — i.e. the delay echo + reverb are really added, and don't trip chain_guards."""
+    from app.planner import validate
+
+    on, on_path = _render_bytes(_rule4_plan(), tmp_path / "on")
+    off, _ = _render_bytes(_golden_plan(), tmp_path / "off")
+    assert validate.validate_render(on_path) == [], "Rule 4 ON render failed the finished-audio referee"
+    m = min(len(on), len(off))
+    assert float(np.max(np.abs(on[:m] - off[:m]))) > 1e-4, "Rule 4 ON did not change the render (no echo?)"
+
+
+def test_rule4_on_render_is_deterministic(tmp_path):
+    """The ON path must be byte-identical run-to-run (no RNG / wall-clock) so the content-addressed cache
+    and Regenerate hold."""
+    a, _ = _render_bytes(_rule4_plan(), tmp_path / "a")
+    b, _ = _render_bytes(_rule4_plan(), tmp_path / "b")
+    assert a.shape == b.shape and np.array_equal(a, b), "Rule 4 ON render is not deterministic run-to-run"
+
+
 # --------------------------------------------------- R1 hand-off: outgoing S1 vocal ducks under the entry
 def _silent(path, secs=8.0, sr=44100):
     sf.write(path, np.zeros(int(sr * secs), dtype="float32"), sr)
