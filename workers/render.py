@@ -59,6 +59,54 @@ _FFMPEG_TIMEOUT = 180
 # ~10 MB; 12 minutes caps one buffer near ~130 MB — generous for any real song.
 _MAX_DECODED_SECS = 12 * 60
 
+# ---------------------------------------------------------------- Effect pool (2026-08-05)
+# One optional SPACE effect + one optional WIDTH effect, layered on top of the base vocal chain and
+# chosen per-take by the planner for regenerate variety. The engine OBEYS Placement.space/width; the
+# planner decides (same brain-plans/engine-executes contract as the chain). None/None => byte-identical
+# to the pre-pool path. Cumulative level is safe BY CONSTRUCTION: all added wet is summed and jointly
+# trimmed (_max_wet_gain) so a placement's pooled peak never exceeds the dry by more than the headroom
+# below — no matter what stacks. chain_guards (P2 + crest) stays as the independent render-side backstop.
+# Near the P2 ceiling (+3 dB), leaving ~0.3 dB margin. Raised from the original +1.5 dB (2026-08-05):
+# +1.5 was peak-neutral by design, which made every effect INAUDIBLE in the full mix (measured -17.6 dB
+# below the mix). An effect the user should HEAR must spend real level budget — so the joint trim now
+# lets the pooled vocal use most of the P2 headroom. Stacking (space+width) still measured P2-safe (+2.7).
+_POOL_HEADROOM_DB = 2.7
+# The bed ducks by this much under a placement that carries a pool effect, so the wet (reverb tail / echo
+# throw) isn't masked by the drums+bass — the founder-chosen "duck the bed so it isn't masked". Fixed and
+# far above silence (0.75 ≈ -2.5 dB), so it can never create a silent hole. No pool effect => no duck =>
+# byte-identical to the pre-pool render.
+_POOL_BED_DUCK = 10.0 ** (-2.5 / 20.0)
+_POOL_SEED = 20260805  # 🔒 FIXED seed -> pool reverb IRs (and every render) are deterministic (golden-safe)
+# SPACE reverbs — (ir_secs, decay, predelay_ms, bright). LENGTH-PRESERVING (wet truncated to dry length),
+# so they are safe on ANY placement and never change placement_end / the referee's R1 overlap math.
+_POOL_REVERBS = {
+    "room":     (0.6, 6.0,  0.0, False),  # a subtle close space
+    "hall":     (2.5, 2.0,  0.0, False),  # long hall
+    "plate":    (1.2, 4.0,  0.0, True),   # bright plate
+    "predelay": (1.0, 5.0, 60.0, False),  # pre-delayed room
+}
+_POOL_REVERB_WET = 0.55  # wet weight before joint level-comp — matches the harness wet/dry ratio (~0.42)
+                         # the founder validated; raised from 0.28 (that was ~4 dB weaker, inaudible)
+# TAIL-EXTENDERS — ring PAST the dry, so they are allowed only on the FINAL placement (referee-enforced),
+# where nothing follows. throw = a stronger/darker echo than _echo; freeze = the last words dumped to a
+# long 100%-wet tail.
+_POOL_THROW_BEATS = 1.0
+_POOL_THROW_TAPS = 16
+_POOL_THROW_FEEDBACK = 0.68
+_POOL_THROW_LP_HZ = 2200.0
+_POOL_FREEZE_SEG_SECS = 2.0   # freeze the LAST ~2 s of the phrase
+_POOL_FREEZE_IR_SECS = 3.0
+_POOL_FREEZE_DECAY = 1.2
+# WIDTH — two detuned copies panned L/R (mono-safe: chorus, not cancellation — verified 2026-08-05).
+_POOL_DOUBLE_DETUNE = 0.003          # ± resample factor (~±5 cents)
+_POOL_DOUBLE_DELAYS_MS = (16.0, 24.0)
+_POOL_DOUBLE_MAX_COPY = 0.7          # copy gain ceiling before joint level-comp
+# The vocabularies the engine implements (the referee & planner keep their own matching copies — a
+# cross-check test asserts agreement, mirroring how validate.py hardcodes _KNOWN_FX independently).
+_POOL_SPACE_LENGTH_PRESERVING = frozenset(_POOL_REVERBS)      # room/hall/plate/predelay
+_POOL_SPACE_TAIL_EXTENDING = frozenset({"throw", "freeze"})   # final placement only
+_POOL_WIDTH = frozenset({"double"})
+
 
 class RenderError(Exception):
     """Raised when the audio engine cannot produce a mix."""
@@ -310,8 +358,11 @@ def _echo(voc: np.ndarray, bpm: float) -> np.ndarray:
     the pause that follows it (delay ~a dotted-eighth of the beat), the way a DJ throws a vocal.
     The dry vocal plays through untouched; only each phrase's tail is repeated, decaying. The dry
     vocal is already edge-faded, so the repeated segment is faded too (no clicks). Peaks fold into
-    the downstream normalize + clip guard; the tail past the vocal (from the final phrase) stays
-    delay*_ECHO_TAPS — the bound the R1 echo-tail guard depends on."""
+    the downstream normalize + clip guard; the tail past the vocal (from the final phrase) extends
+    delay*_ECHO_TAPS beyond the dry slice. NOTE (2026-08-05): this tail is NOT accounted for by
+    placement_end (fence.py) or the R1 overlap check (validate.py) — both measure ONLY the dry
+    rendered length, so a long echo tail runs past the placement end UNPOLICED. (An earlier version
+    of this docstring claimed an "R1 echo-tail guard" that does not exist in validate.py.)"""
     n = len(voc)
     if bpm <= 0 or n == 0:
         return voc
@@ -461,6 +512,191 @@ def _reverb(voc: np.ndarray, wet: float, sr: int) -> np.ndarray:
     return ((1.0 - wet) * voc + wet * wetsig).astype(np.float32)
 
 
+# ---------------------------------------------------------------- Effect pool DSP primitives
+def _max_wet_gain(dry_buf: np.ndarray, wet_buf: np.ndarray, pk_in: float,
+                  headroom_db: float = _POOL_HEADROOM_DB, g_max: float = 1.0) -> float:
+    """Largest gain g in [0, g_max] such that peak(dry_buf + g*wet_buf) stays within `headroom_db`
+    of `pk_in` (the dry peak). The pool's by-construction level guarantee: the dry stays at UNITY
+    (vocal-vs-bed balance untouched) and ONLY the added wet is trimmed, exactly as much as needed.
+    Deterministic bisection. peak(g)=max_i|dry_i + g*wet_i| is CONVEX in g (a max of affine terms), so
+    its sub-level set {g: peak(g)<=target} is a single interval; g=0 is always in it (peak(0)=pk_in <=
+    target since headroom_db>=0), so bisecting from [0, g_max] converges to the true upper bound. (This
+    rests on g=0 being feasible — keep headroom_db >= 0 and the lower bound at 0.)"""
+    if pk_in <= 0.0:
+        return g_max
+    target = pk_in * (10.0 ** (headroom_db / 20.0))
+
+    def pk(g: float) -> float:
+        return float(np.max(np.abs(dry_buf + g * wet_buf)))
+
+    if pk(g_max) <= target:
+        return g_max
+    lo, hi = 0.0, g_max
+    for _ in range(40):
+        mid = 0.5 * (lo + hi)
+        if pk(mid) <= target:
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
+def _pool_lp(x: np.ndarray, hz: float) -> np.ndarray:
+    sos = butter(4, min(hz, SR / 2 - 1) / (SR / 2), btype="low", output="sos")
+    return sosfilt(sos, x, axis=0).astype(np.float32)
+
+
+def _pool_pan(mono2: np.ndarray, side: str) -> np.ndarray:
+    """Collapse a stereo array to mono and place it hard L or R (the width doubler's copies)."""
+    m = mono2.mean(axis=1)
+    out = np.zeros_like(mono2)
+    out[:, 0 if side == "L" else 1] = m
+    return out
+
+
+def _pool_detune(x: np.ndarray, factor: float) -> np.ndarray:
+    """Cheap ADT-style detune via linear resample (shifts pitch+length a hair). Deliberately avoids
+    the rubberband filter, which throws std::bad_alloc on this ARM ffmpeg build (verified 2026-08-05)."""
+    n = len(x)
+    idx = np.arange(0, n, factor)
+    out = np.zeros((len(idx), 2), dtype=np.float32)
+    for ch in range(2):
+        out[:, ch] = np.interp(idx, np.arange(n), x[:, ch])
+    return out
+
+
+def _pool_ir(secs: float, decay: float, bright: bool) -> np.ndarray:
+    """A deterministic exponentially-decaying-noise IR, L2-normalized (peak-neutral, like _reverb_ir).
+    FIXED seed => reproducible (golden-safe)."""
+    rng = np.random.default_rng(_POOL_SEED)
+    n = int(secs * SR)
+    t = np.linspace(0.0, secs, n, endpoint=False)
+    ir = rng.standard_normal(n).astype(np.float32) * np.exp(-decay * t).astype(np.float32)
+    if bright:
+        sos = butter(4, 1200.0 / (SR / 2), btype="high", output="sos")
+        ir = sosfilt(sos, ir).astype(np.float32)
+    l2 = float(np.sqrt(np.sum(np.square(ir))))
+    return (ir / l2).astype(np.float32) if l2 > 0 else ir
+
+
+def _pool_reverb_wet(dry: np.ndarray, name: str) -> np.ndarray:
+    """The WET signal of a SPACE reverb preset, TRUNCATED to the dry length (length-preserving, so a
+    placement's length / the referee's R1 overlap math never changes)."""
+    from scipy.signal import fftconvolve
+
+    secs, decay, predelay_ms, bright = _POOL_REVERBS[name]
+    ir = _pool_ir(secs, decay, bright)
+    pre = int(predelay_ms / 1000.0 * SR)
+    n = len(dry)
+    wet = np.zeros((n, 2), dtype=np.float32)
+    if pre < n:
+        for ch in range(2):
+            conv = fftconvolve(dry[:, ch], ir)
+            m = min(n - pre, len(conv))
+            wet[pre:pre + m, ch] += conv[:m]
+    return wet
+
+
+def _pool_throw_wet(voc: np.ndarray, bpm: float) -> np.ndarray:
+    """A darkening feedback-echo tail that rings PAST the dry (stronger than _echo). Returns a wet
+    buffer longer than `voc` by delay*taps — used ONLY on the final placement."""
+    n = len(voc)
+    if bpm <= 0 or n == 0:
+        return np.zeros((n, 2), dtype=np.float32)
+    d = max(1, int((60.0 / bpm) * _POOL_THROW_BEATS * SR))
+    total = n + d * _POOL_THROW_TAPS
+    wet = np.zeros((total, 2), dtype=np.float32)
+    seg = voc.copy()
+    for k in range(1, _POOL_THROW_TAPS + 1):
+        seg = _pool_lp(seg * _POOL_THROW_FEEDBACK, _POOL_THROW_LP_HZ)  # each repeat darker + quieter
+        off = d * k
+        m = min(len(seg), total - off)
+        if m > 0:
+            wet[off:off + m] += seg[:m]
+    return wet
+
+
+def _pool_freeze_wet(voc: np.ndarray) -> np.ndarray:
+    """Dump the LAST ~_POOL_FREEZE_SEG_SECS of the vocal into a long 100%-wet tail ringing past the
+    dry. Returns a wet buffer longer than `voc` — used ONLY on the final placement."""
+    from scipy.signal import fftconvolve
+
+    n = len(voc)
+    if n == 0:
+        return np.zeros((0, 2), dtype=np.float32)
+    ir = _pool_ir(_POOL_FREEZE_IR_SECS, _POOL_FREEZE_DECAY, False)
+    seg_len = min(int(_POOL_FREEZE_SEG_SECS * SR), n)
+    start = n - seg_len
+    seg = voc[start:]
+    total = n + len(ir)
+    wet = np.zeros((total, 2), dtype=np.float32)
+    for ch in range(2):
+        conv = fftconvolve(seg[:, ch], ir)
+        m = min(len(conv), total - start)
+        wet[start:start + m, ch] += conv[:m]
+    return wet
+
+
+def _pool_double_wet(voc: np.ndarray) -> np.ndarray:
+    """The width doubler's two detuned, hard-panned copies (WET only — the caller adds the dry and
+    fits to length, keeping width length-preserving). Mono-safe: chorus, not cancellation."""
+    up = _pool_detune(voc, 1.0 + _POOL_DOUBLE_DETUNE)
+    dn = _pool_detune(voc, 1.0 - _POOL_DOUBLE_DETUNE)
+    d1 = int(_POOL_DOUBLE_DELAYS_MS[0] / 1000.0 * SR)
+    d2 = int(_POOL_DOUBLE_DELAYS_MS[1] / 1000.0 * SR)
+    total = len(voc) + d2
+    copies = np.zeros((total, 2), dtype=np.float32)
+    Lp, Rp = _pool_pan(up, "L"), _pool_pan(dn, "R")
+    copies[d1:d1 + len(Lp)] += Lp[:total - d1]
+    copies[d2:d2 + len(Rp)] += Rp[:total - d2]
+    return copies
+
+
+def _apply_pool(voc: np.ndarray, p, bpm: float, is_final: bool) -> np.ndarray:
+    """Layer a placement's pool SPACE + WIDTH effects on the (already base-chained) vocal.
+
+    Dry stays at unity; every added wet component is summed and JOINTLY trimmed to within
+    _POOL_HEADROOM_DB of the dry peak — cumulative-level safety by construction (this is what lets the
+    pool stack effects that were each near the P2 ceiling alone). Interior placements use only
+    length-preserving effects; TAIL-EXTENDERS (throw/freeze) ring past the dry and run ONLY when
+    is_final (else they are fit back to length as a safe fallback — the referee also rejects a
+    tail-extender on a non-final placement, so this is defense-in-depth). None/None => voc unchanged."""
+    space = getattr(p, "space", None)
+    width = getattr(p, "width", None)
+    if not space and not width:
+        return voc
+    n = len(voc)
+    pk_in = float(np.max(np.abs(voc))) if voc.size else 0.0
+
+    tail_extending = space in _POOL_SPACE_TAIL_EXTENDING and is_final
+    space_wet = None
+    if space in _POOL_SPACE_LENGTH_PRESERVING:
+        space_wet = _POOL_REVERB_WET * _pool_reverb_wet(voc, space)
+    elif space == "throw":
+        space_wet = _pool_throw_wet(voc, bpm)
+    elif space == "freeze":
+        space_wet = _pool_freeze_wet(voc)
+    if space_wet is not None and not tail_extending and len(space_wet) != n:
+        space_wet = _fit_length(space_wet, n)  # interior fallback: never overrun a following vocal
+
+    width_wet = None
+    if width == "double":
+        width_wet = _fit_length(_POOL_DOUBLE_MAX_COPY * _pool_double_wet(voc), n)  # length-preserving
+
+    total = n
+    for w in (space_wet, width_wet):
+        if w is not None:
+            total = max(total, len(w))
+    dry_buf = np.zeros((total, 2), dtype=np.float32)
+    dry_buf[:n] += voc
+    wet_buf = np.zeros((total, 2), dtype=np.float32)
+    for w in (space_wet, width_wet):
+        if w is not None:
+            wet_buf[:len(w)] += w
+    g = _max_wet_gain(dry_buf, wet_buf, pk_in)
+    return (dry_buf + g * wet_buf).astype(np.float32)
+
+
 def _apply_vocal_chain(voc: np.ndarray, m, sr: int) -> np.ndarray:
     """Apply the vocal chain (stages 1,2,3,5,6,7,8) to a placed vocal, per the planner's move `m`.
 
@@ -545,6 +781,138 @@ def _duck_bed(bed: np.ndarray, duck_moves: list, prepared: list, sr: int) -> np.
     return (bed * gain[:, None]).astype(np.float32)
 
 
+# ---------------------------------------------------------------- Phrase-throw + continuous reverb (step 3, 2026-08-05)
+# Echo throws fire at ~20-30% of a placement's 4-bar MOMENTS (the planner decides which + the ratio); the
+# vocal sings normally the rest of the time. LENGTH-PRESERVING by construction: each throw's carry + its
+# HARD-FADED tail live INSIDE the placement's own bars, and the reverb bed is truncated to the vocal
+# length — so placement_end / the referee's R1 inter-placement math never move, and no tail rings past the
+# placement into the next vocal (the F1 failure class is designed OUT, not just checked). No throws +
+# reverb_bed False => byte-identical to the pre-throw render.
+_THROW_RAMP_MS = 8.0            # click-avoiding fade at the cut edges AND the tail-containment fade
+_THROW_SEG_BARS = 1.0          # how much of the just-sung phrase feeds the carry echo
+_THROW_ECHO_BEATS = 1.0
+_THROW_ECHO_TAPS = 8
+_THROW_ECHO_FEEDBACK = 0.62
+_THROW_ECHO_LP_HZ = 2200.0
+_THROW_REFIRE_GAIN = 0.7      # level of the downbeat-aligned re-fired bar within the carry
+_VOICED_FLOOR = 0.08          # a candidate re-fire fragment below this fraction of peak is a BREATH -> skip
+                               # it (the Father Ocean 3:56 defect: a raw onset grabbed a breath, killing the drop)
+_REVERB_BED_SECS = 1.2        # IR length of the continuous reverb bed
+_REVERB_BED_DECAY = 3.0
+_REVERB_BED_WET = 0.45        # bed level (audible where it matters: ringing into the carry gaps)
+_REVERB_BED_HEADROOM_DB = 2.0  # cap the bed's peak contribution (joint-trimmed) so it never trips P2 (+3 dB)
+
+
+def _punchy_bar(voc: np.ndarray, before_sample: int, bar_samples: float) -> np.ndarray | None:
+    """The downbeat-aligned bar ending at `before_sample`, to RE-FIRE across a carry — but ONLY if it is
+    voiced. A fragment whose RMS is below `_VOICED_FLOOR` of the vocal's peak is a breath / near-silence,
+    so return None (no re-fire). This is the breath fix: never re-fire a breath (Father Ocean 3:56)."""
+    b = int(bar_samples)
+    start = max(0, before_sample - b)
+    frag = voc[start:before_sample]
+    if len(frag) == 0:
+        return None
+    peak = float(np.max(np.abs(voc))) if voc.size else 0.0
+    rms = float(np.sqrt(np.mean(np.square(frag)))) if frag.size else 0.0
+    if peak <= 0.0 or rms < peak * _VOICED_FLOOR:
+        return None
+    return _edge_fade(frag.copy())
+
+
+def _throw_echo(seg: np.ndarray, bpm: float) -> np.ndarray:
+    """A darkening feedback-delay echo of the just-sung phrase `seg` — the wet only (no dry). The caller
+    places it in the carry span and fades it at the carry end, so its length here is not load-bearing."""
+    n = len(seg)
+    if bpm <= 0 or n == 0:
+        return np.zeros((0, 2), dtype=np.float32)
+    d = max(1, int((60.0 / bpm) * _THROW_ECHO_BEATS * SR))
+    total = n + d * _THROW_ECHO_TAPS
+    wet = np.zeros((total, 2), dtype=np.float32)
+    cur = seg.copy()
+    for k in range(1, _THROW_ECHO_TAPS + 1):
+        cur = _pool_lp(cur * _THROW_ECHO_FEEDBACK, _THROW_ECHO_LP_HZ)
+        off = d * k
+        m = min(len(cur), total - off)
+        if m > 0:
+            wet[off:off + m] += cur[:m]
+    return wet
+
+
+def _throw_at_moments(voc: np.ndarray, throws: list, bpm: float) -> np.ndarray:
+    """Execute phrase throws INSIDE a placement, LENGTH-PRESERVING. For each (moment_start_bar, sing,
+    carry): sing normally through the sing bars, then CUT the dry for the carry bars while the echo of
+    the just-sung phrase (+ a downbeat-aligned re-fire of a voiced bar) carries the gap — HARD-FADED to
+    silence at the carry end so nothing rings into the next sung bar. Output length == input length."""
+    n = len(voc)
+    if bpm <= 0 or n == 0 or not throws:
+        return voc
+    bar = (60.0 / bpm) * 4.0 * SR
+    ramp = max(1, int(_THROW_RAMP_MS / 1000.0 * SR))
+    out = voc.copy()
+    for moment in throws:
+        mstart, sing, carry = moment
+        cs = max(0, min(int((mstart + sing) * bar), n))
+        ce = max(cs, min(int((mstart + sing + carry) * bar), n))
+        if ce - cs < ramp * 2:
+            continue  # no room for a real carry — leave this moment singing
+        seg_len = min(int(_THROW_SEG_BARS * bar), cs)
+        seg = voc[cs - seg_len:cs].copy() if seg_len > 0 else np.zeros((0, 2), dtype=np.float32)
+        # 1. CUT the dry across the carry: fade out at cs, silent, fade the resumed singing in at ce
+        fo = min(ramp, ce - cs)
+        out[cs:cs + fo] *= np.linspace(1.0, 0.0, fo, dtype=np.float32)[:, None]
+        out[cs + fo:ce] = 0.0
+        fi = min(ramp, n - ce)
+        if fi > 0:
+            out[ce:ce + fi] *= np.linspace(0.0, 1.0, fi, dtype=np.float32)[:, None]
+        # 2. echo carry — contained + faded at ce
+        if len(seg) > 0:
+            echo = _throw_echo(seg, bpm)
+            k = min(len(echo), ce - cs)
+            if k > 0:
+                e = echo[:k].copy()
+                if k > ramp:
+                    e[k - ramp:] *= np.linspace(1.0, 0.0, ramp, dtype=np.float32)[:, None]
+                out[cs:cs + k] += e
+        # 3. downbeat-aligned re-fire of a VOICED bar across the carry (breath-safe)
+        frag = _punchy_bar(voc, cs, bar)
+        if frag is not None and len(frag) > 0:
+            step = max(1, int(bar))
+            pos = cs
+            while pos < ce:
+                fl = min(len(frag), ce - pos)
+                if fl > 0:
+                    ff = (frag[:fl] * _THROW_REFIRE_GAIN).astype(np.float32)
+                    if pos + fl >= ce and fl > ramp:  # the last re-fire fades out AT the carry end
+                        ff[fl - ramp:] *= np.linspace(1.0, 0.0, ramp, dtype=np.float32)[:, None]
+                    out[pos:pos + fl] += ff
+                pos += step
+    return out.astype(np.float32)
+
+
+def _reverb_bed(voc: np.ndarray) -> np.ndarray:
+    """Continuous reverb bed, LENGTH-PRESERVING. A convolution reverb blended under the vocal: the wet
+    rings past word-ends INTO internal gaps (a throw's carry bars — where reverb is audible), but is
+    TRUNCATED to the vocal length so it never rings PAST the placement into the next vocal (F1
+    containment). Additive at `_REVERB_BED_WET`; the master normalize + chain_guards handle level."""
+    from scipy.signal import fftconvolve
+
+    n = len(voc)
+    if n == 0:
+        return voc
+    ir = _pool_ir(_REVERB_BED_SECS, _REVERB_BED_DECAY, bright=False)
+    wet = np.empty_like(voc)
+    for ch in range(voc.shape[1]):
+        wet[:, ch] = fftconvolve(voc[:, ch], ir)[:n]
+    # Additive reverb can inflate the peak (adversarial review 2026-08-05: +2.41 dB alone, a thin 0.59 dB
+    # under the +3 dB P2 guard). JOINTLY TRIM the wet (the same `_max_wet_gain` primitive the pool uses)
+    # so the bed's peak contribution never exceeds `_REVERB_BED_HEADROOM_DB` over the dry — chain_guards
+    # can't spuriously RenderError a legal mix on a hotter vocal, and the bed level stays song-independent.
+    wet = (_REVERB_BED_WET * wet).astype(np.float32)
+    pk = float(np.max(np.abs(voc))) if voc.size else 0.0
+    g = _max_wet_gain(voc, wet, pk, headroom_db=_REVERB_BED_HEADROOM_DB)
+    return (voc + g * wet).astype(np.float32)
+
+
 def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
                out_path: Path) -> Path:
     """Render `plan` to a WAV at out_path.
@@ -618,7 +986,12 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
         # so lifting it out of the lay loop below leaves the bed's arithmetic order — and therefore the
         # rendered bytes — unchanged. The vocal chain (stages 1-8) applies HERE, length-preserving.
         prepared: list = []  # [(placement, voc_array), ...]
-        for i, p in enumerate(_placements_of(plan)):
+        all_placements = _placements_of(plan)
+        # Effect pool: the FINAL placement (latest anchor) is the only one whose tail may ring past the
+        # dry (throw/freeze) — nothing follows it. -1 when there are no placements.
+        _final_idx = (max(range(len(all_placements)), key=lambda k: all_placements[k].anchor)
+                      if all_placements else -1)
+        for i, p in enumerate(all_placements):
             warp = getattr(p, "warp", None)
             if warp:  # M4d: per-bar beat-lock — each bar re-locked to Song 1's grid (no drift)
                 voc = _edge_fade(_vocal_take_warped(song2_vocal, warp))
@@ -632,12 +1005,37 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
                 bad = chain_guards.check_vocal_chain_output(before, voc)  # P2 peak-gain + crest mush guard
                 if bad is not None:
                     raise RenderError(bad)
-            if getattr(p, "chop", False):  # Step 4: re-fire the hook onset over this entry's FIRST bar
-                k = min(bar, len(voc))       # (a vocal chop). Replaces bar 1 -> voc length is unchanged,
-                if k > 0:                    # so placement_end / the referee's overlap math don't move.
-                    voc[:k] = _chop_pattern(voc[:k], k, plan.master_bpm)
-            if getattr(p, "echo", False):  # ring the (already edge-faded) vocal out into the drop
-                voc = _echo(voc, plan.master_bpm)
+            # Phase-throw model (step 3): when the planner emitted throws / a reverb bed (flag ON), this
+            # OWNS echo for the placement — the vocal sings normally, throws punctuate it, under a
+            # continuous reverb bed. LENGTH-PRESERVING (contained). It is MUTUALLY EXCLUSIVE with the old
+            # produced-drop echo / chop / pool path below, so with the flag OFF (no throws, no reverb_bed)
+            # the ELSE branch runs exactly as today => byte-identical (incl. Placement.echo at drops).
+            if getattr(p, "throws", None) or getattr(p, "reverb_bed", False):
+                before_throw = voc
+                if getattr(p, "throws", None):
+                    voc = _throw_at_moments(voc, p.throws, plan.master_bpm)
+                if getattr(p, "reverb_bed", False):
+                    voc = _reverb_bed(voc)
+                bad = chain_guards.check_vocal_chain_output(before_throw, voc)  # independent level backstop
+                if bad is not None:
+                    raise RenderError(bad)
+            else:
+                if getattr(p, "chop", False):  # Step 4: re-fire the hook onset over this entry's FIRST bar
+                    k = min(bar, len(voc))       # (a vocal chop). Replaces bar 1 -> voc length is unchanged,
+                    if k > 0:                    # so placement_end / the referee's overlap math don't move.
+                        voc[:k] = _chop_pattern(voc[:k], k, plan.master_bpm)
+                # Produced-drop echo: skip when the pool put a tail-extender here (throw/freeze) so the two
+                # echo mechanisms never double up. No pool space => unchanged => byte-identical.
+                if getattr(p, "echo", False) and getattr(p, "space", None) not in _POOL_SPACE_TAIL_EXTENDING:
+                    voc = _echo(voc, plan.master_bpm)  # ring the (already edge-faded) vocal out into the drop
+                # Effect pool (2026-08-05): SPACE + WIDTH variety, jointly level-compensated. None/None =>
+                # voc untouched => byte-identical. chain_guards re-runs here as the independent backstop.
+                if getattr(p, "space", None) or getattr(p, "width", None):
+                    before_pool = voc
+                    voc = _apply_pool(voc, p, plan.master_bpm, is_final=(i == _final_idx))
+                    bad = chain_guards.check_vocal_chain_output(before_pool, voc)
+                    if bad is not None:
+                        raise RenderError(bad)
             prepared.append((p, voc))
 
         # Stage 9 — sidechain-duck the BED under the placed vocals (only when the planner emitted
@@ -663,6 +1061,11 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
                     bed[b0:anchor] = _sweep_bed(bed[b0:anchor], SR)
             need = anchor + len(voc)
             bed = _hold(bed, need)
+            # Effect pool: duck the bed under a placement carrying a pool effect so its wet (reverb
+            # tail / echo throw) isn't masked by the drums+bass. No pool effect => no duck => the bed
+            # arithmetic (and the rendered bytes) are unchanged.
+            if getattr(p, "space", None) or getattr(p, "width", None):
+                bed[anchor:need] *= _POOL_BED_DUCK
             bed[anchor:need] += voc
             prev_voc_end = need
 

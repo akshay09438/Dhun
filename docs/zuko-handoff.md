@@ -1,76 +1,43 @@
 # Zuko handoff - Prompt-DJ
 
-_The single source of truth for "where things stand" between sessions. `/handoff` rewrites this at the end of a session; `/start` and the SessionStart hook replay it at the beginning. Dangerous-surface status is written as a CLAIM to re-verify, never as a settled fact._
+_The single source of truth for "where things stand" between sessions. Dangerous-surface status is written as a CLAIM to re-verify, never as a settled fact._
 
 ## Last updated
 
-2026-07-21 (**A light session: NO source code changed at all. One catalog song added (Dooriyan, local-only), one long-standing false alarm closed, and one real user-facing DEFECT found and root-caused but deliberately NOT fixed — it is waiting on the founder's decision. `main` @ `03abc99`, unchanged. Web checks green: typecheck 0, lint 0, 49/49 tests. Backend suite NOT run this session — no backend code was touched.**)
+2026-08-05 — **A very long Rule 4 (Regenerate variety) session. Built a full echo/reverb "phrase-throw" engine on a branch, ceremony-passed it, then the founder CUT IT BACK HARD: most of what was built is the wrong feature and will be deleted next session in favour of a much simpler Rule 4. Nothing merged to `main`. All work sits on branch `design/mix-reverse-engineering`, committed as a checkpoint by this handoff.**
 
 ## Where things stand (one breath)
 
-`main` @ `03abc99` is the shipped app and **this session did not change a single line of it**. Everything below is either data (gitignored), documentation, or a finding.
+- **`main` is untouched.** Everything this session is on `design/mix-reverse-engineering` and ships **OFF** behind flags (`plan._PHRASE_THROW_ENABLED = False`, `plan._EFFECT_POOL_ENABLED = False`). With the flags off the render is **byte-identical to `main`** (golden gate verified this session).
+- **Rule 4 was built the WRONG way and is being simplified.** The engine built (the "phrase-throw" model: sing/carry cut ratios + a re-fired vocal bar) works and passed its ceremony — but the founder identified the re-fire as **chop-and-repeat = Rule 3 leaking in**, and cut the whole cut-ratio model. See the drift log (2026-08-05 late) for the full decision.
+- **THE SIMPLIFIED RULE 4 (the target):** take Rule 1's vocal EXACTLY as-is (do NOT cut / shorten / chop / re-fire). Add echo + reverb ON TOP — **ONE variation, always both together**. Echo fires **at the END of each vocal line, sized to fit the GAP before the next vocal** (longer gap → longer tail; no gap → no echo). Reverb runs continuously underneath (already built, kept).
+- **Other work this session that is real and keeps:** the **cache-eviction sweep** (`storage.py`, dangerous — built, ceremony-passed, 1 test committed as `401062f`; dogfooded, reclaimed 1.15 GB, catalog verified intact); the **audibility fix** + **joint wet-trim** + **chain_guards**; the **recalibrated isolated-vocal differs-check** (`scripts/audio_diff.py`); the **length-preserving tail containment**; the **reverb bed**. These are on the KEEP list.
 
-- **The app runs locally at `http://localhost:8000`** (started via `.claude/launch.json` → `backend`; it dies with the session, relaunch command at the bottom). It serves the **pre-built** web app from `apps/web/dist/`, last built **15 July** — so any future web source fix needs `npm -w apps/web run build` before localhost shows it.
-- **Catalog is now 6 beats + 13 vocals = 19 entries.** Dooriyan was added. ⚠️ **LOCAL-ONLY, as always** — the manifest, stems and analyses live under gitignored `data/`, so the whole 19-song catalog exists only on the founder's machine and transfers to no other clone or deploy.
-- **A real defect is open and unfixed:** the Export screen's **"Download full mix" button silently saves nothing.** Diagnosed to root cause; the fix is blocked on a founder decision because it touches a dangerous-surface test file.
-- **One item from the last handoff is closed as a false alarm** — the "8 uncommitted web edits of unknown intent" are line-ending noise with zero changed lines. Do not re-raise it.
+## In flight — honest state
 
-## ⚠️ Lesson from this session (carry it forward)
-
-**The founder's words describe the symptom, not the mechanism — reproduce before believing either.** The report was "the export button is disabled". It is not disabled: rebuilt in the running app, every Export-screen button is enabled, full opacity, `pointer-events: auto`. Had the agent trusted the word "disabled" it would have gone hunting for a `disabled={...}` condition that does not exist anywhere in `ExportScreen.tsx`. The actual bug is a self-cancelling download two layers away, and it was only found by **instrumenting the live page** (wrapping `URL.createObjectURL` / `anchor.click` / `URL.revokeObjectURL`) and reading the real numbers.
-
-This is the same lesson as 2026-07-16's, one rung up: **read/measure the engine before explaining what the engine does.** It also caught the inverse — a "known problem" carried in this very handoff for days (the 8 mystery web edits) evaporated the moment anyone ran `git diff` on it. **Re-verify carried-forward claims; some of them are already false.**
-
-## In flight - done vs left
-
-**Nothing is half-done in code, because no code was written.** One decision is genuinely pending.
-
-**DONE this session:**
-
-- **Dooriyan ingested** (`scripts/ingest_catalog.py`, existing tool, no code change) — 122 BPM, key 7A, 15 vocal regions, id `c4b28366…`, `role_hint: vocals`. Confirmed live: `/library` returns 19 songs and Dooriyan appears in the Song-2 dropdown in the running app.
-- **Two end-to-end renders on the live API** proving the new song and the Merrygo beat both work (numbers under Verification).
-- **Docs brought current:** functional spec gained a 2026-07-21 update (the 13th vocal + the broken Download, written as user-facing truth); implementation plan gained three drift-log entries (catalog, false-alarm, export defect).
-- **A finished set copied out to the founder's Desktop by hand** as `Adore the Distance - Prompt-DJ set.wav` (6:04.84, stereo 44.1 kHz) — because the in-app Download is broken. This is the current workaround for getting audio off the machine.
-
-**LEFT / BLOCKED:**
-
-- 🔴 **DECISION OWED — the "Download full mix" fix.** Three options were put to the founder and none chosen yet: (a) fix the download **and** strengthen `ExportScreen.test.tsx` (recommended — otherwise the bug can silently return, which is exactly how it shipped); (b) fix the download only; (c) defer. **(a) and the test edit require dangerous-surface sign-off** (`**/*.test.tsx`). After any fix, `npm -w apps/web run build` is required or localhost keeps serving the 15-July bundle.
-- **Dooriyan has no hand-marked hook.** It is the only catalog vocal without one, so it does not land its signature line on the drop — it falls back to song order. Needs a founder ear-mark, then an entry in `app/planner/hooks.py`.
-- **Carried forward, unchanged and still owed** (none touched this session): the **`storage.py` cache-eviction sweep** (still the most pressing item — the disk filled twice on 2026-07-16 and is still watched by hand; dangerous surface); **short-clip (15–30s) export + final loudness master** (M6 polish); **founder ear-check** on the new vocals over Merrygo and on the **live in-app cut**; and the **Play screen still reports a dropped mix badly** (a small grey "skipped" card after rendering) — previously deferred by the founder, worth offering again.
+- **Rule 4 simplification is PLANNED, not built.** The founder said "plan first, no code until I sign off." Next session must REPORT gap-detection first, then propose the simplified implementation, then get sign-off, then build.
+- **The old phrase-throw code is still in the tree** (shipping OFF). To be DELETED next session (after sign-off): the 5 cut ratios, sing/carry gating, `_punchy_bar` + the re-fire, throw-moment selection by energy, the energy→ratio mapping, the three variations, and `app/planner/throws.py`'s selection model. **PRESERVE `_punchy_bar` + the breath fix** — it's genuinely useful for Rule 3 later; it lives in `workers/render.py` and is preserved in git history by this checkpoint commit.
+- **Suite is GREEN** in the current (pre-simplification) state — see evidence below. The simplification will necessarily change/delete many of the phrase-throw tests.
 
 ## Do first next session
 
-**Ask the founder to pick (a)/(b)/(c) on the Download fix** — it is the only thing blocking a user from getting their own mix out of the app, and it is one small edit plus a rebuild. If they pick (a), get the dangerous-surface approval recorded via `.zuko/approve.js` before editing the test.
+1. **Gap-detection report (read-only, no code).** Can Song 2's **vocal-stem energy troughs** give reliable **line-END points AND gap lengths**? This session measured: the vocal stem has **9 clear troughs across 59 bars (std 0.278)** while `vocal_regions` (segmentation) is an **86% blob** — so use vocal-stem RMS (reliable loudness), NOT `vocal_regions`. Report the smallest reliable way to measure "the gap before the next vocal."
+2. **Propose the simplified Rule 4 implementation** — small. Echo placed at each line-end, tail sized to the gap; continuous reverb kept; one variation; delete the cut-ratio/re-fire model; keep the KEEP list.
+3. **Get founder sign-off, THEN build** (render.py + validate.py are dangerous → full ceremony again).
 
-Then, in priority order: **the `storage.py` eviction sweep** (disk safety), **Dooriyan's hook mark** (a short ear-check that finishes the song properly), or **M6 polish**.
+## Verification evidence
 
-## Verification evidence (which checks ran, what they returned)
+- **Backend, current branch state (post length-weighting change), 2026-08-05:**
+  `pytest test_render.py test_phrase_throw.py test_phrase_throw_e2e.py test_validate.py test_cache_sweep.py -q`
+  → **141 passed** (~60 s). Includes the m6.0 **golden byte-identical-OFF gate**, so flags-off renders exactly as `main`.
+- **Ceremony (phrase-throw, step 3):** independent test-author wrote 17 acceptance tests (all pass, mutation-verified); adversarial reviewer verdict **`safe` for the OFF ship** — both tail-containment attacks and the byte-identical-OFF-with-`Placement.echo` attack held (byte-identity proven vs `HEAD:render.py`). Two flip-on residuals found and FIXED (reverb bed joint-trimmed to ≤ +2.0 dB; a flaky Windows test deflaked).
+- **Re-fire verification (Item 3):** 9/9 throws re-fire a voiced bar; +10.3 dB over the decayed tail in the 2nd carry bar — the re-fire works (but is the wrong feature, being cut).
+- **NOT run this session:** the full backend suite in one pass (disk pressure; ran affected subsets instead) and the web suite (no web code touched).
 
-Run 2026-07-21 on `main` @ `03abc99`, working tree effectively clean:
+## Open escalations / re-verify next session (claims, not facts)
 
-- **Web typecheck:** `npm run typecheck` (→ `tsc --noEmit`) → **exit 0**.
-- **Lint:** `npm run lint` (→ `eslint src`) → **exit 0**.
-- **Web tests:** `cd apps/web && npx vitest run --pool=forks --poolOptions.forks.singleFork=true` → **8 files, 49 passed**, 3.67s. (Single-fork is still required; the default `npm test` OOMs on this machine.)
-- **Backend suite: NOT RUN this session.** Justification, not an excuse: **zero backend files were changed** (`git diff` reports 0 content lines repo-wide), and the live uvicorn server was deliberately left running for the founder, which is known to make `test_mix_is_cached` fail with a JSONDecodeError. The last real result stands as a CLAIM to re-verify: 427 passed on 2026-07-16.
-- **Working-tree truth:** `git diff` → **0 changed content lines**; `git diff --ignore-cr-at-eol --stat` → **empty**. The 8 "modified" web files differ only in line endings.
-- **`main` vs `origin/main`:** `git fetch` then `git status -sb` → **`## main...origin/main`**, no ahead/behind. Nothing was unpushed.
-- **Live end-to-end on the running API (real audio, not unit tests):**
-  - Catalog: `GET /library` → **19 songs**, Dooriyan `status: ready`, its `/audio` → HTTP 200.
-  - **Merrygo × Jugni Ji** → rendered **ready**, 15,937,784-byte WAV = **90.3s**, master_bpm 85.0 — matches the known-good 90.34s Merrygo length.
-  - **I Adore You × Dooriyan** → rendered **ready**, 33,867,080-byte WAV = **192s**, master_bpm 120.0, vocal_stretch 0.9836, 3 placements.
-  - **2-set run** (I Adore You × Tujhe Bhula Diya → Innerbloom × Dooriyan) → both kept, **BLEND** at seam 176.0s, manifest duration 364.84s == real WAV 364.84s (re-measured with `wave`, not trusted from the API).
-- **Export defect, measured not guessed** (instrumented in the live page): blob created **64,357,820 bytes / `audio/wav`** ✓, anchor clicked with `download: "Adore the Distance.wav"` ✓, but `inDom: false` and `revokeObjectURL` fired **2.1 ms** after creation.
-
-## Open escalations / re-verify next session (claims, not settled facts)
-
-- 🔴 **`ExportScreen.tsx` download is broken in the shipped build.** Not a claim — reproduced and measured (above). Fix pending founder choice. **`ExportScreen.test.tsx` passes on the broken code**; treat that test as not covering download at all until it is strengthened.
-- **⚠️ The whole 19-song catalog is LOCAL-ONLY** and gitignored — it will not transfer to another clone or a deploy. Hand-marked hooks and per-song overrides key off content ids (`4fc82b59…` Merrygo, `c4b28366…` Dooriyan); on any re-ingest elsewhere the ids must match or the marks silently do not apply.
-- **`render.py` / `validate.py` / `storage.py` were NOT edited this session.** CLAIM: re-verify with `git log --oneline -1 -- workers/render.py services/api/app/planner/validate.py services/api/app/storage.py` (should predate 2026-07-21) before trusting it. No dangerous-surface file was touched at all — the session wrote only docs and gitignored data.
-- **The 8 "uncommitted web edits" item is CLOSED (false alarm).** Zero content lines. Do not re-raise; do not "finish or discard" them.
-- **`test_mix_is_cached` still fails if a live uvicorn server runs during the backend suite.** Stop the server before trusting a red suite.
-- **The default `npm test` still OOMs on this machine.** Single-fork passes 49/49. Making single-fork the default needs sign-off (`vitest.config.*` is a dangerous glob).
-- **`_GOOD_PARTS_WINDOW_ENABLED` is still `False`**; best-parts (post-render crop) remains the default. Not touched. Re-confirm.
-- **`_seam_positions` (`routes/set.py`) remains a SECOND copy** of `assemble_beatmatched_set`'s sample accounting — it drifted once before. Any new branch in the seam engine needs its twin there. Still worth collapsing into one function.
-- **CORS lockdown** must be re-verified before any public exposure. `Start-PromptDJ.bat` puts the app on a public ngrok link — do not run it for testers until that is checked.
-- **The disk filled to 0 bytes free twice on 2026-07-16** and the eviction sweep still does not exist. Until it does, disk must be watched by hand; this session added ~130 MB of renders.
-- **Local dev server:** relaunch with `services/api/.venv/Scripts/python.exe -m uvicorn app.main:app --app-dir services/api --port 8000`, or `Start-PromptDJ.bat` for a public link. It does not survive the session. **Rebuild the web app (`npm -w apps/web run build`) after any web source change**, or localhost keeps serving the 15-July bundle.
+- **DANGEROUS surfaces touched (`workers/render.py`, `services/api/app/planner/validate.py`, `services/api/app/storage.py`) — all ceremony-passed and shipping OFF this session. RE-VERIFY next session** that (a) both flags are still `False`, (b) the golden byte-identical-OFF gate still passes, before trusting "OFF == main".
+- **Disk is tight.** Hit zero ~5× this session; the eviction sweep now exists (`scripts/evict_cache.py`, dry-run by default) and auto-runs before renders. `data/` is under OneDrive (dehydrates), so free space fluctuates.
+- **Founder decision pending:** which gap-detection approach to build for the simplified Rule 4 (report it first).
+- **Older open item (carried, re-verify):** the Export screen "Download full mix" defect from the 2026-07-21 handoff — not touched this session; status unknown, re-verify if it comes up.
+- **Listening artefacts on the founder's Desktop** (throwaway, for his ear): `Prompt-DJ three variations (2026-08-05)`, `Prompt-DJ throw+reverb listening (2026-08-05)`, `Prompt-DJ cut-ratio prototype`, `Prompt-DJ reverb listening (trimmed 2026-08-05)`.

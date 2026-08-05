@@ -79,6 +79,21 @@ class Placement(BaseModel):
     # the vocal to the matching Song 1 bar length so it re-locks to the beat and can't drift.
     # Empty => the legacy single global-atempo stretch (M3/M4a–c cached plans still parse).
     warp: list[tuple[float, float, float]] = []
+    # Effect pool (2026-08-05): one optional SPACE effect + one optional WIDTH effect layered on
+    # top of the base vocal chain, chosen per-take by the planner for regenerate variety. Both
+    # additive + default None => the exact pre-pool render path (byte-identical). SPACE names:
+    # room/hall/plate/predelay (length-preserving reverbs, any placement) and throw/freeze
+    # (tail-extending, FINAL placement only — the referee enforces this). WIDTH: double.
+    space: str | None = None  # one of the pool's SPACE effects, or None
+    width: str | None = None  # one of the pool's WIDTH effects, or None
+    # Phase-throw model (2026-08-05): echo throws fire at ~20-30% of a placement's 4-bar MOMENTS
+    # (punctuation, not grammar); the vocal sings normally the rest of the time. Each entry is
+    # (moment_start_bar, sing_bars, carry_bars): sing normally for sing_bars, then CUT the vocal for
+    # carry_bars while the echo (+ downbeat-aligned re-fire) carries the gap. LENGTH-PRESERVING by
+    # construction — the carry + its faded tail live INSIDE the placement's own bars, so placement_end
+    # and R1 are unchanged. Empty => no throws => byte-identical to the pre-throw render.
+    throws: list[tuple[int, int, int]] = []
+    reverb_bed: bool = False  # continuous reverb bed on this vocal (rings into the carry gaps); False => none
 
 
 class StemMove(BaseModel):
@@ -231,6 +246,11 @@ class MixPlan(BaseModel):
     chain_config_hash: str = ""  # Phase 0: the vocal-chain config this mix was rendered under (cache + reproducibility)
     vocal_moves: list[VocalProcessMove] = []  # Phase 0 G5: vocal-processing instructions; [] = today's plain vocal
     duck_moves: list[DuckMove] = []  # Phase 0 stage 9: bed ducks under the vocal; [] = no ducking (today)
+    # Effect pool (2026-08-05): a plain-language record of which pool effects this take selected
+    # (e.g. ["space:hall", "width:double"]), so a take the founder likes tells him what produced
+    # it. effect_variety records whether the pool ran (False => the fixed pre-pool treatment).
+    effects_selected: list[str] = []
+    effect_variety: bool = True
     # Set transitions (3.1): the rendered mix's OWN beat grid in OUTPUT seconds + its length, written
     # next to the WAV so joining mixes into a continuous set (set_render) is ARITHMETIC over the plans —
     # never a re-analysis of the output audio ("the pipeline must not listen to itself"). Derived at

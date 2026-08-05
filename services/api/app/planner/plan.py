@@ -11,12 +11,14 @@ The LLM never touches audio; it only fills this structured plan.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import random
 
 from app.models import (DuckMove, MixPlan, Placement, TrackAnalysis, VocalChainConfig,
                         VocalProcessMove, chain_config_hash)
-from app.planner import fence, hooks, instrumental_beats, llm, window
+from app.planner import fence, hooks, instrumental_beats, llm, throws, window
 
 # Phase 0 (T1): the AI arrangement engine is OFF by default. The founder prefers the
 # deterministic rules arrangement (`_default_arrangement`) — a note-for-note match to the loved
@@ -49,6 +51,94 @@ _ARRANGE_SYSTEM = (
     "improve it. If take_number>1, choose a genuinely different arrangement. STRICT JSON only, "
     'nothing else: {"placements":[{"anchor":<sec>,"vocal_slice":[<start>,<end>],"beat_breath":<bool>}]}'
 )
+
+
+# ---------------------------------------------------------------- Effect pool selection (2026-08-05)
+# A pool of vocal effects where each TAKE picks a different SPACE + WIDTH combination, so regenerating
+# the same pair yields a genuinely different-sounding mix (shareability). The planner DECIDES; the engine
+# (render.py) OBEYS Placement.space/width; the referee (validate.py) enforces the compatibility rules.
+# The planner keeps its OWN copy of the vocabulary (matches render.py + validate.py; a cross-check test
+# asserts agreement — the "one list, three readers" pattern already used for _KNOWN_FX/dangerous globs).
+# Ships OFF (2026-08-05), like the vocal chain / window / pitch-repair did — dormant + byte-identical to
+# the pre-pool render until the founder ear-tests and opts in. Flip this to True to turn the pool on; the
+# mix route derives ENGINE_VERSION from it (via effect_pool_enabled()), so flipping it AUTOMATICALLY
+# invalidates the pool-OFF mix + set caches — one flag, no stale cache, no manual version bump.
+_EFFECT_POOL_ENABLED = False
+
+
+def effect_pool_enabled() -> bool:
+    """Whether the effect pool is live. Folded into the mix/set cache id (mixroute.ENGINE_VERSION) so
+    flipping `_EFFECT_POOL_ENABLED` re-renders every mix WITH the pool instead of serving an OFF cache."""
+    return _EFFECT_POOL_ENABLED
+
+
+# Phase-throw + continuous reverb (step 3, 2026-08-05). Ships OFF (byte-identical to today, incl.
+# Placement.echo at produced drops); flip to True to turn it on. Supersedes the effect pool (which
+# stays off). mixroute.ENGINE_VERSION is derived from this, so flipping it auto-invalidates the cache.
+_PHRASE_THROW_ENABLED = False
+
+
+def phrase_throw_enabled() -> bool:
+    """Whether the phrase-throw model (echo events + continuous reverb bed) is live. Folded into the
+    mix/set cache id so flipping it re-renders every mix WITH throws instead of serving an OFF cache."""
+    return _PHRASE_THROW_ENABLED
+_POOL_SELECT_VERSION = "pool1"  # salt so a future pool change reshuffles the per-pair combo order
+_POOL_SPACE_INTERIOR = ["room", "hall", "plate", "predelay"]  # length-preserving reverbs (any placement)
+_POOL_SPACE_FINAL = ["throw", "freeze"]  # tail-extenders — only the final placement (referee-enforced)
+_POOL_SPACE_TAIL = set(_POOL_SPACE_FINAL)
+_POOL_WIDTH = ["double"]
+# A tail-extender rings past the dry end; if a Song-1 outro lead follows within this window it would
+# play over the ring-out (two voices, R1). Matches validate._POOL_TAIL_MAX_SECS (cross-check test).
+_POOL_TAIL_MAX_SECS = 10.0
+_TAIL_SUBSTITUTE = {"throw": "hall", "freeze": "plate"}  # the safe length-preserving reverb to fall back to
+
+
+def _pool_combos() -> list[tuple[str | None, str | None]]:
+    """Every legal (space, width) take treatment: one space (incl. None + the two final-only
+    tail-extenders) × one width (incl. None). 7×2 = 14 distinct combos — >= 8, so a shuffled rotation
+    gives 8 audibly-different takes with no repeats."""
+    spaces = [None] + _POOL_SPACE_INTERIOR + _POOL_SPACE_FINAL
+    widths = [None] + _POOL_WIDTH
+    return [(s, w) for s in spaces for w in widths]
+
+
+def _select_effects(a1: TrackAnalysis, a2: TrackAnalysis, prompt: str, take: int,
+                    placements: list[Placement], s1_regions: list, stretch: float) -> list[str]:
+    """Deterministically assign this take's SPACE + WIDTH effects onto `placements` (mutated in place)
+    and return the plain-language record (e.g. ["space:hall", "width:double"]).
+
+    DETERMINISM: the per-pair combo order is a shuffle seeded ONLY from (songs + prompt + pool version)
+    — NEVER wall-clock — and the take indexes it, so the same (songs, prompt, take) always yields the
+    same picks (the mix cache stays content-addressed) while takes 1..14 are guaranteed DISTINCT combos.
+    Tail-extenders (throw/freeze) are placed only on the final placement (latest anchor), and only when
+    no Song-1 outro lead follows within the tail window — otherwise the ring-out would play over Song
+    1's vocal (two voices, R1), so a length-preserving reverb is substituted (still deterministic)."""
+    if not placements:
+        return []
+    base = f"{_POOL_SELECT_VERSION}:{a1.song_id}:{a2.song_id}:{prompt}"
+    seed = int(hashlib.sha256(base.encode()).hexdigest()[:16], 16)
+    combos = _pool_combos()
+    random.Random(seed).shuffle(combos)  # stable per pair+prompt; take picks the slot
+    space, width = combos[(take - 1) % len(combos)]
+    final = max(range(len(placements)), key=lambda k: placements[k].anchor)
+    # Tail safety (F1 fix): if the final placement would ring past its dry end into a Song-1 outro lead,
+    # swap the tail-extender for its safe length-preserving reverb before it can overlap (R1).
+    if space in _POOL_SPACE_TAIL:
+        fp = placements[final]
+        dry_end = fence.placement_end(fp.anchor, fp.vocal_src, stretch, getattr(fp, "warp", None))
+        if any(s < dry_end + _POOL_TAIL_MAX_SECS - 1e-6 and e > dry_end + 1e-6 for s, e in (s1_regions or [])):
+            space = _TAIL_SUBSTITUTE[space]
+    for i, p in enumerate(placements):
+        # a tail-extender rings past the dry -> final placement only; a length-preserving reverb (or
+        # None) applies uniformly to every placement.
+        p.space = space if (space not in _POOL_SPACE_TAIL or i == final) else None
+        p.width = width
+    record: list[str] = []
+    if space:
+        record.append(f"space:{space}")
+    if width:
+        record.append(f"width:{width}")
+    return record
 
 
 class MixDeclined(Exception):
@@ -498,12 +588,17 @@ def _emit_vocal_chain(placements: list[Placement], cfg: VocalChainConfig,
 
 def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
                    prompt: str = "", take: int = 1,
-                   chain: VocalChainConfig | None = None) -> MixPlan:
+                   chain: VocalChainConfig | None = None,
+                   effect_variety: bool = True) -> MixPlan:
     """Produce the arrangement recipe. Raises MixDeclined if the pair can't blend.
 
     `chain` is the vocal-chain config (Phase 0). Defaults to OFF (`VocalChainConfig()`), so a mix
     emits no vocal_moves/duck_moves and renders byte-identically to m6.0 until the founder flips it on
-    after the tuning week."""
+    after the tuning week.
+
+    `effect_variety` (2026-08-05) turns the effect pool ON — each take picks a different space/width
+    treatment. False (or the module `_EFFECT_POOL_ENABLED` off) => no picks => byte-identical to the
+    pre-pool render (the debug / golden-regression path)."""
     chain = chain or VocalChainConfig()
     opts = fence.arrangement_options(a1, a2)
     if not opts["mixable"]:
@@ -596,6 +691,28 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     vocal_moves, duck_moves = _emit_vocal_chain(placements, chain, a1g, opts["vocal_stretch"],
                                                 pitch=pitch_semitones)
 
+    # Effect pool (2026-08-05): assign this take's SPACE + WIDTH variety (deterministic — seeded from
+    # the pair + prompt + take). Disabled => no picks => byte-identical to the pre-pool render.
+    # Phase-throw model (step 3) SUPERSEDES the effect pool: a continuous reverb bed on every placement +
+    # echo throws on ~25% of its 4-bar moments (throws.plan_throws — deterministic, energy-biased). It
+    # OWNS echo, so Placement.echo is cleared. OFF (default) => nothing set => byte-identical (the old
+    # produced-drop Placement.echo fires exactly as today).
+    effects_selected: list[str] = []
+    if _PHRASE_THROW_ENABLED and effect_variety:
+        seed = int(hashlib.sha256(mix_id.encode()).hexdigest()[:16], 16)
+        tdec = throws.plan_throws(placements, a1g, opts["master_bpm"], opts["vocal_stretch"], seed)
+        n_throws = 0
+        for d in tdec:
+            p = placements[d["placement"]]
+            p.reverb_bed = True
+            p.echo = False  # the throw model owns echo
+            p.throws = [(m["bar_lo"], m["ratio"][0], m["ratio"][1]) for m in d["moments"] if m["chosen"]]
+            n_throws += len(p.throws)
+        effects_selected = ["reverb_bed", f"throws:{n_throws}"]
+    elif _EFFECT_POOL_ENABLED and effect_variety:
+        effects_selected = _select_effects(a1, a2, prompt, take, placements, s1_regions, opts["vocal_stretch"])
+
+    variety_on = (_PHRASE_THROW_ENABLED or _EFFECT_POOL_ENABLED) and effect_variety
     first = placements[0]
     return MixPlan(
         mix_id=mix_id, song1_id=a1.song_id, song2_id=a2.song_id,
@@ -607,6 +724,7 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         camelot_fit=fence.camelot_detail(a1, a2),  # Phase 0: informational key-fit (logged, never gates)
         chain_config_hash=chain_config_hash(chain),  # the chain config this mix was rendered under
         vocal_moves=vocal_moves, duck_moves=duck_moves,  # Phase 0 vocal chain (empty when disabled)
+        effects_selected=effects_selected, effect_variety=variety_on,  # effect pool (2026-08-05)
         notes=_describe_arrangement(placements, s1_regions),
         confidence=0.75 if source == "ai" else 0.6, source=source,
     )
