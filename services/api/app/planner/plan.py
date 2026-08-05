@@ -72,13 +72,12 @@ def effect_pool_enabled() -> bool:
     return _EFFECT_POOL_ENABLED
 
 
-# Rule 4 (simplified, 2026-08-05): gap-sized echo + continuous reverb, ON TOP of Rule 1's vocal (never
-# cut/chopped). ONE variation, always both together — no per-take effect selection. Ships OFF (byte-
-# identical to today, incl. Placement.echo at produced drops); flip to True to turn it on. Supersedes the
-# effect pool (which stays off). mixroute.ENGINE_VERSION is derived from this, so flipping it auto-
-# invalidates the cache. (The engine detects line-ends + gap lengths from the vocal itself — there is no
-# per-throw decision to plan, so this just flags the placements; the deleted phrase-throw model is gone.)
-_RULE4_ENABLED = False
+# Rule 4 (2026-08-05): a REAL tempo-synced DELAY echo on the vocal + continuous reverb, ON TOP of Rule 1's
+# vocal. ONE variation, always both together — no per-take selection. Supersedes the effect pool (stays
+# off). mixroute.ENGINE_VERSION is derived from this, so flipping it auto-invalidates the cache (every mix
+# re-renders WITH the echo). This just flags the placements; the engine (render._delay_echo) does the echo.
+# LIVE since 2026-08-05 (founder chose the boldest echo level, _DELAY_ECHO_WET=1.10, and deployed it).
+_RULE4_ENABLED = True
 
 
 def rule4_enabled() -> bool:

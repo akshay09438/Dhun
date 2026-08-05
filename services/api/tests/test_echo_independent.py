@@ -17,7 +17,7 @@ Criteria under test:
   E  CONTAINMENT (R1) — _echo_overruns is True iff the echoed length rings over a Song-1 lead start;
      ringing over Song 2's OWN next line (empty s1_starts_after) is allowed and NOT flagged.
   F  REVERB BED — _reverb_bed is length-preserving (F1 containment: truncated to the vocal length).
-  G  SHIPS OFF — behind plan._RULE4_ENABLED = False.
+  G  LIVE — deployed behind plan._RULE4_ENABLED = True (folded into ENGINE_VERSION).
 """
 
 import sys
@@ -133,7 +133,7 @@ def test_D_loudest_repeat_at_feedback_times_wet():
     delay = 0.1
     voc = _voc(0.05, peak=0.8)          # taps do not overlap => no constructive summing
     fb = render._DELAY_ECHO_FEEDBACK    # shipped approved value (0.55)
-    wet = render._DELAY_ECHO_WET        # shipped approved value (0.45)
+    wet = render._DELAY_ECHO_WET        # shipped approved value (the boldest level, 1.10)
 
     out = render._delay_echo(voc, delay, fb, wet, max_tail_secs=1.0)
 
@@ -145,11 +145,11 @@ def test_D_loudest_repeat_at_feedback_times_wet():
 
 
 def test_D_approved_constants_have_not_drifted():
-    """The founder ear-approved 'd_quarter_long' variant: 1/4-note spacing, long musical tail, wet 0.45.
-    Guards the approved SOUND against a silent constant change."""
+    """The founder ear-approved sound: 1/4-note spacing, long musical tail, and the BOLDEST echo level
+    (wet 1.10, chosen 2026-08-05). Guards the approved SOUND against a silent constant change."""
     assert render._DELAY_ECHO_BEATS == 1.0
     assert render._DELAY_ECHO_FEEDBACK == 0.55
-    assert render._DELAY_ECHO_WET == 0.45
+    assert render._DELAY_ECHO_WET == 1.10
 
 
 # =========================================================================================
@@ -195,10 +195,14 @@ def test_F_reverb_bed_empty_vocal():
 
 
 # =========================================================================================
-# G — SHIPS OFF behind the flag
+# G — LIVE: Rule 4 is deployed (flag ON) and folded into the cache id
 # =========================================================================================
-def test_G_rule4_ships_off():
+def test_G_rule4_is_live():
+    """Rule 4 was deployed 2026-08-05 — the flag is ON and its tag rides in ENGINE_VERSION so every mix
+    re-renders WITH the echo (the cache auto-invalidates)."""
     from app.planner import plan
+    from app.routes import mix as mix_route
 
-    assert plan._RULE4_ENABLED is False
-    assert plan.rule4_enabled() is False
+    assert plan._RULE4_ENABLED is True
+    assert plan.rule4_enabled() is True
+    assert "+m8echo" in mix_route.ENGINE_VERSION

@@ -47,7 +47,9 @@ _needs_data = pytest.mark.skipif(not _DATA_READY, reason="real cached demo pair 
 @pytest.fixture(autouse=True)
 def _pool_on(monkeypatch):
     """The pool ships OFF by default (opt-in); these end-to-end tests verify pool-ON behavior, so
-    enable it explicitly. (Determinism/byte-identity still hold with the pool on.)"""
+    enable it explicitly. (Determinism/byte-identity still hold with the pool on.) Rule 4 is now LIVE and
+    supersedes the pool (its branch runs first in build_mix_plan), so turn Rule 4 OFF to test the pool."""
+    monkeypatch.setattr(planner, "_RULE4_ENABLED", False)
     monkeypatch.setattr(planner, "_EFFECT_POOL_ENABLED", True)
 
 

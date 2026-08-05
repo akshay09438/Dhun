@@ -23,7 +23,11 @@ def _pool_on(monkeypatch):
     """The pool ships OFF by default (opt-in, flipped on after the founder's ear-test). These tests
     exercise pool-ON behavior, so enable it. The OFF-path tests override this and still win: the
     kill-switch test sets the flag False (applied after this fixture), and the variety-off test passes
-    effect_variety=False (the gate is `_EFFECT_POOL_ENABLED and effect_variety`)."""
+    effect_variety=False (the gate is `_EFFECT_POOL_ENABLED and effect_variety`).
+    NOTE (2026-08-05): Rule 4 is now LIVE and its branch in build_mix_plan runs BEFORE the pool's (they
+    are mutually exclusive — Rule 4 supersedes the pool), so we turn Rule 4 OFF here to test the pool in
+    isolation."""
+    monkeypatch.setattr(planner, "_RULE4_ENABLED", False)
     monkeypatch.setattr(planner, "_EFFECT_POOL_ENABLED", True)
 
 

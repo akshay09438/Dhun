@@ -831,7 +831,9 @@ def _reverb_bed(voc: np.ndarray) -> np.ndarray:
 # (Named _DELAY_ECHO_* to avoid colliding with the legacy produced-drop `_ECHO_*` constants above.)
 _DELAY_ECHO_BEATS = 1.0     # delay time = a 1/4 note — the approved spacing (repeats well separated)
 _DELAY_ECHO_FEEDBACK = 0.55  # each repeat is this fraction of the previous (0.55 => a long, musical tail)
-_DELAY_ECHO_WET = 0.45      # how loud the echo sits vs the dry vocal (the approved level)
+_DELAY_ECHO_WET = 1.10      # how loud the echo sits vs the dry vocal — the founder-chosen BOLDEST level
+                            #   (raised 0.45→1.10 on 2026-08-05; echo first tap ≈ −4.4 dB vs the vocal). The
+                            #   joint level-trim + chain_guards keep it safe on hot pairs (echo capped, never clips).
 _DELAY_ECHO_HEADROOM_DB = 2.5  # joint-trim the echo+reverb so a placement's peak stays within this of the dry
 _DELAY_ECHO_GUARD_SECS = 0.05  # keep the echo tail this far short of a Song-1 lead (never ring over it)
 # =========================================================================================================
