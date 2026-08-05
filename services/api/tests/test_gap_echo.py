@@ -179,6 +179,47 @@ def test_gap_echo_degenerate_inputs():
     assert render._gap_echo(empty, 120.0, 0.0).shape == empty.shape, "empty vocal must stay empty"
 
 
+# ================================================================ loudness: echo send level + bed duck
+def test_echo_first_tap_is_at_the_wet_send_level():
+    """The loudest echo tap is at _GAP_ECHO_WET x the sung line (not the decay ratio) — so the echo is a
+    bold, clearly-heard throw. Guards the 'can't feel the echo' fix: a regression back to the quieter
+    feedback-level first tap would drop this below _GAP_ECHO_WET."""
+    bpm = 120.0
+    voc = _voc([("v", 2.0), ("s", 3.0)])  # one line then a long gap (final tail rings into it)
+    seg_peak = float(np.max(np.abs(voc[: int(2.0 * SR)])))
+    out = render._gap_echo(voc, bpm, tail_after_end_secs=0.0)
+    gap = out[int(2.05 * SR): int(4.5 * SR)]           # inside the gap, past the line end
+    echo_peak = float(np.max(np.abs(gap)))
+    # the first tap ~ _GAP_ECHO_WET x seg peak (taps overlap so it can be a touch higher, never below)
+    assert echo_peak >= render._GAP_ECHO_WET * seg_peak * 0.9, (
+        f"echo too quiet: peak {echo_peak:.3f} < wet {render._GAP_ECHO_WET} x seg {seg_peak:.3f}")
+
+
+def test_gap_echo_events_marks_line_ends_with_real_gaps():
+    """_gap_echo_events returns one (line_end, tail) per sung line that has a big-enough gap — the shared
+    source of truth the echo AND the beat-duck both use. A gapless vocal yields no events."""
+    bpm = 120.0
+    ev = render._gap_echo_events(_voc([("v", 2.0), ("s", 2.0), ("v", 2.0)]), bpm, 0.0)
+    assert len(ev) >= 1, "a vocal with a real inter-line gap must yield an echo event"
+    assert all(tail > 0 for _e, tail in ev)
+    assert render._gap_echo_events(_voc([("v", 4.0)]), bpm, 0.0) == [], "a gapless vocal -> no events"
+
+
+def test_duck_bed_under_echoes_lowers_the_beat_only_in_the_gap():
+    """_duck_bed_under_echoes attenuates the beat inside an echo region and leaves it untouched outside —
+    so the echo pokes through the gap and the beat snaps back for the next line. Empty events => no-op."""
+    bed = np.ones((int(4.0 * SR), 2), dtype=np.float32)
+    events = [(int(1.0 * SR), int(1.0 * SR))]           # an echo from 1.0s to 2.0s
+    out = render._duck_bed_under_echoes(bed.copy(), anchor=0, events=events)
+    mid = float(np.abs(out[int(1.5 * SR)]).mean())      # well inside the ducked region
+    before = float(np.abs(out[int(0.5 * SR)]).mean())   # outside, before
+    after = float(np.abs(out[int(3.0 * SR)]).mean())    # outside, after
+    assert mid < 0.5, f"beat not ducked under the echo (mid={mid:.3f}, expected << 1.0)"
+    assert before > 0.95 and after > 0.95, "beat changed OUTSIDE the echo region — duck must be local"
+    # empty events => bed untouched
+    assert np.array_equal(render._duck_bed_under_echoes(bed.copy(), 0, []), bed)
+
+
 # ================================================================ the KEPT reverb bed (Rule 4's other half)
 def test_reverb_bed_is_length_preserving():
     """The continuous reverb bed truncates its wet tail to the dry length, so it never rings PAST the

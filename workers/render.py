@@ -842,7 +842,13 @@ _GAP_ECHO_SEG_BARS = 0.5         # how much of the just-sung line feeds the echo
 _GAP_ECHO_DELAY_BEATS = 0.375    # echo delay = a sixteenth-ish of the beat. Shortened 0.75→0.375 (2026-08-05
                                  #   ear-test): the old dotted-eighth was LONGER than the opening's short gaps, so
                                  #   no repeat fit; a shorter delay lets a quick echo land inside a small gap.
-_GAP_ECHO_FEEDBACK = 0.5         # each repeat is this fraction of the previous (a decaying tail)
+_GAP_ECHO_WET = 0.8              # LEVEL of the first (loudest) echo tap, as a fraction of the sung line. Raised
+                                 #   from 0.5 (2026-08-05 ear-test: "can't feel the echo") — the first throw is now
+                                 #   a bold −2 dB, then decays by _GAP_ECHO_FEEDBACK. Pairs with the bed duck below.
+_GAP_ECHO_FEEDBACK = 0.5         # each repeat is this fraction of the PREVIOUS (a decaying tail)
+_GAP_ECHO_BED_DUCK_DB = 10.0     # duck the BEAT (drums+bass) by this much UNDER each echo, so the echo pokes
+                                 #   through the gap instead of being masked (measured: echo sat −16 dB under the
+                                 #   bed). The duck is only in the echo's gap and snaps back when the vocal returns.
 _GAP_ECHO_GUARD_SECS = 0.05      # keep the tail this far short of the next line's entry (never touch it)
 # =========================================================================================================
 # Detection thresholds (not taste — the validated detector's shape). Hysteresis: a line OPENS above ONSET
@@ -885,49 +891,55 @@ def _voiced_runs(voc: np.ndarray) -> list[tuple[int, int]]:
     return list(zip(starts, ends))
 
 
-def _gap_echo(voc: np.ndarray, bpm: float, tail_after_end_secs: float) -> np.ndarray:
-    """Throw a decaying echo at the END of each sung line, its tail sized to the gap that follows it and
-    CAPPED at `_GAP_ECHO_TAIL_CAP_BARS` bars (tempo-derived). The DRY vocal plays through UNTOUCHED — the
-    echo only ever adds into the gaps. Internal gaps (line-to-line) are measured within `voc`; the FINAL
-    line's gap is its trailing silence plus `tail_after_end_secs` (the room before the next placement),
-    so the last tail may ring PAST `voc` — but only INTO that room (contained by construction; the
-    render-side `_echo_overruns` net checks it independently). No gap / a gap under the floor => no echo."""
+def _gap_echo_events(voc: np.ndarray, bpm: float, tail_after_end_secs: float) -> list[tuple[int, int]]:
+    """The echo plan: (line_end_sample, tail_samples) for each sung line that has a big-enough gap after
+    it. Shared by `_gap_echo` (which renders the echo) and the render loop (which ducks the beat under the
+    same regions) — one source of truth for WHERE the echo rings. Internal gaps are measured within `voc`;
+    the FINAL line's gap adds `tail_after_end_secs` (the room before the next voice). Empty => no echo."""
     n = len(voc)
     if bpm <= 0 or n == 0:
-        return voc
+        return []
     runs = _voiced_runs(voc)
     if not runs:
-        return voc                      # nothing voiced -> nothing to echo
+        return []
     beat = 60.0 / bpm
-    bar = beat * 4.0
-    cap = int(_GAP_ECHO_TAIL_CAP_BARS * bar * SR)
-    delay = max(1, int(beat * _GAP_ECHO_DELAY_BEATS * SR))
-    seg_len = max(1, int(_GAP_ECHO_SEG_BARS * bar * SR))
+    cap = int(_GAP_ECHO_TAIL_CAP_BARS * beat * 4.0 * SR)
     guard = int(_GAP_ECHO_GUARD_SECS * SR)
     min_gap = int(_GAP_ECHO_MIN_GAP_SECS * SR)
-    events: list[tuple[int, int]] = []    # (line_end_sample, tail_samples)
+    events: list[tuple[int, int]] = []
     for i, (_s, e) in enumerate(runs):
         gap = (runs[i + 1][0] - e) if i + 1 < len(runs) else (n - e) + int(tail_after_end_secs * SR)
         if gap < min_gap:
             continue                       # no gap / too tight -> no echo (never smear the next line)
         tail = min(gap - guard, cap)
-        if tail <= 0:
-            continue
-        events.append((e, tail))
+        if tail > 0:
+            events.append((e, tail))
+    return events
+
+
+def _gap_echo(voc: np.ndarray, bpm: float, tail_after_end_secs: float) -> np.ndarray:
+    """Throw a decaying echo at the END of each sung line, its tail sized to the gap that follows it and
+    CAPPED at `_GAP_ECHO_TAIL_CAP_BARS` bars (tempo-derived). The DRY vocal plays through UNTOUCHED — the
+    echo only ever adds into the gaps. The first (loudest) tap is at `_GAP_ECHO_WET`, decaying by
+    `_GAP_ECHO_FEEDBACK`. The final line's tail may ring PAST `voc` but only INTO the given room (contained
+    by construction; `_echo_overruns` re-checks). No gap / a gap under the floor => no echo."""
+    n = len(voc)
+    events = _gap_echo_events(voc, bpm, tail_after_end_secs)
     if not events:
         return voc
-    out_len = n
-    for e, tail in events:
-        out_len = max(out_len, e + tail)
+    beat = 60.0 / bpm
+    delay = max(1, int(beat * _GAP_ECHO_DELAY_BEATS * SR))
+    seg_len = max(1, int(_GAP_ECHO_SEG_BARS * beat * 4.0 * SR))
+    out_len = max(n, max(e + tail for e, tail in events))
     out = np.zeros((out_len, 2), dtype=np.float32)
     out[:n] += voc                          # the DRY vocal, unchanged — the echo only fills the gaps
     for e, tail in events:
         seg = _edge_fade(voc[max(0, e - seg_len):e].copy())
         if len(seg) == 0:
             continue
-        g = _GAP_ECHO_FEEDBACK
+        g = _GAP_ECHO_WET                    # first tap is a bold, clearly-heard throw...
         k = 1
-        while delay * k < tail:              # each repeat one delay deeper into the gap, decaying
+        while delay * k < tail:              # ...each later repeat one delay deeper into the gap, decaying
             off = e + delay * k
             m = min(len(seg), e + tail - off)  # CLAMP so nothing rings past e+tail (containment)
             if m > 0:
@@ -935,6 +947,27 @@ def _gap_echo(voc: np.ndarray, bpm: float, tail_after_end_secs: float) -> np.nda
             g *= _GAP_ECHO_FEEDBACK
             k += 1
     return _guard_duration(out.astype(np.float32))
+
+
+def _duck_bed_under_echoes(bed: np.ndarray, anchor: int, events: list[tuple[int, int]]) -> np.ndarray:
+    """Duck the BEAT by `_GAP_ECHO_BED_DUCK_DB` under each echo region so the echo pokes through the gap
+    instead of being masked by drums+bass (measured: the echo sat ~−16 dB under the bed). The duck lives
+    ONLY in the echo's own gap [anchor+e, anchor+e+tail], with short ramps in/out (declick) so the beat
+    snaps back the instant the vocal returns. Regions are disjoint by construction (one echo per gap)."""
+    if not events:
+        return bed
+    duck = 10.0 ** (-_GAP_ECHO_BED_DUCK_DB / 20.0)
+    ramp = max(1, int(_FADE_MS / 1000.0 * SR))
+    for e, tail in events:
+        s0 = anchor + e
+        s1 = min(anchor + e + tail, len(bed))
+        if s1 - s0 < ramp * 2:
+            continue
+        env = np.full(s1 - s0, duck, dtype=np.float32)
+        env[:ramp] = np.linspace(1.0, duck, ramp, dtype=np.float32)     # ease the beat down as the line ends
+        env[-ramp:] = np.linspace(duck, 1.0, ramp, dtype=np.float32)    # snap back up before the next line
+        bed[s0:s1] *= env[:, None]
+    return bed
 
 
 def _echo_overruns(anchor: float, placed_secs: float, next_anchor: float | None,
@@ -1024,6 +1057,7 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
         # so lifting it out of the lay loop below leaves the bed's arithmetic order — and therefore the
         # rendered bytes — unchanged. The vocal chain (stages 1-8) applies HERE, length-preserving.
         prepared: list = []  # [(placement, voc_array), ...]
+        _echo_events_by_idx: dict = {}  # Rule 4: placement index -> [(line_end, tail)] to duck the beat under
         all_placements = _placements_of(plan)
         # Effect pool: the FINAL placement (latest anchor) is the only one whose tail may ring past the
         # dry (throw/freeze) — nothing follows it. -1 when there are no placements.
@@ -1061,6 +1095,9 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
                 s1_starts_after = [s for s, _e in getattr(plan, "s1_vocal_regions", []) or [] if s > dry_end + 1e-6]
                 ceilings = ([nxt] if nxt is not None else []) + s1_starts_after
                 room = (min(ceilings) - dry_end) if ceilings else (_GAP_ECHO_TAIL_CAP_BARS * bar_secs)
+                # capture WHERE the echo rings (on the DRY vocal, before the echo is added) so Pass 2 can
+                # duck the beat under exactly those gaps — the same event list the echo itself uses.
+                _echo_events_by_idx[i] = _gap_echo_events(voc, plan.master_bpm, max(0.0, room))
                 voc = _gap_echo(voc, plan.master_bpm, max(0.0, room))   # echo at each line-end, sized to the gap
                 voc = _reverb_bed(voc)                                  # continuous reverb underneath (kept)
                 bad = chain_guards.check_vocal_chain_output(before_r4, voc)  # independent level backstop
@@ -1098,7 +1135,7 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
         # Pass 2 — lay each vocal on the bed with its entry moves (build / breath / sweep). Same order
         # and same arithmetic as before the split.
         prev_voc_end = 0  # sample where the last placed vocal ended — a build never reaches back over it
-        for p, voc in prepared:
+        for i, (p, voc) in enumerate(prepared):
             anchor = max(0, int(p.anchor * SR))  # never place before the start
             b0 = max(0, anchor - bar)
             build_bars = getattr(p, "build_bars", 0)
@@ -1118,6 +1155,9 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
             # arithmetic (and the rendered bytes) are unchanged.
             if getattr(p, "space", None) or getattr(p, "width", None):
                 bed[anchor:need] *= _POOL_BED_DUCK
+            # Rule 4: duck the beat under each echo's gap so the echo pokes through (snaps back for the
+            # next line). Only inside the echo regions; no Rule 4 => empty events => bed unchanged.
+            bed = _duck_bed_under_echoes(bed, anchor, _echo_events_by_idx.get(i, []))
             bed[anchor:need] += voc
             prev_voc_end = need
 
