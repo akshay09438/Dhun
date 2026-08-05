@@ -290,38 +290,12 @@ def _pool_violations(placements: list) -> list[str]:
     return [v for v in out if not (v in seen or seen.add(v))]
 
 
-def _throw_violations(plan: MixPlan) -> list[str]:
-    """Phase-throw (step 3) CONTAINMENT. The engine is length-preserving — a throw's carry + its faded
-    tail live INSIDE the placement's own bars, and the reverb bed is truncated to the vocal length — so
-    placement_end / R1 inter-placement math is unchanged (the existing R1 above already guards that, and
-    the reverb ring-out with it). This re-derives the INTRA-placement guarantee independently: every
-    throw is well-formed (sing>=1, carry>=1), CONTAINED (its end bar <= the placement's length in bars,
-    so its tail can't overrun the next sung phrase — the F1 failure class), and throws don't overlap
-    within a placement. Empty throws => no checks => pre-throw behaviour."""
-    out: list[str] = []
-    bar_secs = (60.0 / plan.master_bpm) * 4.0 if plan.master_bpm else 0.0
-    if bar_secs <= 0:
-        return out
-    for p in (plan.placements or []):
-        thr = getattr(p, "throws", None) or []
-        if not thr:
-            continue
-        end = placement_end(p.anchor, p.vocal_src, plan.vocal_stretch, getattr(p, "warp", None))
-        length_bars = round((end - p.anchor) / bar_secs)
-        spans: list[tuple[int, int]] = []
-        for entry in thr:
-            ms, sing, carry = entry
-            if sing < 1 or carry < 1:
-                out.append("a throw has a non-positive sing or carry length")
-            if ms < 0 or ms + sing + carry > length_bars:
-                out.append("a throw's carry runs past the placement (its tail would overrun the next vocal, R1)")
-            spans.append((ms, ms + sing + carry))
-        spans.sort()
-        for (s0, e0), (s1, e1) in zip(spans, spans[1:]):
-            if s1 < e0:
-                out.append("two throws overlap within a placement (R1)")
-    seen: set[str] = set()
-    return [v for v in out if not (v in seen or seen.add(v))]
+# NOTE (2026-08-05): the phrase-throw containment check (_throw_violations) was REMOVED with the
+# cut-ratio/throw model. Rule 4's gap-sized echo carries NO plan data (the engine detects line-ends and
+# sizes each tail to the gap from the vocal itself), so there is nothing throw-shaped in the plan to
+# check here. Its independent containment net lives RENDER-SIDE (render._echo_overruns raises if an
+# echoed placement would reach the next vocal), the same pattern as P2 — a check that needs the audio
+# runs where the audio is. The plan-side dry-R1 overlap check below is unchanged.
 
 
 def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[str]:
@@ -413,8 +387,8 @@ def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[s
     # Effect pool (2026-08-05): compatibility rules on the per-placement space/width picks. Judged on
     # the SAME placements the engine renders. No picks => no checks => validated exactly as before.
     violations.extend(_pool_violations(_placements_of(plan)))
-    # Phase-throw (2026-08-05): containment of throws within each placement. No throws => no checks.
-    violations.extend(_throw_violations(plan))
+    # Rule 4 (2026-08-05): the gap-echo's containment net is render-side (render._echo_overruns) — see
+    # the note above _pool_violations. Nothing throw-shaped in the plan to check here anymore.
     return violations
 
 

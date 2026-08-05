@@ -86,14 +86,11 @@ class Placement(BaseModel):
     # (tail-extending, FINAL placement only — the referee enforces this). WIDTH: double.
     space: str | None = None  # one of the pool's SPACE effects, or None
     width: str | None = None  # one of the pool's WIDTH effects, or None
-    # Phase-throw model (2026-08-05): echo throws fire at ~20-30% of a placement's 4-bar MOMENTS
-    # (punctuation, not grammar); the vocal sings normally the rest of the time. Each entry is
-    # (moment_start_bar, sing_bars, carry_bars): sing normally for sing_bars, then CUT the vocal for
-    # carry_bars while the echo (+ downbeat-aligned re-fire) carries the gap. LENGTH-PRESERVING by
-    # construction — the carry + its faded tail live INSIDE the placement's own bars, so placement_end
-    # and R1 are unchanged. Empty => no throws => byte-identical to the pre-throw render.
-    throws: list[tuple[int, int, int]] = []
-    reverb_bed: bool = False  # continuous reverb bed on this vocal (rings into the carry gaps); False => none
+    # Rule 4 (simplified, 2026-08-05): when True, the engine adds a gap-sized echo at each line-end + a
+    # continuous reverb bed on this vocal (always both together), sizing/containing the echo from the
+    # vocal itself — there is no per-throw plan data. False => neither => byte-identical to the pre-Rule-4
+    # render. (The old phrase-throw `throws` field was removed with the cut-ratio model.)
+    reverb_bed: bool = False
 
 
 class StemMove(BaseModel):

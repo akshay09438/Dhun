@@ -32,7 +32,7 @@ from app.models import Mix, MixPlan, TrackAnalysis, VocalChainConfig, chain_conf
 from app.planner import validate
 from app.planner import name as name_planner
 from app.planner import window
-from app.planner.plan import MixDeclined, build_mix_plan, effect_pool_enabled, phrase_throw_enabled
+from app.planner.plan import MixDeclined, build_mix_plan, effect_pool_enabled, rule4_enabled
 from app.storage import maybe_sweep, path_for
 
 # workers/ lives at the repo root; put it on the path so we can import the engine.
@@ -156,7 +156,7 @@ _S1_STEMS = ("drums", "bass", "other")
 # for a non-pool engine/plan change.
 _ENGINE_VERSION_BASE = "m6.11"  # held-out beats — floor + window-scaled entries + longest-first setup
 ENGINE_VERSION = (_ENGINE_VERSION_BASE
-                  + ("+m8throw" if phrase_throw_enabled() else "")   # phrase-throw + reverb bed (step 3)
+                  + ("+m8echo" if rule4_enabled() else "")           # Rule 4: gap-sized echo + reverb bed
                   + ("+m7pool" if effect_pool_enabled() else ""))    # effect pool (superseded, stays off)
 #          slices so the held-out window is FULL of vocal, not holes (founder: "more parts").
 #         (NOT m6.9: that string was already burned by a reverted experiment, so its stale renders

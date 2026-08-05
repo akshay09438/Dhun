@@ -18,7 +18,7 @@ import random
 
 from app.models import (DuckMove, MixPlan, Placement, TrackAnalysis, VocalChainConfig,
                         VocalProcessMove, chain_config_hash)
-from app.planner import fence, hooks, instrumental_beats, llm, throws, window
+from app.planner import fence, hooks, instrumental_beats, llm, window
 
 # Phase 0 (T1): the AI arrangement engine is OFF by default. The founder prefers the
 # deterministic rules arrangement (`_default_arrangement`) — a note-for-note match to the loved
@@ -72,16 +72,19 @@ def effect_pool_enabled() -> bool:
     return _EFFECT_POOL_ENABLED
 
 
-# Phase-throw + continuous reverb (step 3, 2026-08-05). Ships OFF (byte-identical to today, incl.
-# Placement.echo at produced drops); flip to True to turn it on. Supersedes the effect pool (which
-# stays off). mixroute.ENGINE_VERSION is derived from this, so flipping it auto-invalidates the cache.
-_PHRASE_THROW_ENABLED = False
+# Rule 4 (simplified, 2026-08-05): gap-sized echo + continuous reverb, ON TOP of Rule 1's vocal (never
+# cut/chopped). ONE variation, always both together — no per-take effect selection. Ships OFF (byte-
+# identical to today, incl. Placement.echo at produced drops); flip to True to turn it on. Supersedes the
+# effect pool (which stays off). mixroute.ENGINE_VERSION is derived from this, so flipping it auto-
+# invalidates the cache. (The engine detects line-ends + gap lengths from the vocal itself — there is no
+# per-throw decision to plan, so this just flags the placements; the deleted phrase-throw model is gone.)
+_RULE4_ENABLED = False
 
 
-def phrase_throw_enabled() -> bool:
-    """Whether the phrase-throw model (echo events + continuous reverb bed) is live. Folded into the
-    mix/set cache id so flipping it re-renders every mix WITH throws instead of serving an OFF cache."""
-    return _PHRASE_THROW_ENABLED
+def rule4_enabled() -> bool:
+    """Whether Rule 4 (gap-sized echo + continuous reverb bed) is live. Folded into the mix/set cache id
+    so flipping it re-renders every mix WITH the echo/reverb instead of serving an OFF cache."""
+    return _RULE4_ENABLED
 _POOL_SELECT_VERSION = "pool1"  # salt so a future pool change reshuffles the per-pair combo order
 _POOL_SPACE_INTERIOR = ["room", "hall", "plate", "predelay"]  # length-preserving reverbs (any placement)
 _POOL_SPACE_FINAL = ["throw", "freeze"]  # tail-extenders — only the final placement (referee-enforced)
@@ -691,28 +694,22 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     vocal_moves, duck_moves = _emit_vocal_chain(placements, chain, a1g, opts["vocal_stretch"],
                                                 pitch=pitch_semitones)
 
-    # Effect pool (2026-08-05): assign this take's SPACE + WIDTH variety (deterministic — seeded from
-    # the pair + prompt + take). Disabled => no picks => byte-identical to the pre-pool render.
-    # Phase-throw model (step 3) SUPERSEDES the effect pool: a continuous reverb bed on every placement +
-    # echo throws on ~25% of its 4-bar moments (throws.plan_throws — deterministic, energy-biased). It
-    # OWNS echo, so Placement.echo is cleared. OFF (default) => nothing set => byte-identical (the old
-    # produced-drop Placement.echo fires exactly as today).
+    # Rule 4 (simplified, 2026-08-05) SUPERSEDES the effect pool: flag every placement for a continuous
+    # reverb bed + a gap-sized echo (the engine detects each line-end and the gap after it from the vocal
+    # itself, so there is no per-throw decision to plan here — it OWNS echo, so the old produced-drop
+    # Placement.echo is simply ignored by the engine's Rule-4 branch). OFF (default) => nothing set =>
+    # byte-identical (the old produced-drop Placement.echo fires exactly as today).
+    # Effect pool (2026-08-05, dormant): assign this take's SPACE + WIDTH variety (deterministic — seeded
+    # from the pair + prompt + take). Disabled => no picks => byte-identical to the pre-pool render.
     effects_selected: list[str] = []
-    if _PHRASE_THROW_ENABLED and effect_variety:
-        seed = int(hashlib.sha256(mix_id.encode()).hexdigest()[:16], 16)
-        tdec = throws.plan_throws(placements, a1g, opts["master_bpm"], opts["vocal_stretch"], seed)
-        n_throws = 0
-        for d in tdec:
-            p = placements[d["placement"]]
-            p.reverb_bed = True
-            p.echo = False  # the throw model owns echo
-            p.throws = [(m["bar_lo"], m["ratio"][0], m["ratio"][1]) for m in d["moments"] if m["chosen"]]
-            n_throws += len(p.throws)
-        effects_selected = ["reverb_bed", f"throws:{n_throws}"]
+    if _RULE4_ENABLED and effect_variety:
+        for p in placements:
+            p.reverb_bed = True  # Rule 4 ON: gap-echo + continuous reverb, always both together
+        effects_selected = ["gap_echo", "reverb_bed"]
     elif _EFFECT_POOL_ENABLED and effect_variety:
         effects_selected = _select_effects(a1, a2, prompt, take, placements, s1_regions, opts["vocal_stretch"])
 
-    variety_on = (_PHRASE_THROW_ENABLED or _EFFECT_POOL_ENABLED) and effect_variety
+    variety_on = (_RULE4_ENABLED or _EFFECT_POOL_ENABLED) and effect_variety
     first = placements[0]
     return MixPlan(
         mix_id=mix_id, song1_id=a1.song_id, song2_id=a2.song_id,
