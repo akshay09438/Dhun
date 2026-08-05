@@ -4,43 +4,57 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
-2026-08-05 — **Rule 4 (Regenerate variety) is DONE and DEPLOYED LIVE on `main`: a real tempo-synced DELAY echo + reverb bed, at the founder-chosen boldest level. Every mix now renders with the echo.** This session also adopted the working rule that made it fast: **prototype the SOUND in a throwaway script and get ear-approval BEFORE the production build.** Moving on from Rule 4.
+2026-08-06 — **This session shipped NOTHING to the codebase — it was throwaway prototyping for Rule 3 (chop-and-repeat), which is now PARKED pending a real-DJ consult.** The last real shipped achievement remains **Rule 4 (the echo + reverb), LIVE on `main`** — re-verified today, still live and intact. Rule 3 stays a Desktop listening experiment only; the repo is byte-for-byte unchanged (`git status` clean).
 
 ## Where things stand (one breath)
 
-- **Rule 4 is LIVE on `main`** (merged + pushed, commit `250e059`/`684f295`): `plan._RULE4_ENABLED = True`, `render._DELAY_ECHO_WET = 1.10` (the boldest level the founder chose). `ENGINE_VERSION` = **`m6.11+m8echo`** — the mix + set caches auto-invalidated, so every mix now re-renders with the echo. **Fully reversible:** flip `_RULE4_ENABLED` back to `False` and it drops to `m6.11` (byte-identical to pre-Rule-4; golden gate still passes as the fallback).
-- **Rule 4 = a REAL echo (a tempo-synced feedback DELAY, 1/4-note, feedback 0.55, wet 1.10) on the vocal + the continuous reverb bed.** Founder ear-approved the sound (prototype `d_quarter_long`) then chose the boldest LEVEL after A/B-ing louder variants on two real pairs (Innerbloom×Dooriyan, Father Ocean×Der Lagi Lekin). The real engine reproduces the approved sound (0.993 correlation at the base level); passes plan + finished-audio referee, no clip.
-- **How we got there (the productive part):** three earlier Rule-4 shapes were rejected BY EAR — a chop-and-repeat re-fire, a "forceful" gap-sized echo, and a phrase-tail STAMP (which is chop/stutter, not an echo). Once we prototyped the actual sound (throwaway scripts → dated Desktop folders → founder listens → change a number → re-render in minutes), it converged in one sitting. **This is now a standing rule (memory: `prototype-sound-before-ceremony`).**
-- **The approved delay echo replaced the earlier gap-echo engine** (deleted `_gap_echo`/`_voiced_runs`/`_gap_echo_events`/`_duck_bed_under_echoes`/`_GAP_ECHO_*` and its tests). The **breath-safe re-fire helper is still parked** intact in `workers/rule3_parked.py` for a future Rule 3.
+- **Rule 4 (echo + reverb) is LIVE on `main` and re-verified today** — `rule4_enabled() = True`, `_RULE4_ENABLED = True`, `_DELAY_ECHO_WET = 1.10` (the founder-chosen boldest level), `ENGINE_VERSION = m6.11+m8echo`. Every mix renders with the tempo-synced delay echo + reverb bed. Fully reversible (flip `_RULE4_ENABLED` to `False` → back to `m6.11`, byte-identical). **This is the session-before-last's work and it is DONE.**
+- **Rule 3 (chop-and-repeat) — EXPLORED via throwaway scripts only, then PARKED.** Nothing in the real codebase (no `render.py`, no `validate.py`, no tests, no docs, no ceremony — the `prototype-sound-before-ceremony` rule). Two listening rounds were rendered to dated Desktop folders on one pair (**I Adore You** beat × **Tujhe Bhula Diya** vocal).
+- **The blocker (founder's call): the founder is consulting a real DJ tomorrow on how chop-and-repeat should actually be done** ("I also know how this will actually sound"). Do NOT build further until that input lands — it will set the target.
+
+## The Rule 3 learning so far (this is the valuable part — don't lose it)
+
+- **Round 1 (WRONG approach):** sliced the vocal on the BAR/BEAT grid and repeated whatever bar had energy → cut _through_ words, repeated a meaningless scrap. Founder feedback: that is not chop-and-repeat.
+- **The correction (founder):** chop-and-repeat = take ONE whole, recognizable, HAND-PICKED line — the hook — and repeat _that intact line_, playing with it; sometimes bring in a second line. For this pair the hook line is **"tujhe bhula diya ho"**, hand-located by the founder at **0:58–1:12 of Tujhe Bhula Diya**; a second line ("kyun teri yaadon mein") sometimes trades with it.
+- **Round 2 (RIGHT approach, awaiting the founder's ear + DJ input):** cut the WHOLE sung lines out of the 0:58–1:12 window at the pauses (envelope method, intact — not grid-sliced), and repeated the whole line over the beat five ways (straight / with-breath / per-bar / two-lines-trading / playful-pitch). Also exported the 4 isolated dry lines from that window so the founder can confirm exactly which one is "tujhe bhula diya ho" (best guess = LINE-0 @ 0:58.7; LINE-1 @ 1:02.3 likely "kyun teri yaadon mein").
+- **Pitch shifting WORKED on this machine this session** — `rubberband` did NOT throw the earlier `std::bad_alloc`; the pitched variation rendered for real. (If it fails again, the scripts skip pitch and say so.) Reverse + time-stretch both work.
+- **Reusable engine pieces confirmed for when Rule 3 is really built:** `workers/rule3_parked.py :: punchy_bar()` carries the breath-safe VOICED_FLOOR (never re-fire a breath — the Father Ocean 3:56 defect); `workers/render.py :: _phrase_ends()` is the reliable envelope line-splitter; `_vocal_take()` handles tempo-locked slicing; the echo-harness pattern (`scripts/echo_reverb_harness.py`) is the throwaway template.
+
+## Stage 2 (hook detection) — feasibility REPORTED, nothing built
+
+- **Question:** is "the hook = the most-repeated phrase" computable from the vocal stem using the reliable envelope approach (the one that found line-ends across 36 stems, median 28), NOT `vocal_regions`?
+- **Answer: yes, low research risk.** Step 1 = cut the vocal into whole phrases with the existing envelope splitter (`_phrase_ends`). Step 2 = fingerprint each phrase and score how many other phrases it closely matches (self-similarity); the most-recurring phrase is the hook. Standard "chorus/thumbnail via self-similarity matrix" — no lyrics, no meaning, no AI. **`librosa` is NOT installed and is NOT needed** — scipy + numpy suffice; one-time, cacheable, on-machine, no cloud. Only real work later = ear-tuning the "alike enough" threshold (Indian vocals ornament heavily). This is effectively the hand-pick that Rule 3 currently does by ear.
 
 ## In flight — honest state
 
-- **Nothing in flight. Rule 4 is DONE and DEPLOYED** to `main` (`_RULE4_ENABLED=True`, `_DELAY_ECHO_WET=1.10`), pushed. The design branch `design/mix-reverse-engineering` was also merged to `main` via GitHub PR #5 (the OFF version) and then the deploy commits merged on top. Verified live: `ENGINE_VERSION` = `m6.11+m8echo`, `rule4_enabled()` = True.
-- **Consequence to expect:** because `ENGINE_VERSION` changed, every existing mix/set cache is invalidated — all mixes re-render (compute cost) and any mix a user already had now sounds different (has the echo). This is intended and reversible.
-- **Suite:** 499 passed / 1 failed on the last full run — the 1 failure is the **pre-existing, unrelated `test_cache_sweep.py` flake** (see open items), NOT Rule 4.
+- **Nothing in flight in the codebase.** Repo is clean (`git status` empty), on `main`. No production files changed this session.
+- **Rule 3 is parked, not in progress** — waiting on the founder's DJ consult. When it resumes, the next micro-step is a listening decision, not a build (see "Do first").
 
 ## Do first next session
 
-1. **Rule 4 is done — move on.** No follow-up owed unless the founder wants the boldest echo level re-tuned by ear on more catalog pairs (the adversarial reviewer noted it's safe but "loud is a taste call"; the founder chose it on two real pairs and said deploy).
-2. **Fix the pre-existing `test_cache_sweep.py` flake** (cross-file pollution from `test_mix_route.py`) — has a task chip; unrelated to Rule 4.
-3. **Optional cleanup:** delete the dormant, now-superseded effect-pool subsystem (Rule 4's branch pre-empts it; the pool tests now turn Rule 4 off to run). Founder's call.
+1. **Wait for / capture the founder's DJ input on how chop-and-repeat should sound** — that sets the target. Then continue the throwaway listening loop (still no ceremony) from the Round-2 folder.
+2. **Founder to confirm the hook line** in the Round-2 folder: which `LINE-N` clip is "tujhe bhula diya ho" (best guess LINE-0), and which chop-feel (1–5) is closest — or "still not it." Swap the line / retune in minutes.
+3. Only once the SOUND is founder-approved does Rule 3 earn a real build (render.py + validator + tests + the two adversarial ceremonies), exactly like Rule 4.
 
 ## Verification evidence
 
-- **Full backend suite (Rule 4 LIVE), 2026-08-05:** `pytest -q` (from `services/api`) → **499 passed, 1 failed.** The 1 failure = `test_cache_sweep.py::test_dry_run_reports_but_deletes_nothing`, the known order-dependent flake (passes in isolation; reproduces only as the pair `test_mix_route.py test_cache_sweep.py`). Not Rule 4.
-- **Golden byte-identical-OFF gate:** still **passes** with the flag on — flipping `_RULE4_ENABLED` back to `False` returns the exact pre-Rule-4 engine (`m6.11`). The OFF path is a proven, one-line fallback.
-- **Live engine smoke check:** `ENGINE_VERSION == "m6.11+m8echo"` and `plan.rule4_enabled() is True` on `main`.
-- **Real renders (flag ON):** Innerbloom×Dooriyan and Father Ocean×Der Lagi Lekin both passed plan + finished-audio referee, peak 0.891 (no clip), at echo levels up to wet 1.10 (echo ≈ −4.4 dB vs the vocal).
-- **Ceremony (two adversarial passes + independent test-author):**
-  - Build pass: test-author wrote 11 hermetic tests (no bugs); adversarial reviewer **`safe` for the OFF ship** (byte-identical-OFF, containment, level/clip refuted, determinism); found **echo-length inflation** → **FIXED** (tail bounded to audible decay).
-  - **Deploy pass (LIVE at wet 1.10):** adversarial reviewer verdict **`safe` to deploy** — the joint `_max_wet_gain` trim guarantees echo+reverb ≤ +2.5 dB over the dry (a fixed 0.5 dB margin under the +3 dB P2 guard, **independent of `wet`**), so a louder echo **cannot clip or fail a render** (empirically: peak +2.50 dB at the ceiling, never above, `g` never 0); crest rises (mush guard can't fire); caches invalidate correctly. Residuals are TASTE (loudness) + the expected re-render cost, not safety.
-- **A real bug the golden gate caught mid-build:** the Rule-4 knobs first collided (`_ECHO_FEEDBACK`) with the legacy produced-drop echo constant, silently changing the OFF path → renamed to `_DELAY_ECHO_*`; golden byte-identity restored. (The safety net worked.)
+- **Repo clean, no code touched:** `git status --short` → empty; branch = `main`. All prototype scripts live in the session scratchpad; all audio + READMEs live in gitignored Desktop folders. **Nothing to review, nothing to merge for Rule 3.**
+- **Rule 4 LIVE re-verified today (2026-08-06):** `python -c "... from app.planner import plan; from app.routes import mix"` →
+  - `plan.rule4_enabled()` = **True**
+  - `plan._RULE4_ENABLED` = **True**
+  - `render._DELAY_ECHO_WET` = **1.10**
+  - `mixroute.ENGINE_VERSION` = **`m6.11+m8echo`**
+- **Full test suite NOT re-run this session** — deliberately, because zero production code changed. The last real run (prior session, 2026-08-05) was **499 passed / 1 failed**, the 1 failure being the known pre-existing `test_cache_sweep.py` order-dependent flake (unrelated to any feature). That number stands unchanged; re-run before any real Rule 3 build.
+
+## Prototype artefacts (throwaway, on the founder's Desktop — safe to delete anytime)
+
+- `Prompt-DJ Rule3 chop-and-repeat PROTOTYPE (2026-08-05)` — Round 1 (grid-sliced, the WRONG approach) + a README + Stage-2 report.
+- `Prompt-DJ Rule3 chop-and-repeat R2 (2026-08-05)` — Round 2 (whole-line, the RIGHT approach): `chop1..5` + `LINE-0..3` dry hook-line clips.
 
 ## Open escalations / re-verify next session (claims, not facts)
 
-- **DANGEROUS surfaces on this branch vs `main` — RE-VERIFY before trusting "OFF == main":** `workers/render.py` (delay echo, this session), and from earlier superseded-but-committed work on this branch: `services/api/app/planner/validate.py` (removed `_throw_violations`), `models.py` (removed `Placement.throws`), `plan.py`, `mix.py`. All ship OFF; re-confirm `_RULE4_ENABLED`/`_EFFECT_POOL_ENABLED` are both `False` and the golden gate passes at the start of next session.
-- **Rule 4 activation DONE (was a dangerous change) — re-verify the LIVE state next session:** confirm `_RULE4_ENABLED is True`, `_DELAY_ECHO_WET == 1.10`, `ENGINE_VERSION == "m6.11+m8echo"` on `main`, and that the golden gate still passes (so the OFF fallback is intact). The deploy passed a dedicated adversarial `safe` verdict at the live level; the ON path has an integration test (`test_render.py::test_rule4_on_render_*`).
-- **Pre-existing flaky test (NOT Rule 4):** the full suite can intermittently fail ONE `test_cache_sweep.py` test — proven cross-file state pollution from `test_mix_route.py` (both untouched by this work; each passes in isolation; reproduces as the 2-file pair `test_mix_route.py test_cache_sweep.py`). Spun off as its own task chip.
+- **Rule 4 LIVE state (dangerous surface) — re-verify next session as a claim:** confirm `_RULE4_ENABLED is True`, `_DELAY_ECHO_WET == 1.10`, `ENGINE_VERSION == "m6.11+m8echo"`, and the golden byte-identical-OFF gate still passes (the one-line OFF fallback intact). Verified true TODAY, but treat as a claim next time.
+- **Pre-existing flaky test (NOT any feature):** the full suite can intermittently fail ONE `test_cache_sweep.py` test — proven cross-file state pollution from `test_mix_route.py` (each passes in isolation). Has its own task chip. Still open.
 - **Founder decision pending:** whether to delete the dormant, now-superseded effect-pool subsystem (Rule 4 pre-empts it).
-- **Older open item (carried, re-verify):** the Export screen "Download full mix" defect from the 2026-07-21 handoff — not touched; status unknown.
-- **Listening artefacts on the founder's Desktop (throwaway):** `Prompt-DJ Rule4 PROTOTYPE real echo (2026-08-05)` (the approved `d_quarter_long` + variants), `Prompt-DJ Rule4 PROTOTYPE beat-grid echo (2026-08-05)` (rejected chop versions), `Prompt-DJ Rule4 gap-echo listening (2026-08-05)` (rejected gap-echo).
+- **Older open item (carried, re-verify):** the Export screen "Download full mix" defect from the 2026-07-21 handoff — diagnosed (the fetched file is discarded ~2 ms after download, and the link is never attached to the page), NOT fixed; the fix also needs the dangerous-surface `ExportScreen.test.tsx` strengthened, so it waits on a founder go-ahead. Status unchanged this session.
+- **Rule 3 is parked pending the founder's real-DJ consult** — do not build until that input sets the target sound.
