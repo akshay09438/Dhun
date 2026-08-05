@@ -835,9 +835,13 @@ def _reverb_bed(voc: np.ndarray) -> np.ndarray:
 # the catalog spans both camps, so a fixed number of seconds would be wrong for one of them.
 _GAP_ECHO_TAIL_CAP_BARS = 1.0    # longest echo tail, in BARS (tempo-derived): the tail grows with the gap
                                  #   up to this many bars, then SATURATES (a 70 s gap must not give a 70 s echo)
-_GAP_ECHO_MIN_GAP_SECS = 0.50    # a gap shorter than this gets NO echo (too tight — it would smear the next line)
+_GAP_ECHO_MIN_GAP_SECS = 0.30    # a gap shorter than this gets NO echo (too tight — it would smear the next line).
+                                 #   Lowered 0.50→0.30 (2026-08-05 ear-test) so the OPENING's short gaps (~0.3-0.5s
+                                 #   between the entry lines) get short echoes instead of ringing dry like Rule 1.
 _GAP_ECHO_SEG_BARS = 0.5         # how much of the just-sung line feeds the echo (its last ~half-bar, a word or two)
-_GAP_ECHO_DELAY_BEATS = 0.75     # echo delay = a dotted-eighth of the beat (the classic DJ vocal throw)
+_GAP_ECHO_DELAY_BEATS = 0.375    # echo delay = a sixteenth-ish of the beat. Shortened 0.75→0.375 (2026-08-05
+                                 #   ear-test): the old dotted-eighth was LONGER than the opening's short gaps, so
+                                 #   no repeat fit; a shorter delay lets a quick echo land inside a small gap.
 _GAP_ECHO_FEEDBACK = 0.5         # each repeat is this fraction of the previous (a decaying tail)
 _GAP_ECHO_GUARD_SECS = 0.05      # keep the tail this far short of the next line's entry (never touch it)
 # =========================================================================================================

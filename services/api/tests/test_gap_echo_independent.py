@@ -118,7 +118,7 @@ def test_wall_to_wall_vocal_is_returned_dry():
 def test_gap_below_min_threshold_gets_no_echo():
     """C: an inter-line gap shorter than _GAP_ECHO_MIN_GAP_SECS is too tight to echo into (it would
     smear the next line). With no trailing room either, the whole thing comes back dry."""
-    tight = render._GAP_ECHO_MIN_GAP_SECS - 0.2   # 0.30 s < 0.50 s floor
+    tight = render._GAP_ECHO_MIN_GAP_SECS - 0.2   # a gap comfortably under the floor (parameter-relative)
     assert tight > 0
     voc = _cat(_tone(0.8, 220.0), _silence(tight), _tone(0.8, 330.0))
     runs = render._voiced_runs(voc)
