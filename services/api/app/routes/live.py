@@ -19,6 +19,7 @@ from app.audio.analysis import analysis_path
 from app.audio.stems import stem_path
 from app.config import settings
 from app.models import LiveOp, MixPlan, TrackAnalysis
+from app.planner import validate
 from app.planner.keys import resolve_key_shift
 from app.planner.live import parse_command
 from app.planner.suggest import suggest_moves
@@ -92,13 +93,18 @@ def _run_vocal_bus(mix_id: str) -> None:
         # the mix render) so the live bus is NEVER a silently un-shifted "key-matched" vocal. Deterministic
         # per pair; a PitchError is caught below and surfaces as a visible "couldn't prepare" decline.
         from app.routes.mix import key_match_enabled  # local import avoids a route<->route import cycle
-        s2_voc = stem_path(plan.song2_id, "vocals")
+        orig_s2_voc = stem_path(plan.song2_id, "vocals")
+        s2_voc = orig_s2_voc
         if key_match_enabled():
             a1 = TrackAnalysis(status="ready", **json.loads(analysis_path(plan.song1_id).read_text()))
             a2 = TrackAnalysis(status="ready", **json.loads(analysis_path(plan.song2_id).read_text()))
             shift, _why = resolve_key_shift(a1, a2)
             if shift != 0:
-                s2_voc = pitch.shifted_vocal(plan.song2_id, s2_voc, shift)
+                s2_voc = pitch.shifted_vocal(plan.song2_id, orig_s2_voc, shift)
+                # K1 — the SAME independent referee the Download runs (mix.py). If a re-rendered shift
+                # (e.g. after the pitch cache was swept) lands stable-but-wrong, this catches it and the
+                # except-block below turns it into a visible decline — Play can never serve a wrong key.
+                validate.assert_key_shift(orig_s2_voc, s2_voc, shift)
         song1_stems = {"vocals": stem_path(plan.song1_id, "vocals")}  # for the contrast answer
         render_vocal_bus(plan, song1_stems, s2_voc, tmp)
         # Publish atomically: the SERVED path only ever appears fully written, so a poll can
