@@ -158,7 +158,9 @@ _S1_STEMS = ("drums", "bass", "other")
 # for a non-pool engine/plan change.
 # BUMPED m6.11 -> m9band15 (2026-08-06): the ±11%->±15% tempo-band widen changes mix output, so every
 # mix + set must re-render fresh (no stale ±11% cache is ever served). Unique-per-behaviour, as required.
-_ENGINE_VERSION_BASE = "m9band15"  # ±15% band base (was "m6.11" held-out-beat base)
+_ENGINE_VERSION_BASE = "m11rule"  # per-mix RULE selection (2026-08-07): Rule 3 added + Rule 4 gated to
+#                                   rule==4, so the default mix is now DRY (was always-echo). Bumped from
+#                                   "m9band15" so every stale echo-default mix re-renders under the new gate.
 
 # KEY MATCHING (Change ②, 2026-08-06): shift Song 2's vocal into a compatible key BEFORE the mix
 # (verified + cached upstream in app/audio/pitch.py; referee K1 re-checks the chroma). INSTANT OFF-SWITCH:
@@ -210,6 +212,7 @@ class MixRequest(BaseModel):
     song2_id: str  # the vocal source
     prompt: str = ""
     take: int = 1  # regenerate iteration — a new take is a distinct arrangement + cache slot
+    rule: int = 1  # which mixing RULE: 1 = simple mix (default), 3 = chop & repeat, 4 = echo+reverb
 
 
 class MixNameRequest(BaseModel):
@@ -218,8 +221,11 @@ class MixNameRequest(BaseModel):
     prompt: str = ""
 
 
-def mix_id_for(song1_id: str, song2_id: str, prompt: str, take: int = 1) -> str:
-    raw = f"{ENGINE_VERSION}:{_CHAIN_CONFIG_HASH}:{song1_id}:{song2_id}:{prompt}:{take}".encode()
+def mix_id_for(song1_id: str, song2_id: str, prompt: str, take: int = 1, rule: int = 1) -> str:
+    # `rule` is in the cache id so Rule 3 (chop & repeat) never collides with the Rule-1 render of the
+    # same pair. Default rule=1 keeps every existing cached mix id byte-identical (…:{take} with no suffix).
+    rule_tag = "" if rule == 1 else f":r{rule}"
+    raw = f"{ENGINE_VERSION}:{_CHAIN_CONFIG_HASH}:{song1_id}:{song2_id}:{prompt}:{take}{rule_tag}".encode()
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -313,12 +319,53 @@ def _attach_set_grid(plan: MixPlan, a1: TrackAnalysis, wav: Path) -> None:
         plan.mix_duration = None
 
 
-def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int) -> None:
-    """Background worker: plan -> validate -> render -> validate the audio."""
+def _render_rule3(plan: MixPlan, mix_id: str, song1_id: str, song2_id: str,
+                  a1: TrackAnalysis, a2: TrackAnalysis, s1_voc: Path, s2_voc: Path,
+                  stems: dict[str, Path]) -> None:
+    """Rule 3 (chop & repeat): plan the chops on the SHARED, already tempo/key-matched grid, then render
+    via the Rule-3 engine instead of render_mix. The base `plan` (built + validated upstream) carries the
+    BPM+key foundation and the grid/metadata for serving; here we mark it rule=3 and swap the render.
+
+    The chop hook is the curated `hooks.py` marker (or Rule-1's first vocal slice as a fallback). The
+    beat song's own vocal is KEPT and the chops trade in its gaps; a vocal-heavy/short beat (too little
+    gap room) drops the beat vocal so the chops have space."""
+    from app.planner import rule3 as r3
+    from app.planner.hooks import hook_for
+    from workers.rule3 import envelope, render_rule3
+
+    dur = a1.beats[-1] if a1.beats else 0.0
+    venv, sr_env = envelope(s2_voc)                        # the (already key-shifted) vocal envelope
+    hook = hook_for(song2_id) or (
+        plan.placements[0].vocal_src if plan.placements else (a2.beats[0], a2.beats[0] + 18.0))
+    try:
+        a_unit, c_unit = r3.pick_blocks(hook, list(a2.downbeats), a2.bpm, venv, sr_env)
+    except ValueError as e:
+        raise MixDeclined(f"Rule 3 couldn't find a clear hook line to chop ({e}).")
+
+    keep = s1_voc.exists()
+    benv = envelope(s1_voc)[0] if keep else None
+    gaps = r3.instrumental_gaps(benv, sr_env, dur, keep_beat_vocal=keep)
+    if keep and (not gaps or sum(g1 - g0 for g0, g1 in gaps) < 0.35 * dur):
+        keep, gaps = False, r3.instrumental_gaps(None, sr_env, dur, keep_beat_vocal=False)
+    hits = r3.schedule(list(a1.downbeats), gaps, a_unit, c_unit, dur)
+    if not hits:
+        raise MixDeclined("Rule 3 found no on-beat room to place the chops for this pair.")
+
+    r3plan = r3.Rule3Plan(a_unit=a_unit, c_unit=c_unit, hits=hits, keep_beat_vocal=keep)
+    render_rule3(r3plan, list(a1.downbeats), a1.bpm, stems,
+                 settings.data_dir / f"{song1_id}.wav", s2_voc, _mix_wav(mix_id))
+    plan.rule = 3
+    plan.notes = f"Rule 3 — chop & repeat: the hook fires as {len(hits)} on-beat chops, trading in the beat's gaps."
+
+
+def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, rule: int = 1) -> None:
+    """Background worker: plan -> validate -> render (Rule 1/4 or Rule 3) -> validate the audio."""
     try:
         maybe_sweep()  # free disk (evict old regenerable renders) before this render-heavy job
         a1, a2 = _load_analysis(song1_id), _load_analysis(song2_id)
-        plan = build_mix_plan(mix_id, a1, a2, prompt, take=take, chain=SHIPPED_CHAIN)
+        # `rule` selects the arrangement style ON TOP of the shared BPM+key foundation build_mix_plan does:
+        # 1 = dry simple mix, 3 = chop & repeat (rendered below), 4 = echo + reverb (build_mix_plan gates it).
+        plan = build_mix_plan(mix_id, a1, a2, prompt, take=take, chain=SHIPPED_CHAIN, rule=rule)
         # Phase 0 (T1.2): log the key-fit on every render — informational only, never gated. Lets us
         # look at the log and find how many "good" pairs were quietly key-clashing.
         cf = plan.camelot_fit
@@ -340,11 +387,15 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int) 
             validate.assert_key_shift(orig_s2_voc, s2_voc, shift)            # K1 — independent correctness
 
         stems = {s: stem_path(song1_id, s) for s in _S1_STEMS}
-        s1_voc = stem_path(song1_id, "vocals")  # Song 1's own vocal, for the contrast move
+        s1_voc = stem_path(song1_id, "vocals")  # Song 1's own vocal (contrast lead / the Rule-3 trade gaps)
         if s1_voc.exists():
             stems["vocals"] = s1_voc
-        render_mix(plan, stems, s2_voc, _mix_wav(mix_id))
-        validate.assert_render(_mix_wav(mix_id))
+
+        if rule == 3:
+            _render_rule3(plan, mix_id, song1_id, song2_id, a1, a2, s1_voc, s2_voc, stems)
+        else:
+            render_mix(plan, stems, s2_voc, _mix_wav(mix_id))
+        validate.assert_render(_mix_wav(mix_id))  # the quality guard runs on EVERY rule's output
 
         # 3.1 (set transitions): stamp the mix's OWN beat grid + length onto the plan before caching it,
         # so joining mixes into a set is arithmetic over the plans — never a re-analysis of the WAV.
@@ -352,7 +403,10 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int) 
         # from the audio we just wrote; the length is read from the WAV header (metadata, not analysis).
         _attach_set_grid(plan, a1, _mix_wav(mix_id))
 
-        _build_bestparts(plan, mix_id)  # best-parts is the default output — build the highlight BEFORE
+        # Best-parts highlight is COMMON to every rule (founder 2026-08-06: the same crop + set-transition
+        # treatment Rule 1 uses must apply to Rule 3 and Rule 4 too — only the best parts come down, not the
+        # full song). Built off the shared plan grid, so it works on any rule's rendered WAV.
+        _build_bestparts(plan, mix_id)
         _plan_path(mix_id).write_text(plan.model_dump_json())  # persisting the plan, so 'ready' implies it exists
         _jobs.pop(mix_id, None)  # readiness now inferred from the stored files
     except MixDeclined as e:
@@ -395,7 +449,7 @@ def start_mix(req: MixRequest, response: Response) -> Mix:
         if not _HEX_ID.fullmatch(sid):
             raise HTTPException(404, "Song not found.")
 
-    mix_id = mix_id_for(req.song1_id, req.song2_id, req.prompt, req.take)
+    mix_id = mix_id_for(req.song1_id, req.song2_id, req.prompt, req.take, req.rule)
     ready = _ready(mix_id)
     if ready is not None:
         return ready
@@ -408,7 +462,7 @@ def start_mix(req: MixRequest, response: Response) -> Mix:
         _jobs[mix_id] = ("processing", None)
         threading.Thread(
             target=_run_mix,
-            args=(mix_id, req.song1_id, req.song2_id, req.prompt, req.take),
+            args=(mix_id, req.song1_id, req.song2_id, req.prompt, req.take, req.rule),
             daemon=True,
         ).start()
 

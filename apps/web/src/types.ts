@@ -5,7 +5,11 @@ export type Screen = "setup" | "generating" | "play" | "export";
 
 /** One set = a beat song + a vocal song. A session is 1 or 2 of these (V1 caps at two),
  *  played back-to-back as one continuous, beat-matched mix. */
-export type SetPick = { beat: LibrarySongDTO; vocal: LibrarySongDTO };
+export type SetPick = {
+  beat: LibrarySongDTO;
+  vocal: LibrarySongDTO;
+  rule: number; // which mixing rule this song uses: 1 = simple, 3 = chop & repeat, 4 = echo
+};
 
 /** How many sets a single session may hold. Deliberately small: keeps render time and the
  *  finished set-WAV's file size down for V1. */

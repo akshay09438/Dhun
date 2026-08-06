@@ -72,10 +72,17 @@ export function App() {
     setStage("uploading");
 
     if (picks.length === 1) {
-      const { beat, vocal } = picks[0];
+      const { beat, vocal, rule } = picks[0];
       setSetInfo(null);
       try {
-        const made = await studyAndMix(beat.id, vocal.id, setStage, MIX_PROMPT);
+        const made = await studyAndMix(
+          beat.id,
+          vocal.id,
+          setStage,
+          MIX_PROMPT,
+          {},
+          rule,
+        );
         setMix(made);
         loadName(beat.original_name, vocal.original_name);
         setScreen("play");
@@ -110,6 +117,8 @@ export function App() {
         sets[0].vocal.id,
         MIX_PROMPT,
         take,
+        {},
+        sets[0].rule,
       );
       setMix(made);
     } catch {

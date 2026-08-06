@@ -71,6 +71,7 @@ _jobs: dict[str, tuple[str, str | None]] = {}
 class SetPairRequest(BaseModel):
     song1_id: str  # the beat / instrumental bed
     song2_id: str  # the vocal source
+    rule: int = 1  # which mixing RULE this song uses in the set: 1 = simple, 3 = chop & repeat, 4 = echo
 
 
 class SetRequest(BaseModel):
@@ -97,16 +98,16 @@ class SetJob(BaseModel):
     message: str | None = None
 
 
-def set_id_for(pairs: list[tuple[str, str]]) -> str:
-    """Content id for a set: the engine + chain + the ordered pairs. Best-parts is the default output
-    now, so ':bestparts' is permanent — it invalidates any pre-best-parts full-length set cached under
-    the old key. Identical requests hit cache.
+def set_id_for(pairs: list[tuple[str, str, int]]) -> str:
+    """Content id for a set: the engine + chain + the ordered pairs (each with its chosen RULE). Best-parts
+    is the default output now, so ':bestparts' is permanent — it invalidates any pre-best-parts full-length
+    set cached under the old key. Identical requests hit cache.
 
     `SET_PLAN_VERSION` invalidates SETS ONLY when the set-assembly logic changes, leaving the far more
     expensive per-mix renders cached (they are unaffected — a set never re-arranges a mix, it only
     joins finished ones). Bumping mixroute.ENGINE_VERSION for a set-only change would needlessly
-    re-render every mix."""
-    body = "|".join(f"{a}:{b}" for a, b in pairs)
+    re-render every mix. The per-pair rule tag is omitted for rule 1 so all-Rule-1 set ids stay stable."""
+    body = "|".join(f"{a}:{b}" + (f":r{r}" if r != 1 else "") for a, b, r in pairs)
     raw = (f"{mixroute.ENGINE_VERSION}:{mixroute._CHAIN_CONFIG_HASH}"
            f":set:bestparts:{SET_PLAN_VERSION}:{body}").encode()
     return hashlib.sha256(raw).hexdigest()
@@ -167,7 +168,7 @@ def _seam_positions(seq: list[dict]) -> tuple[list[float], float]:
     return seams, y_len / SR
 
 
-def _run_set(set_id: str, pairs: list[tuple[str, str]]) -> None:
+def _run_set(set_id: str, pairs: list[tuple[str, str, int]]) -> None:
     """Background worker: reconcile tempo -> render each kept pair (reuse mix._run_mix) -> crop each to
     its ~180s best-parts highlight (workers.best_parts, post-render) -> join. Best-parts is the DEFAULT
     output. A crop that fails falls back to that mix's full render, so a set never fails on the crop."""
@@ -186,7 +187,7 @@ def _run_set(set_id: str, pairs: list[tuple[str, str]]) -> None:
         members: list[SetMember] = []
         unmixable: dict[int, str] = {}   # index -> reason; there is no mix to join
         bpm_of: dict[int, float] = {}    # index -> the tempo that mix really plays at
-        for i, (s1, s2) in enumerate(pairs, start=1):
+        for i, (s1, s2, _rule) in enumerate(pairs, start=1):  # mixability is the shared foundation — rule-independent
             a1, a2 = mixroute._load_analysis(s1), mixroute._load_analysis(s2)
             opts = fence.arrangement_options(a1, a2) if (a1 and a2) else None
             if not (opts and opts.get("mixable") and opts.get("master_bpm")):
@@ -196,16 +197,16 @@ def _run_set(set_id: str, pairs: list[tuple[str, str]]) -> None:
 
         # 2. Render each kept pair through the real /mix pipeline. Cache-reuse an already-rendered mix.
         rendered: list[dict] = []  # {"index", "wav", "phrase_starts", "frames", "bpm"}
-        for i, (s1, s2) in enumerate(pairs, start=1):
+        for i, (s1, s2, rule) in enumerate(pairs, start=1):
             if i in unmixable:
                 members.append(SetMember(
                     index=i, song1_id=s1, song2_id=s2, kept=False, reason=unmixable[i],
                 ))
                 continue
-            mid = mixroute.mix_id_for(s1, s2, "", 1)
+            mid = mixroute.mix_id_for(s1, s2, "", 1, rule)   # each song plays under ITS chosen rule
             wav = mixroute._mix_wav(mid)
             if not (wav.exists() and mixroute._plan_path(mid).exists()):
-                mixroute._run_mix(mid, s1, s2, "", 1)  # synchronous — reuses the shipped pipeline
+                mixroute._run_mix(mid, s1, s2, "", 1, rule)  # synchronous — reuses the shipped pipeline
             plan_file = mixroute._plan_path(mid)
             if not plan_file.exists():  # the pipeline declined this pair
                 _status, reason = mixroute._jobs.get(mid, ("error", "This pair couldn't be mixed."))
@@ -274,8 +275,8 @@ def start_set(req: SetRequest, response: Response) -> SetJob:
     """Start building a set (or return the cached one). Returns at once."""
     if not (1 <= len(req.sets) <= MAX_SETS):
         raise HTTPException(400, f"A set holds 1 to {MAX_SETS} mixes.")
-    pairs = [(p.song1_id, p.song2_id) for p in req.sets]
-    for s1, s2 in pairs:
+    pairs = [(p.song1_id, p.song2_id, p.rule) for p in req.sets]
+    for s1, s2, _rule in pairs:
         for sid in (s1, s2):
             if not mixroute._HEX_ID.fullmatch(sid):
                 raise HTTPException(404, "Song not found.")
@@ -286,7 +287,7 @@ def start_set(req: SetRequest, response: Response) -> SetJob:
         return ready
 
     # Every pair must be uploaded + analyzed + split, same as /mix (plain-language reason if not).
-    for s1, s2 in pairs:
+    for s1, s2, _rule in pairs:
         missing = mixroute._missing_prerequisite(s1, s2)
         if missing is not None:
             raise HTTPException(409, missing)

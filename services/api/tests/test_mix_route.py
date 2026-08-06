@@ -177,8 +177,8 @@ def test_mix_rejects_bad_song_id(tmp_path, monkeypatch):
 
 def test_engine_version_is_current():
     # bumped when the engine/plan changes so a stale cached mix is never served
-    # base is m9band15 (the ±11%->±15% band widen changes mix output); Rule 4's echo appends "+m8echo"
-    assert mix_route.ENGINE_VERSION.startswith("m9band15")
+    # base is m11rule (per-mix rule selection: Rule 3 added, Rule 4 gated -> dry default); "+m8echo" tag rides along
+    assert mix_route.ENGINE_VERSION.startswith("m11rule")
 
 
 def test_shipped_chain_is_enabled_with_the_founder_approved_dials():
