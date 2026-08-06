@@ -5,7 +5,6 @@ we put it on the path before importing.
 """
 
 import hashlib
-import subprocess
 import sys
 import types
 from pathlib import Path
@@ -222,22 +221,6 @@ def test_s1_contrast_without_a_handoff_is_not_faded(tmp_path):
     assert head > 1e-2 and tail > 0.6 * head, f"standalone contrast should stay flat: head={head:.3f} tail={tail:.3f}"
 
 
-def _has_rubberband():
-    """rubberband is FFmpeg's GPL `librubberband` filter. The commercial build MUST stay LGPL (see
-    CLAUDE.md), which does NOT link it — so the pitch tests skip rather than hard-require a GPL build.
-    The pitch STAGE ships inert in Phase 0 (the planner pins pitch_semitones to 0), so nothing in the
-    live pipeline depends on it; the licensing decision is owed before Slice 2d turns pitch on."""
-    try:
-        out = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True, timeout=30)
-        return "rubberband" in out.stdout
-    except Exception:
-        return False
-
-
-_HAS_RUBBERBAND = _has_rubberband()
-_needs_rubberband = pytest.mark.skipif(not _HAS_RUBBERBAND, reason="rubberband (GPL) not linked in this FFmpeg")
-
-
 def _vm(pid="p0", **k):
     """A duck-typed VocalProcessMove (neutral dials by default -> a no-op stage set)."""
     d = dict(placement_id=pid, start_bar=0, end_bar=4, pitch_semitones=0.0, deess=0.0,
@@ -268,28 +251,6 @@ def test_reverb_is_length_preserving_and_wet():
     out = render._reverb(voc, wet=0.3, sr=render.SR)
     assert out.shape == voc.shape                      # tail truncated to dry length -> length unchanged
     assert float(np.max(np.abs(out - voc))) > 1e-4     # the wet path changed it
-
-
-@_needs_rubberband
-def test_pitch_shift_preserves_length_and_raises_pitch():
-    voc = _voc_tone(render.SR, freq=300.0)
-    out = render._pitch_shift(voc, semitones=4.0, sr=render.SR)
-    assert out.shape == voc.shape                       # pitch-only -> length preserved
-    fdom = lambda y: float(np.fft.rfftfreq(len(y), 1 / render.SR)[np.argmax(np.abs(np.fft.rfft(y[:, 0])))])
-    assert fdom(out) > fdom(voc) + 10                   # dominant frequency moved up
-
-
-@_needs_rubberband
-def test_pitch_shift_uses_formant_preserved_and_quality(monkeypatch):
-    """DoD: formant=preserved and pitchq=quality must be EXPLICIT in every rubberband invocation
-    (the default formant is `shifted` — the chipmunk mode)."""
-    seen = []
-    real = render._run_ffmpeg
-    monkeypatch.setattr(render, "_run_ffmpeg", lambda cmd: (seen.append(" ".join(cmd)), real(cmd))[1])
-    render._pitch_shift(_voc_tone(render.SR // 2), 2.0, render.SR)
-    joined = " ".join(seen)
-    assert "rubberband=pitch=" in joined
-    assert "formant=preserved" in joined and "pitchq=quality" in joined
 
 
 def test_apply_vocal_chain_is_length_preserving():
@@ -323,6 +284,31 @@ def test_p2_pre_master_ceiling_rejects_overhot_chain(tmp_path):
     p.vocal_moves = [_vm(presence_gain_db=6.0)]           # +6 dB at 3 kHz -> ~1.8 peak, well over -3 dBFS
     with pytest.raises(render.RenderError):
         render.render_mix(p, stems, vocal, tmp_path / "x.wav")
+
+
+def test_render_rejects_a_nonzero_pitch_semitones_loudly(tmp_path):
+    """CHANGE ② loud guard: the GPL in-render pitch stage was DELETED — key-matching now happens upstream
+    (app/audio/pitch.py), so the vocal reaches the render already Signalsmith-shifted. A plan that still
+    carries a NONZERO pitch_semitones means a shift was expected in-render that no longer exists; the
+    engine must RAISE RenderError rather than silently ship an UN-shifted vocal labelled key-matched.
+    The live plan always emits 0, so this is the defensive net for a stale/AI plan."""
+    stems, vocal = _stems(tmp_path)
+    p = _arr_plan([(1.0, (0.0, 2.0), False)])
+    p.vocal_moves = [_vm(pitch_semitones=-1.0)]  # a leftover in-render shift the engine no longer performs
+    with pytest.raises(render.RenderError):
+        render.render_mix(p, stems, vocal, tmp_path / "x.wav")
+
+
+def test_render_zero_pitch_semitones_does_not_trip_the_guard(tmp_path):
+    """The guard is surgical: a vocal move with pitch_semitones == 0 (the live plan's value) renders
+    normally — the loud guard fires ONLY on a real nonzero leftover shift, never on the shipped path."""
+    stems, vocal = _stems(tmp_path)
+    p = _arr_plan([(1.0, (0.0, 2.0), False)])
+    p.vocal_moves = [_vm(pitch_semitones=0.0, presence_gain_db=3.0)]  # a real (non-pitch) chain move
+    out = tmp_path / "ok.wav"
+    render.render_mix(p, stems, vocal, out)  # must not raise
+    y, _ = sf.read(out, dtype="float32", always_2d=True)
+    assert 0.0 < float(np.max(np.abs(y))) <= render._CEILING
 
 
 def test_duck_bed_only_ducks_never_boosts():

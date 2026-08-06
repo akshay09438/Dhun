@@ -14,10 +14,12 @@ from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from app.audio import pitch
 from app.audio.analysis import analysis_path
 from app.audio.stems import stem_path
 from app.config import settings
 from app.models import LiveOp, MixPlan, TrackAnalysis
+from app.planner.keys import resolve_key_shift
 from app.planner.live import parse_command
 from app.planner.suggest import suggest_moves
 
@@ -86,8 +88,19 @@ def _run_vocal_bus(mix_id: str) -> None:
     tmp = final.with_name(final.stem + ".tmp" + final.suffix)
     try:
         plan = MixPlan(**json.loads(_mixplan_path(mix_id).read_text()))
+        # Match the Download's key: if this pair was key-matched, use the SAME shifted vocal (cached by
+        # the mix render) so the live bus is NEVER a silently un-shifted "key-matched" vocal. Deterministic
+        # per pair; a PitchError is caught below and surfaces as a visible "couldn't prepare" decline.
+        from app.routes.mix import key_match_enabled  # local import avoids a route<->route import cycle
+        s2_voc = stem_path(plan.song2_id, "vocals")
+        if key_match_enabled():
+            a1 = TrackAnalysis(status="ready", **json.loads(analysis_path(plan.song1_id).read_text()))
+            a2 = TrackAnalysis(status="ready", **json.loads(analysis_path(plan.song2_id).read_text()))
+            shift, _why = resolve_key_shift(a1, a2)
+            if shift != 0:
+                s2_voc = pitch.shifted_vocal(plan.song2_id, s2_voc, shift)
         song1_stems = {"vocals": stem_path(plan.song1_id, "vocals")}  # for the contrast answer
-        render_vocal_bus(plan, song1_stems, stem_path(plan.song2_id, "vocals"), tmp)
+        render_vocal_bus(plan, song1_stems, s2_voc, tmp)
         # Publish atomically: the SERVED path only ever appears fully written, so a poll can
         # never catch it mid-render (which served a growing file -> Content-Length overflow ->
         # the browser couldn't decode it -> the Play button never became ready).

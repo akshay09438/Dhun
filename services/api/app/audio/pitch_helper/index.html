@@ -1,0 +1,48 @@
+<!doctype html><html><head><meta charset="utf-8"><title>smith-render</title></head><body>
+<script type="module">
+import SignalsmithStretch from './SignalsmithStretch.mjs';
+const log = (m) => console.log(m);
+const err = (m) => { console.log('ERR ' + m); fetch('/error', {method:'POST', body:String(m)}); };
+window.onerror = (m,s,l,c,e) => err((e&&e.stack)||m);
+window.onunhandledrejection = (ev) => err('unhandledrejection: ' + ((ev.reason&&ev.reason.stack)||ev.reason));
+
+async function renderJob(j) {
+  const buf = await (await fetch('/in/' + j.id + '.f32')).arrayBuffer();
+  const inter = new Float32Array(buf);
+  const planar = [];
+  for (let c = 0; c < j.ch; c++) {
+    const a = new Float32Array(j.frames);
+    for (let i = 0; i < j.frames; i++) a[i] = inter[i*j.ch + c];
+    planar.push(a);
+  }
+  const outFrames = Math.round(j.frames / j.rate);
+  const total = outFrames + Math.round((j.pad ?? 1.0) * j.sr);
+  const ctx = new OfflineAudioContext(j.ch, total, j.sr);
+  const stretch = await SignalsmithStretch(ctx, {numberOfInputs:0, numberOfOutputs:1, outputChannelCount:[j.ch]});
+  await stretch.addBuffers(planar);
+  stretch.connect(ctx.destination);
+  stretch.schedule({ output:0, input:0, active:true,
+    rate:j.rate, semitones:j.semitones,
+    formantCompensation: !!j.formant, formantBaseHz: j.formantBaseHz ?? 0 });
+  stretch.start(0);
+  const r = await ctx.startRendering();
+  const rf = r.length, out = new Float32Array(rf * j.ch); let peak = 0;
+  for (let c = 0; c < j.ch; c++) {
+    const d = r.getChannelData(c);
+    for (let i = 0; i < rf; i++) { out[i*j.ch + c] = d[i]; const a = Math.abs(d[i]); if (a > peak) peak = a; }
+  }
+  await fetch('/out/' + j.id + '.f32?frames=' + rf + '&peak=' + peak.toFixed(5),
+    { method:'POST', headers:{'Content-Type':'application/octet-stream'}, body: out.buffer });
+  log(`job ${j.id}: semis=${j.semitones} rate=${j.rate} formant=${j.formant} -> frames=${rf} peak=${peak.toFixed(4)}`);
+}
+
+(async () => {
+  try {
+    const jobs = await (await fetch('/jobs.json')).json();
+    log(`batch: ${jobs.length} jobs`);
+    for (const j of jobs) await renderJob(j);
+    await fetch('/alldone', {method:'POST'});
+    log('ALLDONE');
+  } catch (e) { err((e&&e.stack)||e); }
+})();
+</script></body></html>

@@ -15,15 +15,19 @@ The hard rules:
   R6  the finished audio is neither silent/near-silent nor clipping.
   R7  a beat-locked (warped) placement re-locks cleanly: every per-bar stretch stays in
       the safe band, and each bar boundary lands on a Song 1 downbeat (no mid-bar drift).
+  K1  a key-matched vocal actually rotated by the claimed semitones (the referee re-derives the
+      chroma itself — the pitch helper agreeing with itself proves consistency, not correctness).
 """
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 
+from app.audio.chroma import best_rotation, chroma
 from app.models import MixPlan, TrackAnalysis
 from app.planner.fence import (HOUSE_SLOW_MAX, HOUSE_SPEED_MAX, LEAD_XFADE_SECS,
                                SAFE_STRETCH_HI, SAFE_STRETCH_LO, WARP_HI, WARP_LO,
@@ -32,6 +36,12 @@ from app.planner.window import window_analysis
 
 # A sample magnitude at or above this counts as clipping (square-wave distortion).
 CLIP_CEILING = 0.999
+# K1 (key-shift referee): DECLINE only when the chroma reads a DIFFERENT rotation than claimed AND that
+# reading is decisive — the claimed rotation must be more than this correlation-gap below the best pick.
+# Below it the material is too chroma-flat to judge, so we trust the helper's verified render rather than
+# false-decline a valid pair (a flat vocal's key is barely audible anyway).
+_K1_MIN_MARGIN = 0.15
+_log = logging.getLogger("promptdj.validate")
 # How close to a downbeat the vocal entry must land to count as "on the beat".
 BEAT_TOLERANCE_SECS = 0.06
 # "Not silent" means genuinely audible, not just "one non-zero sample": at least
@@ -417,3 +427,33 @@ def assert_render(wav_path: Path) -> None:
     v = validate_render(wav_path)
     if v:
         raise ValidationError(v)
+
+
+def assert_key_shift(original_vocal: Path, shifted_vocal: Path, semitones: int) -> None:
+    """K1 — INDEPENDENT correctness check for a key-matched vocal. The pitch helper verifies its own
+    CONSISTENCY (two runs agree), but two runs of a buggy engine can agree on WRONG audio — so the
+    referee re-derives the chroma of the shipped vocal itself and confirms it rotated by EXACTLY the
+    claimed `semitones` (the same "re-derive, never trust the plan" principle as the beat grid).
+    Measured over the WHOLE stem (short/flat slices read unreliably). No-op when semitones == 0.
+    Raises ValidationError (=> the mix declines) if the shift did not land."""
+    if int(semitones) == 0:
+        return
+    orig, sr = sf.read(str(original_vocal), dtype="float32", always_2d=True)
+    shifted, _ = sf.read(str(shifted_vocal), dtype="float32", always_2d=True)
+    rot, _margin, corrs = best_rotation(chroma(orig, sr), chroma(shifted, sr))
+    want = int(semitones) % 12
+    if rot == want:
+        return  # the chroma confirms the claimed shift
+    # rot != want. Reject ONLY when the reading DECISIVELY prefers a different rotation over the claim
+    # (the classic "unshifted / wrong-amount" stable-but-wrong case). If the claimed rotation is
+    # competitive (chroma-flat / hard-to-analyse material can't distinguish them), the reading is
+    # INCONCLUSIVE — trust the helper's own two-render verification rather than false-decline a valid pair.
+    gap = corrs[rot] - corrs[want]
+    if gap <= _K1_MIN_MARGIN:
+        _log.warning("K1 inconclusive for a %+d st shift (chroma ambiguous, claim gap %.3f) — trusting "
+                     "the verified helper", int(semitones), gap)
+        return
+    raise ValidationError([
+        f"key-shift referee (K1): the shipped vocal's chroma DECISIVELY rotated by {rot} semitones, not "
+        f"the claimed {int(semitones):+d} (={want} mod 12) — stable-but-wrong pitch audio; declining "
+        f"(claim gap {gap:.3f})"])

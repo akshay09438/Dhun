@@ -288,3 +288,40 @@ def test_sweep_on_missing_dir(tmp_path, monkeypatch):
 
     assert report["evicted"] == 0
     assert report["files"] == []
+
+
+# --------------------------------------------------------------------------- #
+# Criterion 9 (Change ②): the key-shifted vocal cache is REGENERABLE -> evictable, but re-creating one
+# re-runs the verified pitch helper (seconds, not free). It must be swept like any other render output,
+# while the sweep STILL never touches an unrecoverable catalog file (source / stem / analysis / manifest).
+# --------------------------------------------------------------------------- #
+def test_pitchshift_cache_is_evicted_but_catalog_is_never_touched(tmp_path, monkeypatch):
+    _use_tmp_data_dir(monkeypatch, tmp_path)
+    # A real key-shifted vocal cache name: <hash>.<tag>.pitchshift.wav (name ENDS with .pitchshift.wav).
+    pitchshift = _touch(tmp_path / f"{H}.+2F.sig1.3.2.pitchshift.wav")
+    # The unrecoverable catalog the sweep must never delete, even under full pressure.
+    catalog = {
+        f"{H}.wav": "uploaded source",              # unrecoverable
+        f"{H}.drums.mp3": "Replicate-cost stem",
+        f"{H}.vocals.mp3": "Replicate-cost stem",
+        f"{H}.analysis.json": "analysis",
+    }
+    for name in catalog:
+        _touch(tmp_path / name)
+    _touch(tmp_path / "library" / "manifest.json")  # the library manifest (subdirectory -> never recursed)
+
+    _force_free(monkeypatch, 0.0)  # maximum disk pressure — sweep everything it may
+    report = storage.sweep()
+
+    assert not pitchshift.exists(), "the .pitchshift.wav cache must be evicted (it is regenerable)"
+    assert report["files"] == [f"{H}.+2F.sig1.3.2.pitchshift.wav"]
+    for name, what in catalog.items():
+        assert (tmp_path / name).exists(), f"sweep deleted unrecoverable {what}: {name}"
+    assert (tmp_path / "library" / "manifest.json").exists(), "sweep must never recurse into library/"
+
+
+def test_pitchshift_suffix_is_in_the_evictable_allowlist():
+    """Pins the allowlist itself: .pitchshift.wav is a first-class evictable suffix. If it were dropped
+    from _EVICTABLE_SUFFIXES the cache would leak disk forever; if a catalog suffix were ever added, the
+    protection tests above would catch it — the two guards fence the allowlist from both sides."""
+    assert ".pitchshift.wav" in storage._EVICTABLE_SUFFIXES
