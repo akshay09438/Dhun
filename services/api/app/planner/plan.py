@@ -591,7 +591,7 @@ def _emit_vocal_chain(placements: list[Placement], cfg: VocalChainConfig,
 def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
                    prompt: str = "", take: int = 1,
                    chain: VocalChainConfig | None = None,
-                   effect_variety: bool = True) -> MixPlan:
+                   effect_variety: bool = True, rule: int = 1) -> MixPlan:
     """Produce the arrangement recipe. Raises MixDeclined if the pair can't blend.
 
     `chain` is the vocal-chain config (Phase 0). Defaults to OFF (`VocalChainConfig()`), so a mix
@@ -700,10 +700,13 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     # byte-identical (the old produced-drop Placement.echo fires exactly as today).
     # Effect pool (2026-08-05, dormant): assign this take's SPACE + WIDTH variety (deterministic — seeded
     # from the pair + prompt + take). Disabled => no picks => byte-identical to the pre-pool render.
+    # Rule 4 is now a PER-MIX CHOICE (2026-08-07): echo + reverb bed fire only when the mix picks rule 4.
+    # rule 1 (default) = the dry base; rule 3 = chop & repeat (rendered elsewhere). The master flag
+    # `_RULE4_ENABLED` stays the feature kill-switch; the `rule == 4` gate is what makes dry vs echo a pick.
     effects_selected: list[str] = []
-    if _RULE4_ENABLED and effect_variety:
+    if _RULE4_ENABLED and effect_variety and rule == 4:
         for p in placements:
-            p.reverb_bed = True  # Rule 4 ON: gap-echo + continuous reverb, always both together
+            p.reverb_bed = True  # Rule 4: gap-echo + continuous reverb, always both together
         effects_selected = ["gap_echo", "reverb_bed"]
     elif _EFFECT_POOL_ENABLED and effect_variety:
         effects_selected = _select_effects(a1, a2, prompt, take, placements, s1_regions, opts["vocal_stretch"])
@@ -711,7 +714,7 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     variety_on = (_RULE4_ENABLED or _EFFECT_POOL_ENABLED) and effect_variety
     first = placements[0]
     return MixPlan(
-        mix_id=mix_id, song1_id=a1.song_id, song2_id=a2.song_id,
+        mix_id=mix_id, song1_id=a1.song_id, song2_id=a2.song_id, rule=rule,
         master_bpm=opts["master_bpm"], vocal_stretch=opts["vocal_stretch"],
         bed_stretch=opts.get("bed_stretch", 1.0),  # movable master: how much Song 1's bed is stretched
         vocal_src=first.vocal_src, anchor=first.anchor,  # scalar mirrors first (M3 back-compat)

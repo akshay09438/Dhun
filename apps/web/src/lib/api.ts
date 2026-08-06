@@ -178,6 +178,7 @@ export async function startMix(
   song2Id: string,
   prompt = "",
   take = 1,
+  rule = 1, // 1 = simple mix, 3 = chop & repeat
 ): Promise<MixDTO> {
   const res = await fetch(`${API_BASE}/mix`, {
     method: "POST",
@@ -187,6 +188,7 @@ export async function startMix(
       song2_id: song2Id,
       prompt,
       take,
+      rule,
     }),
   });
   if (!res.ok) {
@@ -215,8 +217,9 @@ export async function makeMix(
   prompt = "",
   take = 1,
   { pollMs = 3000, maxTries = 80 }: PollOpts = {},
+  rule = 1, // 1 = simple mix, 3 = chop & repeat
 ): Promise<MixDTO> {
-  const started = await startMix(song1Id, song2Id, prompt, take);
+  const started = await startMix(song1Id, song2Id, prompt, take, rule);
   if (started.status === "ready") return started;
   for (let i = 0; i < maxTries; i++) {
     const s = await getMixStatus(started.mix_id);
@@ -322,7 +325,7 @@ export type SetDTO = {
 
 /** Start building a continuous set from an ordered list of pairs. Returns immediately. */
 export async function startSet(
-  pairs: { song1_id: string; song2_id: string }[],
+  pairs: { song1_id: string; song2_id: string; rule?: number }[],
 ): Promise<SetDTO> {
   const res = await fetch(`${API_BASE}/set`, {
     method: "POST",
@@ -347,7 +350,7 @@ export async function getSetStatus(setId: string): Promise<SetDTO> {
 
 /** Build a set and wait until it's rendered + joined (start + poll). */
 export async function makeSet(
-  pairs: { song1_id: string; song2_id: string }[],
+  pairs: { song1_id: string; song2_id: string; rule?: number }[],
   { pollMs = 3000, maxTries = 120 }: PollOpts = {},
 ): Promise<SetDTO> {
   const started = await startSet(pairs);

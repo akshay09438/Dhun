@@ -4,11 +4,22 @@ import { MAX_SETS, type SetPick } from "../../types";
 import styles from "./SetupScreen.module.css";
 
 /** A set being composed: either slot may still be empty while the user picks. */
-type SetDraft = { beat: LibrarySongDTO | null; vocal: LibrarySongDTO | null };
+type SetDraft = {
+  beat: LibrarySongDTO | null;
+  vocal: LibrarySongDTO | null;
+  rule: number; // 1 = simple, 3 = chop & repeat, 4 = echo
+};
 
-const emptyDraft = (): SetDraft => ({ beat: null, vocal: null });
+const emptyDraft = (): SetDraft => ({ beat: null, vocal: null, rule: 1 });
 const isComplete = (d: SetDraft): d is SetPick =>
   Boolean(d.beat) && Boolean(d.vocal);
+
+/** The mixing rules a user can pick for each song in the line-up. */
+const RULES: { id: number; label: string; hint: string }[] = [
+  { id: 1, label: "Simple", hint: "the straight mix" },
+  { id: 3, label: "Chop & repeat", hint: "the hook, chopped" },
+  { id: 4, label: "Echo", hint: "echo + reverb" },
+];
 
 /** MVP setup: users pick two songs from the curated catalog (no uploads), and may optionally
  *  stack a SECOND set (V1 caps at two) to play back-to-back as one continuous mix. Every catalog
@@ -58,6 +69,10 @@ export default function SetupScreen({
       ),
     );
     setOpen(null);
+  }
+
+  function setRule(rule: number) {
+    setSets((prev) => prev.map((d, i) => (i === active ? { ...d, rule } : d)));
   }
 
   function addSet() {
@@ -128,6 +143,56 @@ export default function SetupScreen({
           onToggle={() => setOpen(open === 2 ? null : 2)}
           onChoose={(s) => choose(2, s)}
         />
+
+        <div
+          role="group"
+          aria-label="How this song plays"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+            marginTop: 6,
+          }}
+        >
+          <span
+            style={{
+              fontSize: ".72rem",
+              opacity: 0.65,
+              letterSpacing: ".08em",
+            }}
+          >
+            HOW IT PLAYS
+          </span>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {RULES.map((r) => {
+              const on = activeSet.rule === r.id;
+              return (
+                <button
+                  key={r.id}
+                  type="button"
+                  data-testid={`rule-${r.id}`}
+                  onClick={() => setRule(r.id)}
+                  aria-pressed={on}
+                  title={r.hint}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 999,
+                    border: on
+                      ? "1px solid var(--accent, #7c4dff)"
+                      : "1px solid rgba(128,128,128,.35)",
+                    background: on ? "var(--accent, #7c4dff)" : "transparent",
+                    color: on ? "#fff" : "inherit",
+                    cursor: "pointer",
+                    font: "inherit",
+                    fontSize: ".85rem",
+                  }}
+                >
+                  {r.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         {sets.length < MAX_SETS && (
           <button

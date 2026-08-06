@@ -38,6 +38,7 @@ export async function studyAndMix(
   onStage: (s: StudyStage) => void,
   prompt = "",
   opts: PollOpts = {},
+  rule = 1, // 1 = simple mix, 3 = chop & repeat
 ): Promise<MixDTO> {
   onStage("splitting");
   await Promise.all([splitSong(song1Id, opts), splitSong(song2Id, opts)]);
@@ -46,7 +47,7 @@ export async function studyAndMix(
   await Promise.all([analyzeSong(song1Id, opts), analyzeSong(song2Id, opts)]);
 
   onStage("planning");
-  const mix = await makeMix(song1Id, song2Id, prompt, 1, opts);
+  const mix = await makeMix(song1Id, song2Id, prompt, 1, opts, rule);
 
   onStage("done");
   return mix;
@@ -74,7 +75,11 @@ export async function studyAndBuildSet(
 
   onStage("planning");
   const set = await makeSet(
-    sets.map((s) => ({ song1_id: s.beat.id, song2_id: s.vocal.id })),
+    sets.map((s) => ({
+      song1_id: s.beat.id,
+      song2_id: s.vocal.id,
+      rule: s.rule ?? 1,
+    })),
     opts,
   );
 

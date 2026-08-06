@@ -234,6 +234,7 @@ class MixPlan(BaseModel):
     placements: list[Placement] = []  # the full arrangement; [] => single-placement (M3)
     s1_vocal_regions: list[tuple[float, float]] = []  # spans where Song 1's OWN vocal answers (contrast)
     stem_moves: list[StemMove] = []  # Step 3: auto-performed beat moves (bass pull, etc.); [] => today's flat bed
+    rule: int = 1  # which mixing RULE made this: 1 = simple mix (default), 3 = chop & repeat, 4 = echo+reverb
     take: int = 1  # which regenerate iteration produced this (1-based)
     notes: str = ""  # DJ-language explanation of the move
     confidence: float = 0.0
