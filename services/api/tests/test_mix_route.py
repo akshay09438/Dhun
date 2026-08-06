@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from app import storage
 from app.audio import analysis as analysis_mod
+from app.audio import pitch
 from app.audio import stems as stems_mod
 from app.main import app
 from app.planner import plan as plan_mod
@@ -221,3 +222,90 @@ def test_mix_carries_camelot_fit(tmp_path, monkeypatch):
     body = _poll(r.json()["mix_id"], "ready")
     assert body["status"] == "ready"
     assert body["plan"]["camelot_fit"] is not None  # attached, logged, never gated
+
+
+# ---------------------------------------------------------------- Change ②: key-matching in the route
+# The route's job on the key-match surface: when resolve_key_shift returns a NONZERO shift, run the vocal
+# through pitch.shifted_vocal, re-check it with the K1 referee, and render the SHIFTED vocal — and if the
+# pitch executor can't produce a clean shift (PitchError), DECLINE VISIBLY, never ship a silently
+# un-shifted "key-matched" mix. These stub the audio-heavy pieces (pitch.shifted_vocal, render_mix) so
+# the wiring is proven hermetically, without launching node or the real render.
+
+
+def _spy_render_to(out_recorder):
+    """A render_mix stand-in that records the vocal path it was handed and writes a valid, audible,
+    non-clipping WAV to `out`, so the real finished-audio referee (assert_render) still passes."""
+    def _spy(plan, stems, s2_voc, out):
+        out_recorder["s2_voc"] = str(s2_voc)
+        t = np.linspace(0, 4.0, int(44100 * 4.0), endpoint=False)
+        sf.write(str(out), (0.3 * np.sin(2 * np.pi * 220.0 * t)).astype("float32"), 44100)
+    return _spy
+
+
+def test_key_match_shifts_the_vocal_and_renders_the_shifted_stem(tmp_path, monkeypatch):
+    """When the key decision is nonzero, the route must (1) call pitch.shifted_vocal for Song 2 at the
+    resolved shift, (2) re-check it via the K1 referee, and (3) feed the SHIFTED vocal to the render —
+    not the original stem. All three are asserted; the audio engine is stubbed to stay hermetic."""
+    _use_tmp(monkeypatch, tmp_path)
+    _setup_pair(tmp_path)
+
+    shifted_path = tmp_path / "shifted_vocal.wav"
+    _tone(shifted_path, 500.0)  # a distinct file so "the shifted stem was rendered" is unambiguous
+
+    shift_call, k1_call, rendered = {}, {}, {}
+
+    def fake_shifted_vocal(song_id, vocal_wav, semitones, formant=True):
+        shift_call.update(song_id=song_id, vocal_wav=str(vocal_wav), semitones=semitones)
+        return shifted_path
+
+    def fake_assert_key_shift(original_vocal, shifted_vocal, semitones):
+        k1_call.update(original=str(original_vocal), shifted=str(shifted_vocal), semitones=semitones)
+
+    monkeypatch.setattr(mix_route, "resolve_key_shift", lambda a1, a2: (2, "key-match test +2"))
+    monkeypatch.setattr(pitch, "shifted_vocal", fake_shifted_vocal)
+    monkeypatch.setattr(mix_route.validate, "assert_key_shift", fake_assert_key_shift)
+    monkeypatch.setattr(mix_route, "render_mix", _spy_render_to(rendered))
+
+    r = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2})
+    body = _poll(r.json()["mix_id"], "ready")
+    assert body["status"] == "ready"
+
+    # (1) the pitch executor was invoked for Song 2 at the resolved +2 shift
+    assert shift_call.get("song_id") == SONG2, shift_call
+    assert shift_call.get("semitones") == 2, shift_call
+    # (2) the K1 referee re-checked the shifted vocal at the same +2
+    assert k1_call.get("semitones") == 2, k1_call
+    assert k1_call.get("shifted") == str(shifted_path), k1_call
+    # (3) the render was fed the SHIFTED vocal, never the original stem
+    assert rendered.get("s2_voc") == str(shifted_path), rendered
+
+
+def test_key_match_pitch_error_declines_visibly_never_ships_unshifted(tmp_path, monkeypatch):
+    """LOUD FAILURE at the route: if pitch.shifted_vocal raises PitchError (no clean shift possible), the
+    job ends in a VISIBLE error state whose message names the key-match failure — and NO mix WAV is left
+    on disk, so the user never gets a silently un-shifted mix mislabelled as key-matched."""
+    _use_tmp(monkeypatch, tmp_path)
+    _setup_pair(tmp_path)
+
+    def boom(song_id, vocal_wav, semitones, formant=True):
+        raise pitch.PitchError("pitch helper non-deterministic after 3 renders — declining")
+
+    monkeypatch.setattr(mix_route, "resolve_key_shift", lambda a1, a2: (2, "needs +2"))
+    monkeypatch.setattr(pitch, "shifted_vocal", boom)
+
+    r = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2})
+    mix_id = r.json()["mix_id"]
+    body = _poll(mix_id, "error")
+    assert body["status"] == "error"
+    assert "key-match" in body["message"].lower(), body["message"]
+    assert not mix_route._mix_wav(mix_id).exists(), "a declined key-match must leave no mix WAV on disk"
+    # a follow-up status read must still be error (never flips to a stray 'ready')
+    assert client.get(f"/mix/{mix_id}").json()["status"] == "error"
+
+
+def test_engine_version_tags_key_matching_when_enabled():
+    """The key-match off-switch is folded into ENGINE_VERSION (so flipping it auto-invalidates the mix
+    cache). With key-matching live, the version string MUST carry the +m10key tag — a cached pre-key
+    mix can never be served as if it were key-matched."""
+    assert mix_route.key_match_enabled() is True
+    assert "+m10key" in mix_route.ENGINE_VERSION, mix_route.ENGINE_VERSION

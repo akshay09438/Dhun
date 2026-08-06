@@ -1,0 +1,14 @@
+{
+  "name": "prompt-dj-pitch-helper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Offline Signalsmith Stretch (MIT) pitch-shift helper for Prompt-DJ, driven headless via OfflineAudioContext. Validation-grade; swap for a native binding before scale.",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "puppeteer-core": "25.5.0",
+    "signalsmith-stretch": "1.3.2"
+  }
+}

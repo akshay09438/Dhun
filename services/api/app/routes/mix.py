@@ -25,6 +25,7 @@ from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from app.audio import pitch
 from app.audio.analysis import analysis_path
 from app.audio.stems import stem_path
 from app.config import settings
@@ -32,6 +33,7 @@ from app.models import Mix, MixPlan, TrackAnalysis, VocalChainConfig, chain_conf
 from app.planner import validate
 from app.planner import name as name_planner
 from app.planner import window
+from app.planner.keys import resolve_key_shift
 from app.planner.plan import MixDeclined, build_mix_plan, effect_pool_enabled, rule4_enabled
 from app.storage import maybe_sweep, path_for
 
@@ -157,8 +159,22 @@ _S1_STEMS = ("drums", "bass", "other")
 # BUMPED m6.11 -> m9band15 (2026-08-06): the ±11%->±15% tempo-band widen changes mix output, so every
 # mix + set must re-render fresh (no stale ±11% cache is ever served). Unique-per-behaviour, as required.
 _ENGINE_VERSION_BASE = "m9band15"  # ±15% band base (was "m6.11" held-out-beat base)
+
+# KEY MATCHING (Change ②, 2026-08-06): shift Song 2's vocal into a compatible key BEFORE the mix
+# (verified + cached upstream in app/audio/pitch.py; referee K1 re-checks the chroma). INSTANT OFF-SWITCH:
+# set False -> no shift, ENGINE_VERSION drops the +m10key tag -> byte-identical to the pre-key-match engine.
+_KEY_MATCH_ENABLED = True
+
+
+def key_match_enabled() -> bool:
+    """Whether key-matching is live. Folded into ENGINE_VERSION, so flipping it auto-invalidates the
+    mix/set caches (every mix re-renders with — or without — the key shift)."""
+    return _KEY_MATCH_ENABLED
+
+
 ENGINE_VERSION = (_ENGINE_VERSION_BASE
                   + ("+m8echo" if rule4_enabled() else "")           # Rule 4: gap-sized echo + reverb bed
+                  + ("+m10key" if key_match_enabled() else "")       # Change ②: key-matching (pitch-shift)
                   + ("+m7pool" if effect_pool_enabled() else ""))    # effect pool (superseded, stays off)
 #          slices so the held-out window is FULL of vocal, not holes (founder: "more parts").
 #         (NOT m6.9: that string was already burned by a reverted experiment, so its stale renders
@@ -310,11 +326,24 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int) 
                  cf.model_dump() if cf else None)
         validate.assert_plan(plan, a1, a2)
 
+        # KEY MATCHING (Change ②): shift Song 2's vocal into a compatible key BEFORE the mix, via the
+        # verified + cached Signalsmith helper. resolve_key_shift applies the confidence gate (a flagged
+        # or low-confidence key -> shift 0, logged). The K1 referee then re-derives the shifted vocal's
+        # chroma independently. Any failure -> a VISIBLE decline, never a silently un-shifted "key-matched"
+        # mix (PitchError below; K1 raises ValidationError, handled with the other quality failures).
+        orig_s2_voc = stem_path(song2_id, "vocals")
+        s2_voc = orig_s2_voc
+        shift, why = resolve_key_shift(a1, a2) if key_match_enabled() else (0, "key-match disabled")
+        log.info("mix %s key-shift %+d st (%s)", mix_id, shift, why)
+        if shift != 0:
+            s2_voc = pitch.shifted_vocal(song2_id, orig_s2_voc, shift)        # PitchError -> loud decline
+            validate.assert_key_shift(orig_s2_voc, s2_voc, shift)            # K1 — independent correctness
+
         stems = {s: stem_path(song1_id, s) for s in _S1_STEMS}
         s1_voc = stem_path(song1_id, "vocals")  # Song 1's own vocal, for the contrast move
         if s1_voc.exists():
             stems["vocals"] = s1_voc
-        render_mix(plan, stems, stem_path(song2_id, "vocals"), _mix_wav(mix_id))
+        render_mix(plan, stems, s2_voc, _mix_wav(mix_id))
         validate.assert_render(_mix_wav(mix_id))
 
         # 3.1 (set transitions): stamp the mix's OWN beat grid + length onto the plan before caching it,
@@ -328,6 +357,9 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int) 
         _jobs.pop(mix_id, None)  # readiness now inferred from the stored files
     except MixDeclined as e:
         _jobs[mix_id] = ("error", e.reason)
+    except pitch.PitchError as e:
+        _mix_wav(mix_id).unlink(missing_ok=True)
+        _jobs[mix_id] = ("error", f"Couldn't key-match this pair cleanly, so it wasn't shipped: {e}")
     except validate.ValidationError as e:
         _mix_wav(mix_id).unlink(missing_ok=True)
         _bestparts_wav(mix_id).unlink(missing_ok=True)

@@ -603,3 +603,100 @@ def test_p5_rejects_a_move_for_an_unknown_placement():
     a1, a2 = _a(), make_analysis()
     v = validate.validate_plan(_chain_plan([_good_vm(placement_id="p9")]), a1, a2)
     assert any("P5" in m for m in v), v
+
+
+# ---------------------------------------------------------------- Rule K1: the key-shift referee
+# assert_key_shift is the INDEPENDENT correctness check for a key-matched vocal. The pitch helper only
+# proves CONSISTENCY (two of its renders agree) — two runs of a buggy engine can agree on WRONG audio —
+# so the referee re-derives the chroma of the SHIPPED vocal itself and confirms it rotated by exactly the
+# claimed semitones. These tests build synthetic multi-partial tones whose chroma is well-defined and
+# shift them in the FREQUENCY domain (partials at MIDI+s), so the shift PROVABLY rotates the chroma by s.
+# Fully hermetic: no node, no network, no real Signalsmith helper — just numpy audio on disk.
+#
+# The two founder-mandated STABLE-BUT-WRONG cases are the whole reason K1 exists: audio that is stable
+# (byte-reproducible) but pitched WRONG (or not at all) while labelled key-matched. Each MUST raise.
+
+_K1_SR = 44100
+_K1_CHORD = [60, 64, 67, 72]  # C E G C — four distinct pitch classes -> an unambiguous chroma reading
+
+
+def _k1_tone(tmp_path, name, midis, secs=2.0, sr=_K1_SR):
+    """Write a stereo WAV that is a sum of sine partials at the given MIDI notes. Shifting every note by
+    s semitones (MIDI+s) rotates the chromagram by exactly s — the ground truth the referee must read."""
+    import soundfile as sf
+    t = np.linspace(0, secs, int(sr * secs), endpoint=False)
+    mono = np.zeros_like(t)
+    for m in midis:
+        freq = 440.0 * 2.0 ** ((m - 69) / 12.0)
+        mono += np.sin(2 * np.pi * freq * t)
+    mono = (0.3 * mono / len(midis)).astype("float32")
+    path = tmp_path / name
+    sf.write(str(path), np.stack([mono, mono], axis=1), sr)
+    return path
+
+
+def test_k1_raises_when_the_vocal_was_not_shifted_at_all(tmp_path):
+    """STABLE-BUT-WRONG (a): an UNSHIFTED vocal labelled semitones=2 MUST raise. This is the exact
+    failure the pitch helper cannot catch on its own — it would happily verify two identical un-shifted
+    renders as 'consistent' and ship them as key-matched. The referee re-reads the chroma (rotation 0,
+    not 2) and declines."""
+    orig = _k1_tone(tmp_path, "orig.wav", _K1_CHORD)
+    with pytest.raises(validate.ValidationError) as ei:
+        validate.assert_key_shift(orig, orig, semitones=2)  # same file -> rotation 0, claimed 2
+    assert "K1" in str(ei.value)  # clean, readable decline reason (K1 passes a list, like R1/B3/R7)
+
+
+def test_k1_raises_when_the_vocal_was_shifted_the_wrong_amount(tmp_path):
+    """STABLE-BUT-WRONG (b): a vocal shifted by +3 but LABELLED +2 MUST raise. Stable and really
+    pitched — just to the wrong key. The referee reads rotation 3 against the claimed 2 and declines."""
+    orig = _k1_tone(tmp_path, "orig.wav", _K1_CHORD)
+    shifted_by_3 = _k1_tone(tmp_path, "sh3.wav", [m + 3 for m in _K1_CHORD])
+    with pytest.raises(validate.ValidationError) as ei:
+        validate.assert_key_shift(orig, shifted_by_3, semitones=2)  # actual +3, claimed +2
+    assert "K1" in str(ei.value)  # clean, readable decline reason
+
+
+def test_k1_passes_a_correctly_shifted_vocal(tmp_path):
+    """A vocal genuinely shifted by +2 and labelled +2 must PASS — the referee confirms the chroma
+    rotated by exactly the claimed amount, so a real key-match is not falsely declined."""
+    orig = _k1_tone(tmp_path, "orig.wav", _K1_CHORD)
+    shifted_by_2 = _k1_tone(tmp_path, "sh2.wav", [m + 2 for m in _K1_CHORD])
+    validate.assert_key_shift(orig, shifted_by_2, semitones=2)  # must not raise
+
+
+def test_k1_passes_a_negative_shift(tmp_path):
+    """A downward shift is read modulo 12 (a -1 shift is rotation 11). A vocal shifted -1 and labelled
+    -1 must PASS — the referee's `semitones % 12` handles the wrap."""
+    orig = _k1_tone(tmp_path, "orig.wav", _K1_CHORD)
+    shifted_down = _k1_tone(tmp_path, "shm1.wav", [m - 1 for m in _K1_CHORD])
+    validate.assert_key_shift(orig, shifted_down, semitones=-1)  # must not raise
+
+
+def test_k1_passes_when_the_claimed_rotation_is_competitive(monkeypatch, tmp_path):
+    """FALSE-REJECT GUARD (reviewer finding): the decisive rule. If the chroma's best pick differs from
+    the claim but the CLAIMED rotation is competitive (correlation gap <= _K1_MIN_MARGIN), the material
+    is too chroma-flat to judge — K1 must trust the helper's verified render, NOT false-decline a valid
+    pair. Driven deterministically via the chroma reading (real chroma-flat vocals produce exactly this)."""
+    o, s = _k1_tone(tmp_path, "o.wav", _K1_CHORD), _k1_tone(tmp_path, "s.wav", _K1_CHORD)
+    corrs = [0.0] * 12
+    corrs[3], corrs[2] = 0.50, 0.50 - validate._K1_MIN_MARGIN + 0.02  # best=3, claim=2 within the margin
+    monkeypatch.setattr(validate, "best_rotation", lambda a, b: (3, 0.0, corrs))
+    validate.assert_key_shift(o, s, semitones=2)  # inconclusive -> must NOT raise
+
+
+def test_k1_rejects_a_decisive_wrong_reading(monkeypatch, tmp_path):
+    """The other half of the decisive rule: when the chroma DECISIVELY reads a different rotation than
+    claimed (claim gap well beyond the margin), that is real stable-but-wrong audio and K1 must decline."""
+    o, s = _k1_tone(tmp_path, "o.wav", _K1_CHORD), _k1_tone(tmp_path, "s.wav", _K1_CHORD)
+    corrs = [0.0] * 12
+    corrs[3], corrs[2] = 0.90, 0.90 - validate._K1_MIN_MARGIN - 0.30  # best=3, claim=2 decisively below
+    monkeypatch.setattr(validate, "best_rotation", lambda a, b: (3, 0.0, corrs))
+    with pytest.raises(validate.ValidationError):
+        validate.assert_key_shift(o, s, semitones=2)  # decisive mismatch -> must raise
+
+
+def test_k1_is_a_noop_at_zero_semitones(tmp_path):
+    """semitones == 0 is a no-op — it must PASS even on identical input (no shift was ever claimed, so
+    there is nothing to re-check). Guards that the un-key-matched path is never falsely failed."""
+    orig = _k1_tone(tmp_path, "orig.wav", _K1_CHORD)
+    validate.assert_key_shift(orig, orig, semitones=0)  # identical input, zero claim -> no raise

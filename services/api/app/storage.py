@@ -61,7 +61,9 @@ def path_for(song_id: str) -> Path | None:
 # `.mixplan.json`/`.mixname.txt`/`.setmanifest.json`/`.suggestions.json` metadata, and EVERYTHING inside a
 # subdirectory) is KEPT by construction. Same fail-safe discipline as `path_for`: never guess, never a
 # blacklist. Deleting a catalog file here would be unrecoverable, so the allowlist is the whole safety.
-_EVICTABLE_SUFFIXES = (".mix.wav", ".bestparts.wav", ".set.wav", ".livearr.wav")
+# `.pitchshift.wav` = key-shifted vocal cache (app/audio/pitch.py): regenerable, but re-creating one
+# re-runs the pitch helper (~seconds, verified twice) — evictable, just not free.
+_EVICTABLE_SUFFIXES = (".mix.wav", ".bestparts.wav", ".set.wav", ".livearr.wav", ".pitchshift.wav")
 _MIN_FREE_GB = 2.0     # the auto-hook sweeps only when free disk is below this floor
 _TARGET_FREE_GB = 3.0  # a sweep frees up to this much, then stops
 # Grace period (F1, 2026-08-05): NEVER evict a render younger than this. A render being built (the

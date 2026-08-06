@@ -4,43 +4,45 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
-2026-08-05 — **Rule 4 (Regenerate variety) is DONE and DEPLOYED LIVE on `main`: a real tempo-synced DELAY echo + reverb bed, at the founder-chosen boldest level. Every mix now renders with the echo.** This session also adopted the working rule that made it fast: **prototype the SOUND in a throwaway script and get ear-approval BEFORE the production build.** Moving on from Rule 4.
+2026-08-06 — **Two production features built from the key+BPM prototype. Change ① (BPM band widening) is MERGED and LIVE on `main`. Change ② (KEY matching) is BUILT + fully tested + pushed to a branch with a PR open — but NOT merged and NOT fully re-cleared: two adversarial reviews found two issues, both FIXED, but the re-review of the fixes did not finish (session usage limit). Do not merge ② until the fixes are re-reviewed.**
 
 ## Where things stand (one breath)
 
-- **Rule 4 is LIVE on `main`** (merged + pushed, commit `250e059`/`684f295`): `plan._RULE4_ENABLED = True`, `render._DELAY_ECHO_WET = 1.10` (the boldest level the founder chose). `ENGINE_VERSION` = **`m6.11+m8echo`** — the mix + set caches auto-invalidated, so every mix now re-renders with the echo. **Fully reversible:** flip `_RULE4_ENABLED` back to `False` and it drops to `m6.11` (byte-identical to pre-Rule-4; golden gate still passes as the fallback).
-- **Rule 4 = a REAL echo (a tempo-synced feedback DELAY, 1/4-note, feedback 0.55, wet 1.10) on the vocal + the continuous reverb bed.** Founder ear-approved the sound (prototype `d_quarter_long`) then chose the boldest LEVEL after A/B-ing louder variants on two real pairs (Innerbloom×Dooriyan, Father Ocean×Der Lagi Lekin). The real engine reproduces the approved sound (0.993 correlation at the base level); passes plan + finished-audio referee, no clip.
-- **How we got there (the productive part):** three earlier Rule-4 shapes were rejected BY EAR — a chop-and-repeat re-fire, a "forceful" gap-sized echo, and a phrase-tail STAMP (which is chop/stutter, not an echo). Once we prototyped the actual sound (throwaway scripts → dated Desktop folders → founder listens → change a number → re-render in minutes), it converged in one sitting. **This is now a standing rule (memory: `prototype-sound-before-ceremony`).**
-- **The approved delay echo replaced the earlier gap-echo engine** (deleted `_gap_echo`/`_voiced_runs`/`_gap_echo_events`/`_duck_bed_under_echoes`/`_GAP_ECHO_*` and its tests). The **breath-safe re-fire helper is still parked** intact in `workers/rule3_parked.py` for a future Rule 3.
+- **Change ① — BPM band ±11% → ±15%: DONE, MERGED, LIVE on `main`** (merge `af90618`, feat commit `db666c9`). `fence.SAFE_STRETCH_LO/HI` = 0.85/1.15, `WARP_LO/HI` = 0.81/1.19; `workers/set_render.py` now IMPORTS the band from fence (single source of truth); `_ENGINE_VERSION_BASE` = `m9band15`. Two independent adversarial reviews returned SAFE; monotonicity proven (widening only adds pairs). Recovers ~15 more catalog pairs. Fully reversible.
+- **Change ② — KEY matching: BUILT + tested + pushed, PR OPEN, NOT MERGED.** Branch `feat/key-matching` (commit `00e9f33`, 18 files). Shifts Song 2's vocal into a compatible key (fuzzy Camelot, cap ±2) before the mix, via a local Signalsmith Stretch helper (MIT). Verified (two independent renders must agree), content-addressed cache (song-id + shift + formant + HELPER_VERSION), LOUD failure (crash/hang/non-determinism → the mix declines visibly). Confidence gate skips the 5 flagged songs. Ships behind an instant off-switch (`_KEY_MATCH_ENABLED`, folded into ENGINE_VERSION `+m10key`). PR: https://github.com/akshay09438/Dhun/pull/new/feat/key-matching
 
-## In flight — honest state
+## In flight — honest state (Change ②)
 
-- **Nothing in flight. Rule 4 is DONE and DEPLOYED** to `main` (`_RULE4_ENABLED=True`, `_DELAY_ECHO_WET=1.10`), pushed. The design branch `design/mix-reverse-engineering` was also merged to `main` via GitHub PR #5 (the OFF version) and then the deploy commits merged on top. Verified live: `ENGINE_VERSION` = `m6.11+m8echo`, `rule4_enabled()` = True.
-- **Consequence to expect:** because `ENGINE_VERSION` changed, every existing mix/set cache is invalidated — all mixes re-render (compute cost) and any mix a user already had now sounds different (has the echo). This is intended and reversible.
-- **Suite:** 499 passed / 1 failed on the last full run — the 1 failure is the **pre-existing, unrelated `test_cache_sweep.py` flake** (see open items), NOT Rule 4.
+- **The suite is GREEN** (529 passed — see evidence). The feature works end-to-end (verified below). But it is **NOT cleared to merge**, for two reasons:
+  1. **Two review findings were FIXED but the fix RE-REVIEW did not complete** (both reviewer agents died on the session usage limit, resets ~2:40pm Asia/Calcutta). The fixes are tested-green but not independently re-cleared.
+     - _Finding A (Reviewer 1):_ the retired live "Play" vocal-bus path (`routes/live.py`) served an UN-shifted vocal. **It is DEAD CODE** — the web `fetchVocalBus` has no callers, no LiveMix component is mounted, so the shipped Play screen plays the finished (key-matched) Download mix. Fixed anyway (defense-in-depth): `_run_vocal_bus` now applies the same shift so it can never emit an un-shifted "key-matched" vocal.
+     - _Finding B (Reviewer 2):_ rule K1 could mis-judge a CHROMA-FLAT vocal (false-reject a valid pair, or false-pass a wrong one). Fixed with a "decisive-disagreement" rule: `validate.assert_key_shift` declines only when the chroma DECISIVELY reads a different rotation (`corrs[best] - corrs[claimed] > 0.15`); on inconclusive/flat material it trusts the verified helper. New deterministic tests cover both halves.
+  2. **The living docs are only PARTIALLY updated for ②** — the implementation-plan drift log has an entry (below), but `technical-spec.md`/`functional-spec.md` were not fully revised for key-matching. Finish next session.
 
 ## Do first next session
 
-1. **Rule 4 is done — move on.** No follow-up owed unless the founder wants the boldest echo level re-tuned by ear on more catalog pairs (the adversarial reviewer noted it's safe but "loud is a taste call"; the founder chose it on two real pairs and said deploy).
-2. **Fix the pre-existing `test_cache_sweep.py` flake** (cross-file pollution from `test_mix_route.py`) — has a task chip; unrelated to Rule 4.
-3. **Optional cleanup:** delete the dormant, now-superseded effect-pool subsystem (Rule 4's branch pre-empts it; the pool tests now turn Rule 4 off to run). Founder's call.
+1. **Re-run the two adversarial reviewers on the Change ② FIXES** (the K1 decisive-disagreement rule in `validate.py` + the live-bus consistency fix in `routes/live.py`). If BOTH return safe → proceed; if not → address before merge.
+2. **Finish the Change ② docs**: update `technical-spec.md` (the pitch stage is retired / GPL rubberband gone; key-matching added) and `functional-spec.md` (clashing pairs now auto key-match) to mirror the code.
+3. **Then the founder reviews the PR and decides on merge.** Nothing merges before he looks.
+4. Resolve the flagged residuals with the founder (see escalations).
 
 ## Verification evidence
 
-- **Full backend suite (Rule 4 LIVE), 2026-08-05:** `pytest -q` (from `services/api`) → **499 passed, 1 failed.** The 1 failure = `test_cache_sweep.py::test_dry_run_reports_but_deletes_nothing`, the known order-dependent flake (passes in isolation; reproduces only as the pair `test_mix_route.py test_cache_sweep.py`). Not Rule 4.
-- **Golden byte-identical-OFF gate:** still **passes** with the flag on — flipping `_RULE4_ENABLED` back to `False` returns the exact pre-Rule-4 engine (`m6.11`). The OFF path is a proven, one-line fallback.
-- **Live engine smoke check:** `ENGINE_VERSION == "m6.11+m8echo"` and `plan.rule4_enabled() is True` on `main`.
-- **Real renders (flag ON):** Innerbloom×Dooriyan and Father Ocean×Der Lagi Lekin both passed plan + finished-audio referee, peak 0.891 (no clip), at echo levels up to wet 1.10 (echo ≈ −4.4 dB vs the vocal).
-- **Ceremony (two adversarial passes + independent test-author):**
-  - Build pass: test-author wrote 11 hermetic tests (no bugs); adversarial reviewer **`safe` for the OFF ship** (byte-identical-OFF, containment, level/clip refuted, determinism); found **echo-length inflation** → **FIXED** (tail bounded to audible decay).
-  - **Deploy pass (LIVE at wet 1.10):** adversarial reviewer verdict **`safe` to deploy** — the joint `_max_wet_gain` trim guarantees echo+reverb ≤ +2.5 dB over the dry (a fixed 0.5 dB margin under the +3 dB P2 guard, **independent of `wet`**), so a louder echo **cannot clip or fail a render** (empirically: peak +2.50 dB at the ceiling, never above, `g` never 0); crest rises (mush guard can't fire); caches invalidate correctly. Residuals are TASTE (loudness) + the expected re-render cost, not safety.
-- **A real bug the golden gate caught mid-build:** the Rule-4 knobs first collided (`_ECHO_FEEDBACK`) with the legacy produced-drop echo constant, silently changing the OFF path → renamed to `_DELAY_ECHO_*`; golden byte-identity restored. (The safety net worked.)
+- **Full backend suite (Change ② branch):** `cd services/api && .venv/Scripts/python.exe -m pytest -q` → **529 passed in 157s** (last run). The known pre-existing `test_cache_sweep.py` order-dependent flake did NOT fire this run.
+- **render.py GPL-pitch deletion — GOLDEN byte-identical:** a live-path mix (I Adore You × Der Lagi, SHIPPED_CHAIN + effect_variety on) rendered BEFORE and AFTER the `_pitch_shift` deletion produced the identical hash `ec40e83787c9da016a935ec1b7d22660f278b5abb7a6b513bc585d723b2d9694` (37,767,212 bytes). Live-path `vocal_moves` pitch = `[0.0, 0.0, 0.0]` (the stage was provably dead). Deleting dead code changed nothing.
+- **Change ② end-to-end (real `_run_mix`):** Innerbloom (beat 6B) × Don't Start Now (vocal 10B) → decision `+1 st` → verified+cached Signalsmith shift → K1 referee passed → **job READY**, 101 MB mix WAV written, `.pitchshift.wav` cache created. Flagged pair Anchor Point × Don't Start Now → `shift 0` (gated, logged). Loud-failure path: a transient helper failure declined visibly (job `("error", "Couldn't key-match…")`, no WAV, no cache) — never a silently un-shifted mix.
+- **Change ① on `main`:** band reads `0.85/1.15` in `fence.py`; merged `af90618`.
 
 ## Open escalations / re-verify next session (claims, not facts)
 
-- **DANGEROUS surfaces on this branch vs `main` — RE-VERIFY before trusting "OFF == main":** `workers/render.py` (delay echo, this session), and from earlier superseded-but-committed work on this branch: `services/api/app/planner/validate.py` (removed `_throw_violations`), `models.py` (removed `Placement.throws`), `plan.py`, `mix.py`. All ship OFF; re-confirm `_RULE4_ENABLED`/`_EFFECT_POOL_ENABLED` are both `False` and the golden gate passes at the start of next session.
-- **Rule 4 activation DONE (was a dangerous change) — re-verify the LIVE state next session:** confirm `_RULE4_ENABLED is True`, `_DELAY_ECHO_WET == 1.10`, `ENGINE_VERSION == "m6.11+m8echo"` on `main`, and that the golden gate still passes (so the OFF fallback is intact). The deploy passed a dedicated adversarial `safe` verdict at the live level; the ON path has an integration test (`test_render.py::test_rule4_on_render_*`).
-- **Pre-existing flaky test (NOT Rule 4):** the full suite can intermittently fail ONE `test_cache_sweep.py` test — proven cross-file state pollution from `test_mix_route.py` (both untouched by this work; each passes in isolation; reproduces as the 2-file pair `test_mix_route.py test_cache_sweep.py`). Spun off as its own task chip.
-- **Founder decision pending:** whether to delete the dormant, now-superseded effect-pool subsystem (Rule 4 pre-empts it).
-- **Older open item (carried, re-verify):** the Export screen "Download full mix" defect from the 2026-07-21 handoff — not touched; status unknown.
-- **Listening artefacts on the founder's Desktop (throwaway):** `Prompt-DJ Rule4 PROTOTYPE real echo (2026-08-05)` (the approved `d_quarter_long` + variants), `Prompt-DJ Rule4 PROTOTYPE beat-grid echo (2026-08-05)` (rejected chop versions), `Prompt-DJ Rule4 gap-echo listening (2026-08-05)` (rejected gap-echo).
+- **Change ② is NOT cleared to merge** — the fix re-review is incomplete (session limit). Re-run it first.
+- **Dangerous-surface claims to RE-VERIFY (Change ②, on the branch):** (a) `render.py` — the GPL `_pitch_shift` is gone and the golden mix is byte-identical (verified TODAY, treat as a claim); (b) `validate.py` — the K1 chroma referee is additive (R1/R3/B3/R6/R7 untouched) and catches stable-but-wrong; (c) `storage.py` — `.pitchshift.wav` is evictable AND the sweep still cannot touch catalog/stems/analyses.
+- **CI does not run pytest** (`.github/workflows/ci.yml` runs vitest only) — so ALL the Change ② safety tests run only locally, not automatically. Real assurance gap for a dangerous change; recommend a pytest CI job (small, separate change; touches a dangerous workflow file).
+- **Anchor Point gating tension** — it is in the 5 gated `KEY_UNTRUSTED_SONG_IDS`, but it was in a founder-approved demo. Confirm whether gating it (shift 0) is intended for now.
+- **Pitch helper = Signalsmith WASM in a local headless Chromium** (validation-grade; "swap for a native binding before scale"). Every key-matched pair launches Chromium once per (song, shift), then caches. Confirm the render machine has a working Chromium/Edge or every shift silently declines. Minor: a helper TIMEOUT can orphan a Chromium process on Windows (resource leak) — add a process-tree kill.
+- **Carried, older:** the Export screen "Download full mix" defect (2026-07-21) — diagnosed, NOT fixed. And the pre-existing `test_cache_sweep.py` order-dependent flake (its own task chip).
+
+## Prototype artefacts (throwaway, on the founder's Desktop)
+
+- `Prompt-DJ KEY+BPM PROTOTYPE (2026-08-06)` — the key/BPM listening sets + MORNING_REPORT + staged production plan.
+- `Prompt-DJ FULL DEMO MIXES (2026-08-06)` — the two full key+BPM demo mixes the founder ear-approved.

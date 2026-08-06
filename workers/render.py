@@ -452,8 +452,8 @@ def _fit_length(y: np.ndarray, n: int) -> np.ndarray:
 
 def _ffmpeg_filter_array(voc: np.ndarray, filtergraph: str, sr: int) -> np.ndarray:
     """Run one FFmpeg audio filtergraph on a stereo float array and return it at the SAME length.
-    Used for the stages FFmpeg does well (de-ess / high-pass / compress / presence EQ in one pass, and
-    rubberband pitch in another). A 32-bit float intermediate WAV keeps precision between stages."""
+    Used for the stages FFmpeg does well (de-ess / high-pass / compress / presence EQ in one pass).
+    A 32-bit float intermediate WAV keeps precision between stages."""
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         i, o = Path(td) / "i.wav", Path(td) / "o.wav"
         sf.write(i, voc, sr, subtype="FLOAT")
@@ -461,13 +461,6 @@ def _ffmpeg_filter_array(voc: np.ndarray, filtergraph: str, sr: int) -> np.ndarr
                      "-ar", str(sr), "-ac", "2", "-c:a", "pcm_f32le", str(o)])
         y, _ = sf.read(o, dtype="float32", always_2d=True)
     return _fit_length(y, len(voc))
-
-
-def _pitch_shift(voc: np.ndarray, semitones: float, sr: int) -> np.ndarray:
-    """Stage 3 — rubberband pitch shift with formants PRESERVED (never the `shifted` chipmunk default)
-    and pitch quality set explicitly. Pitch-only (tempo=1) -> length-preserving."""
-    ratio = 2.0 ** (semitones / 12.0)
-    return _ffmpeg_filter_array(voc, f"rubberband=pitch={ratio:.6f}:formant=preserved:pitchq=quality", sr)
 
 
 def _saturate(x: np.ndarray, drive: float, wet: float) -> np.ndarray:
@@ -707,14 +700,13 @@ def _apply_vocal_chain(voc: np.ndarray, m, sr: int) -> np.ndarray:
     no-op when its dial is neutral (the per-stage kill switch). Stage 4 (time-stretch) already ran
     upstream in `_vocal_take*` and is NOT touched here.
 
-    Two engine boundaries: stages 1,2,5,7 in ONE FFmpeg filtergraph (single decode/encode), then
-    rubberband (3), then numpy saturate (6) and numpy reverb (8). Order note: the grouping runs presence
-    (7) before saturate (6); the one hard rule (1 before 6) holds regardless.
+    Two engine boundaries: stages 1,2,5,7 in ONE FFmpeg filtergraph (single decode/encode), then numpy
+    saturate (6) and numpy reverb (8). Order note: the grouping runs presence (7) before saturate (6);
+    the one hard rule (1 before 6) holds regardless.
 
-    KNOWN COST (flagged, not fixed here): stages 3 (pitch) and 4 (stretch) are two sequential resampling
-    passes, each adding artifacts. rubberband can do pitch+tempo in ONE call, but stage 4 uses a per-bar
-    `warp_map` (variable ratio per bar) while pitch is constant across the placement, so they can't be
-    trivially merged. A real future optimisation, not a Phase 0 task."""
+    Stage 3 (pitch) was RETIRED 2026-08-06: key-matching now happens upstream (app/audio/pitch.py —
+    Signalsmith, verified + cached), so the render no longer pitch-shifts (a nonzero pitch here raises).
+    Stage 4 (time-stretch) still runs upstream in `_vocal_take*` and is not touched here."""
     n0 = len(voc)
     if n0 == 0:
         return voc
@@ -729,8 +721,13 @@ def _apply_vocal_chain(voc: np.ndarray, m, sr: int) -> np.ndarray:
         fg.append(f"equalizer=f={_PRESENCE_HZ}:t=q:w={_PRESENCE_Q}:g={float(m.presence_gain_db):.4f}")
     if fg:
         voc = _ffmpeg_filter_array(voc, ",".join(fg), sr)
-    if abs(m.pitch_semitones) > 1e-9:                             # stage 3
-        voc = _pitch_shift(voc, float(m.pitch_semitones), sr)
+    if abs(m.pitch_semitones) > 1e-9:                             # stage 3 RETIRED (2026-08-06)
+        # The GPL rubberband pitch stage was removed: key-matching now happens UPSTREAM — the vocal
+        # arrives already Signalsmith-shifted (app/audio/pitch.py), verified + cached, so the render
+        # never pitches. A nonzero pitch reaching here means a plan expected an in-render shift that no
+        # longer exists — fail LOUD rather than silently ship an un-shifted vocal labelled key-matched.
+        raise RenderError(f"plan carries pitch_semitones={m.pitch_semitones:+.2f} but the render engine "
+                          "no longer pitch-shifts — key-matching is upstream (app/audio/pitch.py)")
     if m.saturate_wet > 0.0:                                      # stage 6 (after stage 1, always)
         voc = _saturate(voc, _SATURATE_DRIVE, float(m.saturate_wet))
     if m.reverb_wet > 0.0:                                        # stage 8
