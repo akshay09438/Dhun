@@ -141,7 +141,7 @@ def test_mix_blocks_when_not_analyzed(tmp_path, monkeypatch):
 
 def test_mix_declines_far_tempo_with_reason(tmp_path, monkeypatch):
     _use_tmp(monkeypatch, tmp_path)
-    _setup_pair(tmp_path, song2_bpm=150.0)  # too far to blend cleanly
+    _setup_pair(tmp_path, song2_bpm=158.0)  # too far to blend cleanly, even at the ±15% band
 
     r = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2})
     assert r.status_code == 202
@@ -176,8 +176,8 @@ def test_mix_rejects_bad_song_id(tmp_path, monkeypatch):
 
 def test_engine_version_is_current():
     # bumped when the engine/plan changes so a stale cached mix is never served
-    # base is m6.11; the effect pool (when flipped on) appends "+m7pool" so the cache auto-invalidates
-    assert mix_route.ENGINE_VERSION.startswith("m6.11")
+    # base is m9band15 (the ±11%->±15% band widen changes mix output); Rule 4's echo appends "+m8echo"
+    assert mix_route.ENGINE_VERSION.startswith("m9band15")
 
 
 def test_shipped_chain_is_enabled_with_the_founder_approved_dials():

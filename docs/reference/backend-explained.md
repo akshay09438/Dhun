@@ -74,7 +74,7 @@ These are the human judgments and hand-tuned numbers baked into the code — the
 
 ### 3b. Tempo safety (in `fence.py`)
 
-- **Safe stretch band `0.89 – 1.11`** (±11%): how far we'll speed/slow Song 2's vocal to match the beat. Outside this it warbles, so we **decline the pair** instead of shipping it.
+- **Safe stretch band `0.85 – 1.15`** (±15%, widened from ±11% on 2026-08-06): how far we'll speed/slow Song 2's vocal to match the beat. Outside this it warbles, so we **decline the pair** instead of shipping it.
 - **Movable-master bounds:** the house/beat track is the anchor; if a pair is too far apart, we nudge the house the _minimum_ — at most **4% slower / 8% faster** — and let the vocal absorb the rest.
 - **Per-bar "grip" band `0.85 – 1.15`** (wider on purpose): used by the per-bar beat-lock, which makes tiny single-bar corrections that keep the vocal from drifting.
 

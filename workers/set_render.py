@@ -2,8 +2,8 @@
 equal-power crossfade transitions at each seam.
 
 Deterministic DSP only — numpy mixes, soundfile decodes/encodes. Inputs are already
-rendered WAVs (see render.py), so no FFmpeg decode is needed here; this module stays
-self-contained and does not import from render.py (it defines its own constants).
+rendered WAVs (see render.py), so no FFmpeg decode is needed here; this module does not
+import from render.py, and it imports the safe-stretch band from fence (single source of truth).
 
 The transition, at each seam:
   - mix N's tail overlaps mix N+1's head for `xfade_secs`.
@@ -25,16 +25,16 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from app.planner.fence import SAFE_STRETCH_HI, SAFE_STRETCH_LO  # SINGLE SOURCE OF TRUTH for the band
+
 SR = 44100  # everything renders at CD rate, stereo
 _TARGET_PEAK = 10 ** (-1.0 / 20)  # -1 dBFS headroom
 _CEILING = 0.999  # brickwall safety — must stay below the validator's clip ceiling
 
-# The safe SUSTAINED stretch band for a whole set — MUST match fence.SAFE_STRETCH_LO/HI (0.89–1.11);
-# a drift test (test_set_render) pins them equal. A song whose stretch to the set tempo lands outside
-# this warbles, so we DECLINE it rather than loosen the band (a warbling vocal is unrecoverable; a
-# shorter set is invisible). Duplicated here on purpose so the set engine stays self-contained.
-SAFE_STRETCH_LO = 0.89
-SAFE_STRETCH_HI = 1.11
+# The safe SUSTAINED stretch band for a whole set is fence.SAFE_STRETCH_LO/HI, imported above — the
+# SINGLE SOURCE OF TRUTH, so the set engine can NEVER drift from the mix engine when the band changes.
+# A song whose stretch to the set tempo lands outside it warbles, so we DECLINE it rather than loosen
+# the band (a warbling vocal is unrecoverable; a shorter set is invisible).
 
 
 class SetRenderError(Exception):

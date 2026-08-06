@@ -440,7 +440,7 @@ def test_gate_b_plan_determinism_on_a_fixed_analysis(monkeypatch):
 
 def test_declines_when_unmixable():
     a1 = make_analysis(bpm=120.0)
-    a2 = make_analysis(bpm=150.0, vocal_regions=[(16.0, 40.0)])
+    a2 = make_analysis(bpm=158.0, vocal_regions=[(16.0, 40.0)])  # still too far even at ±15%
     with pytest.raises(planner.MixDeclined) as exc:
         planner.build_mix_plan("m" * 64, a1, a2)
     assert "tempo" in str(exc.value).lower()

@@ -144,8 +144,8 @@ def test_set_tempo_band_matches_fence():
 
 
 def test_global_master_tempo_centres_every_song_in_the_band():
-    """The chosen tempo keeps every song's stretch strictly inside [0.89, 1.11]."""
-    bpms = [111.0, 118.0, 122.0, 125.0, 133.0]  # a feasible spread (max/min = 1.198 <= 1.247)
+    """The chosen tempo keeps every song's stretch strictly inside the safe band (SAFE_STRETCH_LO..HI)."""
+    bpms = [111.0, 118.0, 122.0, 125.0, 133.0]  # a feasible spread (max/min = 1.198 <= the band's ceiling)
     t = set_render.global_master_tempo(bpms)
     assert 118.0 <= t <= 124.0
     for b in bpms:
@@ -158,26 +158,32 @@ def test_set_tempo_plan_all_fit_when_close():
     songs = [{"id": "a", "bpm": 120.0}, {"id": "b", "bpm": 124.0}, {"id": "c", "bpm": 118.0}]
     plan = set_render.set_tempo_plan(songs)
     assert plan["all_fit"] and not plan["declined"]
-    assert all(0.89 <= s["ratio"] <= 1.11 for s in plan["accepted"])
+    assert all(set_render.SAFE_STRETCH_LO <= s["ratio"] <= set_render.SAFE_STRETCH_HI for s in plan["accepted"])
 
 
 def test_set_tempo_plan_declines_the_outlier_not_the_whole_set():
-    """The 6-song catalog can't all share one tempo (111 & 143 BPM are >1.25x apart). The plan must
-    DECLINE the single true outlier (Tere Bina, 143) and keep the other five in band — never loosen
-    the band, and never wrongly drop a song that would have fit (e.g. Der Lagi, 111)."""
+    """A set with one genuine tempo outlier can't all share one tempo. The plan must DECLINE the single
+    true outlier (a 170-BPM song: 170/111 = 1.53 > the ±15% band's 1.353 feasibility ceiling) and keep
+    every other song in band — never loosen the band, and never wrongly drop a song that would have fit.
+
+    At the ±15% band the whole 6-song catalog (111..143 BPM, ratio 1.288 <= 1.353) now ALL fits — so the
+    outlier that used to be Tere Bina (143) is now in band; a 170-BPM song is the genuine outlier here.
+    Note Der Lagi (111 -> 1.122) and Tere Bina (143 -> 0.871) are kept only BECAUSE the band widened to
+    ±15% (both sat outside the old 0.89/1.11), which is exactly the implemented change."""
     songs = [
         {"name": "Father Ocean", "bpm": 122.0}, {"name": "Dont Start Now", "bpm": 125.0},
         {"name": "Der Lagi", "bpm": 111.0}, {"name": "Tujhe Bhula Diya", "bpm": 133.0},
         {"name": "With You", "bpm": 118.0}, {"name": "Tere Bina", "bpm": 143.0},
+        {"name": "Fast Outlier", "bpm": 170.0},  # the genuine outlier at ±15% (170/111 = 1.53 > 1.353)
     ]
     plan = set_render.set_tempo_plan(songs)
     assert not plan["all_fit"]
-    assert [d["name"] for d in plan["declined"]] == ["Tere Bina"]     # only the true outlier
+    assert [d["name"] for d in plan["declined"]] == ["Fast Outlier"]  # only the true outlier
     assert {a["name"] for a in plan["accepted"]} == {
-        "Father Ocean", "Dont Start Now", "Der Lagi", "Tujhe Bhula Diya", "With You"}
+        "Father Ocean", "Dont Start Now", "Der Lagi", "Tujhe Bhula Diya", "With You", "Tere Bina"}
     for a in plan["accepted"]:                                        # everyone kept is in band
-        assert 0.89 <= a["ratio"] <= 1.11
-    assert plan["declined"][0]["ratio"] < 0.89                        # Tere Bina really was out
+        assert set_render.SAFE_STRETCH_LO <= a["ratio"] <= set_render.SAFE_STRETCH_HI
+    assert plan["declined"][0]["ratio"] < set_render.SAFE_STRETCH_LO  # the 170 song really was out
 
 
 # ---- 3.3: beat-aligned, phrase-boundary seams ----
