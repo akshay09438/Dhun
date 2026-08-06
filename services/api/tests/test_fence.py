@@ -64,8 +64,9 @@ def test_tempo_plan_octave_folds_a_half_counted_ballad():
 
 
 def test_tempo_plan_declines_when_house_would_move_too_far():
-    # 120 x 150: house would need > +8% to reach the vocal's band -> declined (house protected)
-    assert fence.tempo_plan(120.0, 150.0)[3] is False
+    # 120 x 158: even at the ±15% band the house would need ~+11.9% to reach the vocal's band,
+    # past its +8% speed cap -> declined (house protected). (120x150 now MIXES at ±15%.)
+    assert fence.tempo_plan(120.0, 158.0)[3] is False
 
 
 def test_tempo_plan_guards_zero():
@@ -172,7 +173,7 @@ def test_legal_options_happy_path():
 
 def test_legal_options_declines_far_tempo():
     a1 = make_analysis(bpm=120.0)
-    a2 = make_analysis(bpm=150.0, vocal_regions=[(16.0, 40.0)])
+    a2 = make_analysis(bpm=158.0, vocal_regions=[(16.0, 40.0)])  # still too far even at ±15%
     opts = fence.legal_options(a1, a2)
     assert not opts["mixable"] and "tempo" in opts["reason"].lower()
 
@@ -220,7 +221,7 @@ def test_arrangement_options_happy():
 
 def test_arrangement_options_declines_far_tempo():
     a1 = make_analysis(bpm=120.0)
-    a2 = make_analysis(bpm=150.0, vocal_regions=[(16.0, 40.0)])
+    a2 = make_analysis(bpm=158.0, vocal_regions=[(16.0, 40.0)])  # still too far even at ±15%
     assert not fence.arrangement_options(a1, a2)["mixable"]
 
 

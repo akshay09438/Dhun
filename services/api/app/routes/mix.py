@@ -154,7 +154,9 @@ _S1_STEMS = ("drums", "bass", "other")
 # (both fold ENGINE_VERSION into their id). OFF => "m6.11" (byte-identical to pre-pool; existing caches
 # stay valid). ON => "m6.11+m7pool" (fresh ids => every mix re-renders WITH the pool). Bump the BASE only
 # for a non-pool engine/plan change.
-_ENGINE_VERSION_BASE = "m6.11"  # held-out beats — floor + window-scaled entries + longest-first setup
+# BUMPED m6.11 -> m9band15 (2026-08-06): the ±11%->±15% tempo-band widen changes mix output, so every
+# mix + set must re-render fresh (no stale ±11% cache is ever served). Unique-per-behaviour, as required.
+_ENGINE_VERSION_BASE = "m9band15"  # ±15% band base (was "m6.11" held-out-beat base)
 ENGINE_VERSION = (_ENGINE_VERSION_BASE
                   + ("+m8echo" if rule4_enabled() else "")           # Rule 4: gap-sized echo + reverb bed
                   + ("+m7pool" if effect_pool_enabled() else ""))    # effect pool (superseded, stays off)

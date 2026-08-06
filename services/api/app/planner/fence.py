@@ -20,8 +20,11 @@ from app.models import CamelotFit, StemMove, TrackAnalysis, VocalChainConfig
 # ±11% (2026-07-07) so the curated catalog's key-perfect but slightly-off-tempo vocals fit
 # (Der Lagi Lekin 111 BPM ≈ +9.9%, Tujhe Bhula Diya 133 ≈ −8.3% against Father Ocean's 122).
 # Trade-off: a bit more audible stretch on wide pairs — acceptable at validation scale.
-SAFE_STRETCH_LO = 0.89
-SAFE_STRETCH_HI = 1.11
+# Widened again ±11% -> ±15% (2026-08-06), founder ear-approved on real full demo mixes + the
+# Innerbloom×Tere Bin BPM "ribbon" takes: recovers ~15 more catalog pairs, still locks on-beat.
+# SINGLE SOURCE OF TRUTH: validate.py (B3) and workers/set_render.py both IMPORT these — never copy.
+SAFE_STRETCH_LO = 0.85
+SAFE_STRETCH_HI = 1.15
 
 # The house/EDM track is the anchor — slowing it kills its drive, so when a far-apart pair
 # needs the movable master, the house moves the MINIMUM and is bounded here (never dragged
@@ -38,8 +41,10 @@ HOUSE_SPEED_MAX = 0.08  # ...and speed at most 8%
 # 1.099), so a grip band == the global band lets go and the vocal DRIFTS off the beat over a long
 # placement. This wider grip holds every bar down; the extra per-bar excursion is brief and far
 # preferable to sustained drift (founder call 2026-07-08). Tunable by ear.
-WARP_LO = 0.85
-WARP_HI = 1.15
+# Kept ±0.04 WIDER than the global band on each side; moved WITH it when the band widened to ±15%
+# (2026-08-06), so a per-bar re-lock still holds every bar on-beat at the new global edge.
+WARP_LO = 0.81
+WARP_HI = 1.19
 
 # Cap the vocal slice so one long region can't dominate the whole mix — M3 is a
 # single placement; a section-length drop stays punchy.
@@ -62,7 +67,7 @@ def best_stretch(master_bpm: float, source_bpm: float) -> tuple[float, bool]:
 
     Folds octaves (half/double-time) so a source the analyzer read at 2x or 0.5x
     still matches — we take the candidate closest to 1.0 (the least stretch). Safe
-    when within the SAFE_STRETCH band (±11%; see the constant for the history).
+    when within the SAFE_STRETCH band (±15%; see the constant for the history).
     """
     if source_bpm <= 0 or master_bpm <= 0:
         return 1.0, False
