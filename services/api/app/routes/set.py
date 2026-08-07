@@ -30,6 +30,7 @@ import soundfile as sf
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
+from app import events
 from app.config import settings
 from app.models import MixPlan
 from app.planner import fence
@@ -190,10 +191,26 @@ def _seam_positions(seq: list[dict]) -> tuple[list[float], float]:
     return seams, y_len / SR
 
 
-def _run_set(set_id: str, pairs: list[tuple[str, str, int]]) -> None:
+def _record_set_event(set_id: str, user_id: str | None, status: str,
+                      members: list["SetMember"], reason: str | None, duration: float | None) -> None:
+    """Record this set's outcome to the ops event log. NON-FATAL: any failure is swallowed."""
+    try:
+        events.record_set(
+            settings.data_dir, set_id=set_id, status=status, user_id=user_id,
+            members=[m.model_dump() for m in members], fail_reason=reason,
+            extra={"duration": duration} if duration is not None else None)
+    except Exception:  # noqa: BLE001 — telemetry must never break a set
+        log.exception("failed to record set event for %s", set_id)
+
+
+def _run_set(set_id: str, pairs: list[tuple[str, str, int]], user_id: str | None = None) -> None:
     """Background worker: reconcile tempo -> render each kept pair (reuse mix._run_mix) -> crop each to
     its ~180s best-parts highlight (workers.best_parts, post-render) -> join. Best-parts is the DEFAULT
-    output. A crop that fails falls back to that mix's full render, so a set never fails on the crop."""
+    output. A crop that fails falls back to that mix's full render, so a set never fails on the crop.
+
+    `user_id` (the anonymous device tag) is recorded with the set outcome, and passed to each member's
+    mix so a mix made inside a set is attributed to the same device (via='set'). It never affects audio."""
+    members: list[SetMember] = []  # bound before the try so an early failure still records cleanly
     try:
         maybe_sweep()  # free disk (evict old regenerable renders) before this render-heavy job
         # 1. Work out the tempo each MIX will actually PLAY at. A set joins finished mixes, not raw
@@ -206,7 +223,6 @@ def _run_set(set_id: str, pairs: list[tuple[str, str, int]]) -> None:
         #    seam instead (workers.set_render.tempo_blendable). Every mixable pair is kept; the tempos
         #    only decide how each seam is joined. A pair the fence can't mix AT ALL is still dropped —
         #    that is a mix-level decline (a real stretch), not a set-level one.
-        members: list[SetMember] = []
         unmixable: dict[int, str] = {}   # index -> reason; there is no mix to join
         bpm_of: dict[int, float] = {}    # index -> the tempo that mix really plays at
         for i, (s1, s2, _rule) in enumerate(pairs, start=1):  # mixability is the shared foundation — rule-independent
@@ -233,7 +249,8 @@ def _run_set(set_id: str, pairs: list[tuple[str, str, int]]) -> None:
             mid = mixroute.mix_id_for(s1, s2, "", 1, rule)   # each song plays under ITS chosen rule
             wav = mixroute._mix_wav(mid)
             if not (wav.exists() and mixroute._plan_path(mid).exists()):
-                mixroute._run_mix(mid, s1, s2, "", 1, rule)  # synchronous — reuses the shipped pipeline
+                # synchronous — reuses the shipped pipeline; attributed to this set's device, marked via='set'
+                mixroute._run_mix(mid, s1, s2, "", 1, rule, user_id=user_id, via="set")
             plan_file = mixroute._plan_path(mid)
             if not plan_file.exists():  # the pipeline declined this pair
                 _status, reason = mixroute._jobs.get(mid, ("error", "This pair couldn't be mixed."))
@@ -263,7 +280,9 @@ def _run_set(set_id: str, pairs: list[tuple[str, str, int]]) -> None:
             members.append(SetMember(index=i, song1_id=s1, song2_id=s2, rule=rule, kept=True))
 
         if not rendered:
-            _jobs[set_id] = ("error", "None of these sets could be built — try different songs.")
+            reason = "None of these sets could be built — try different songs."
+            _jobs[set_id] = ("error", reason)
+            _record_set_event(set_id, user_id, "failed", members, reason, None)
             return
 
         # 3. Join the kept mixes with the shipped seam engine. Each member carries the tempo it plays
@@ -289,12 +308,17 @@ def _run_set(set_id: str, pairs: list[tuple[str, str, int]]) -> None:
         )
         _set_manifest(set_id).write_text(done.model_dump_json())
         _jobs.pop(set_id, None)
+        _record_set_event(set_id, user_id, "ok", members, None, round(total, 3))
     except SetRenderError as e:
-        _jobs[set_id] = ("error", f"Couldn't join these mixes into a set: {e}")
+        reason = f"Couldn't join these mixes into a set: {e}"
+        _jobs[set_id] = ("error", reason)
+        _record_set_event(set_id, user_id, "failed", members, reason, None)
     except Exception:  # noqa: BLE001 — never leak a raw trace; log so a systematic bug isn't invisible
         log.exception("set build failed for %s", set_id)
         _set_wav(set_id).unlink(missing_ok=True)
-        _jobs[set_id] = ("error", "Couldn't build this set. Try different songs.")
+        reason = "Couldn't build this set. Try different songs."
+        _jobs[set_id] = ("error", reason)
+        _record_set_event(set_id, user_id, "failed", members, reason, None)
 
 
 @router.post("/set")
@@ -321,7 +345,7 @@ def start_set(req: SetRequest, response: Response) -> SetJob:
 
     if _jobs.get(set_id, (None,))[0] != "processing":
         _jobs[set_id] = ("processing", None)
-        threading.Thread(target=_run_set, args=(set_id, pairs), daemon=True).start()
+        threading.Thread(target=_run_set, args=(set_id, pairs, req.user_id), daemon=True).start()
 
     response.status_code = 202
     return SetJob(set_id=set_id, status="processing")

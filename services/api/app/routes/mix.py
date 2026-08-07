@@ -13,6 +13,7 @@ route says so in plain language instead of failing opaquely.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import logging
@@ -25,6 +26,7 @@ from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from app import events
 from app.audio import chroma, pitch
 from app.audio.analysis import analysis_path
 from app.audio.stems import stem_path
@@ -387,8 +389,36 @@ def _render_rule3(plan: MixPlan, mix_id: str, song1_id: str, song2_id: str,
     plan.notes = f"Rule 3 — chop & repeat: the hook fires as {len(hits)} on-beat chops, trading in the beat's gaps."
 
 
-def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, rule: int = 1) -> None:
-    """Background worker: plan -> validate -> render (Rule 1/4 or Rule 3) -> validate the audio."""
+def _record_mix_event(mix_id: str, song1_id: str, song2_id: str, take: int, rule: int,
+                      user_id: str | None, via: str, status: str,
+                      anomalies: list, fail_reason: str | None, plan: MixPlan | None) -> None:
+    """Record this mix's outcome to the ops event log (the dashboard's memory). NON-FATAL by
+    construction: any failure here is logged and swallowed — recording must never break a mix."""
+    try:
+        from app.routes.library import song_names
+        names = song_names([song1_id, song2_id], data_dir=settings.data_dir)
+        anoms = [dataclasses.asdict(a) for a in (anomalies or [])]
+        extra: dict = {}
+        if plan is not None:
+            extra = {"tempo_forced": plan.tempo_forced, "master_bpm": plan.master_bpm,
+                     "vocal_stretch": plan.vocal_stretch,
+                     "camelot": plan.camelot_fit.model_dump() if plan.camelot_fit else None}
+        events.record_mix(
+            settings.data_dir, mix_id=mix_id, status=status, user_id=user_id, via=via,
+            song1_id=song1_id, song2_id=song2_id,
+            song1_name=names.get(song1_id), song2_name=names.get(song2_id),
+            rule=rule, take=take, anomalies=anoms, fail_reason=fail_reason, extra=extra)
+    except Exception:  # noqa: BLE001 — telemetry is best-effort; a mix must never fail on it
+        log.exception("failed to record mix event for %s", mix_id)
+
+
+def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, rule: int = 1,
+             user_id: str | None = None, via: str = "single") -> None:
+    """Background worker: plan -> validate -> render (Rule 1/4 or Rule 3) -> validate the audio.
+
+    `user_id` (the anonymous per-browser device tag) and `via` ('single' | 'set') are recorded
+    with the outcome for the ops dashboard; they never affect the mix or its cache id."""
+    anomalies: list = []  # bound up-front so a failure before the scan still records cleanly
     try:
         maybe_sweep()  # free disk (evict old regenerable renders) before this render-heavy job
         a1, a2 = _load_analysis(song1_id), _load_analysis(song2_id)
@@ -442,9 +472,10 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         # whatever we've got — forced tempo, a shaky grid, an audio-measured key — but surface each
         # degraded/unexpected condition (what happened + what to do) so a real upload's data problems
         # are visible on the backend instead of silent. Reporting only; never changes the mix.
-        for _a in anomaly.scan(grid_health=grid_health, tempo_forced=plan.tempo_forced,
-                               vocal_stretch=plan.vocal_stretch, key_why=why,
-                               beat_vocal_coverage=instrumental_beats.vocal_coverage(a1)):
+        anomalies = anomaly.scan(grid_health=grid_health, tempo_forced=plan.tempo_forced,
+                                 vocal_stretch=plan.vocal_stretch, key_why=why,
+                                 beat_vocal_coverage=instrumental_beats.vocal_coverage(a1))
+        for _a in anomalies:
             (log.warning if _a.severity == "warn" else log.info)(anomaly.format_line(mix_id, _a))
 
         if shift != 0:
@@ -474,20 +505,33 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         _build_bestparts(plan, mix_id)
         _plan_path(mix_id).write_text(plan.model_dump_json())  # persisting the plan, so 'ready' implies it exists
         _jobs.pop(mix_id, None)  # readiness now inferred from the stored files
+        _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "ok",
+                          anomalies, None, plan)
     except MixDeclined as e:
         _jobs[mix_id] = ("error", e.reason)
+        _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "failed",
+                          anomalies, e.reason, None)
     except pitch.PitchError as e:
         _mix_wav(mix_id).unlink(missing_ok=True)
-        _jobs[mix_id] = ("error", f"Couldn't key-match this pair cleanly, so it wasn't shipped: {e}")
+        reason = f"Couldn't key-match this pair cleanly, so it wasn't shipped: {e}"
+        _jobs[mix_id] = ("error", reason)
+        _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "failed",
+                          anomalies, reason, None)
     except validate.ValidationError as e:
         _mix_wav(mix_id).unlink(missing_ok=True)
         _bestparts_wav(mix_id).unlink(missing_ok=True)
-        _jobs[mix_id] = ("error", f"The mix didn't pass the quality check: {e}")
+        reason = f"The mix didn't pass the quality check: {e}"
+        _jobs[mix_id] = ("error", reason)
+        _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "failed",
+                          anomalies, reason, None)
     except Exception:  # noqa: BLE001 — never leak a raw trace to the user...
         log.exception("mix render failed for %s", mix_id)  # ...but do log it, so a systematic bug isn't invisible
         _mix_wav(mix_id).unlink(missing_ok=True)
         _bestparts_wav(mix_id).unlink(missing_ok=True)
-        _jobs[mix_id] = ("error", "Couldn't build this mix. Try another pair or regenerate.")
+        reason = "Couldn't build this mix. Try another pair or regenerate."
+        _jobs[mix_id] = ("error", reason)
+        _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "failed",
+                          anomalies, reason, None)
 
 
 @router.post("/mix/name")
@@ -528,7 +572,7 @@ def start_mix(req: MixRequest, response: Response) -> Mix:
         _jobs[mix_id] = ("processing", None)
         threading.Thread(
             target=_run_mix,
-            args=(mix_id, req.song1_id, req.song2_id, req.prompt, take, rule),
+            args=(mix_id, req.song1_id, req.song2_id, req.prompt, take, rule, req.user_id),
             daemon=True,
         ).start()
 

@@ -396,6 +396,110 @@ export async function makeSet(
   throw new Error("The set is taking too long. Please try again.");
 }
 
+// ============================================================================
+// Internal OPS dashboard (developer-only, reached at #dev). Read-only.
+// ============================================================================
+
+/** One anomaly the engine flagged on a mix (already produced, but a degraded/unexpected condition). */
+export type OpsAnomaly = {
+  code: string;
+  detail: string;
+  action: string;
+  severity: string; // "info" | "warn"
+};
+
+/** One recorded mix or set outcome, as the dashboard shows it. */
+export type OpsEvent = {
+  id: number;
+  created_at: string;
+  kind: string; // "mix" | "set"
+  via: string; // "single" | "set" (a mix made inside a set)
+  ref_id: string; // the mix_id / set_id (used to play it back)
+  user_id: string | null; // the anonymous device tag
+  song1_name: string | null;
+  song2_name: string | null;
+  rule: number | null;
+  rule_label: string | null;
+  take: number | null;
+  status: string; // "ok" | "failed"
+  health: string; // "green" | "amber" | "red"
+  fail_reason: string | null;
+  anomalies: OpsAnomaly[];
+  extra: Record<string, unknown> & { audio_url?: string };
+};
+
+export type OpsSummary = {
+  total: number;
+  failed: number;
+  degraded: number;
+  devices: number;
+  today_total: number;
+  today_failed: number;
+  today_degraded: number;
+};
+
+export type OpsDevice = {
+  user_id: string;
+  total: number;
+  failed: number;
+  degraded: number;
+  last_at: string;
+};
+
+/** Error thrown when the dashboard API is locked (a token is required but missing/wrong). */
+export class DashboardLockedError extends Error {}
+
+const DASHBOARD_TOKEN_KEY = "promptdj_dashboard_token";
+
+/** The dashboard API is open on localhost. When deployed it's gated by a shared token; if the
+ *  operator has stored one, send it. (Never in a URL — always a header.) */
+function adminHeaders(): Record<string, string> {
+  try {
+    const t = localStorage.getItem(DASHBOARD_TOKEN_KEY);
+    return t ? { "X-Dashboard-Token": t } : {};
+  } catch {
+    return {};
+  }
+}
+
+async function getAdmin<T>(path: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, { headers: adminHeaders() });
+  if (res.status === 401) {
+    throw new DashboardLockedError(
+      "This dashboard is locked — an access token is required.",
+    );
+  }
+  if (!res.ok) throw new Error("Couldn't load the dashboard data.");
+  return res.json();
+}
+
+/** The health-strip numbers. */
+export function getOpsSummary(): Promise<OpsSummary> {
+  return getAdmin<OpsSummary>("/admin/summary");
+}
+
+/** A page of events, newest first. `total` is every matching event; page through with `offset`. */
+export function getOpsEvents(
+  opts: {
+    limit?: number;
+    offset?: number;
+    userId?: string | null;
+    kind?: string | null;
+  } = {},
+): Promise<{ events: OpsEvent[]; total: number }> {
+  const q = new URLSearchParams();
+  q.set("limit", String(opts.limit ?? 50));
+  q.set("offset", String(opts.offset ?? 0));
+  if (opts.userId) q.set("user_id", opts.userId);
+  if (opts.kind) q.set("kind", opts.kind);
+  return getAdmin(`/admin/events?${q.toString()}`);
+}
+
+/** The per-device rollup, busiest first. */
+export function getOpsDevices(): Promise<OpsDevice[]> {
+  return getAdmin<OpsDevice[]>("/admin/devices");
+}
+
 const VOCAL_BUS_POLL_MS = 1500;
 
 /** Fetch the arranged-vocal-bus WAV for a mix, polling past 202 while it renders. */
