@@ -3,6 +3,8 @@ import {
   makeMix,
   makeSet,
   splitSong,
+  type AutoRule,
+  type AutoSet,
   type MixDTO,
   type PollOpts,
   type SetDTO,
@@ -38,7 +40,7 @@ export async function studyAndMix(
   onStage: (s: StudyStage) => void,
   prompt = "",
   opts: PollOpts = {},
-  rule = 1, // 1 = simple mix, 3 = chop & repeat
+  auto?: AutoRule, // the shuffler-assigned rule for this generation (single-mix path)
 ): Promise<MixDTO> {
   onStage("splitting");
   await Promise.all([splitSong(song1Id, opts), splitSong(song2Id, opts)]);
@@ -47,7 +49,7 @@ export async function studyAndMix(
   await Promise.all([analyzeSong(song1Id, opts), analyzeSong(song2Id, opts)]);
 
   onStage("planning");
-  const mix = await makeMix(song1Id, song2Id, prompt, 1, opts, rule);
+  const mix = await makeMix(song1Id, song2Id, prompt, 1, opts, 1, auto);
 
   onStage("done");
   return mix;
@@ -64,6 +66,7 @@ export async function studyAndBuildSet(
   sets: SetPick[],
   onStage: (s: StudyStage) => void,
   opts: PollOpts = {},
+  auto?: AutoSet, // when set, each mix's rule is auto-assigned by its position in the set
 ): Promise<SetDTO> {
   const ids = Array.from(new Set(sets.flatMap((s) => [s.beat.id, s.vocal.id])));
 
@@ -81,6 +84,7 @@ export async function studyAndBuildSet(
       rule: s.rule ?? 1,
     })),
     opts,
+    auto,
   );
 
   onStage("done");

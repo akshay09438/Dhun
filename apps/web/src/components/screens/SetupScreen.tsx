@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getLibrary, type LibrarySongDTO } from "../../lib/api";
-import { MAX_SETS, type SetPick } from "../../types";
+import { MAX_MIXES_PER_SET, type SetPick } from "../../types";
 import styles from "./SetupScreen.module.css";
 
 /** A set being composed: either slot may still be empty while the user picks. */
@@ -10,21 +10,17 @@ type SetDraft = {
   rule: number; // 1 = simple, 3 = chop & repeat, 4 = echo
 };
 
+// The set path defaults every member to rule 1 (Simple); single mixes get their rule auto-assigned by
+// the shuffler on the Play screen. The manual per-song rule picker was removed when rule choice went
+// automatic (2026-08-07).
 const emptyDraft = (): SetDraft => ({ beat: null, vocal: null, rule: 1 });
 const isComplete = (d: SetDraft): d is SetPick =>
   Boolean(d.beat) && Boolean(d.vocal);
 
-/** The mixing rules a user can pick for each song in the line-up. */
-const RULES: { id: number; label: string; hint: string }[] = [
-  { id: 1, label: "Simple", hint: "the straight mix" },
-  { id: 3, label: "Chop & repeat", hint: "the hook, chopped" },
-  { id: 4, label: "Echo", hint: "echo + reverb" },
-];
-
 /** MVP setup: users pick two songs from the curated catalog (no uploads), and may optionally
- *  stack a SECOND set (V1 caps at two) to play back-to-back as one continuous mix. Every catalog
- *  song is pre-analyzed and tempo-verified, so any pair blends. The console edits the active set;
- *  the stage shows the running order. Single-set stays the default, effortless path. */
+ *  stack MORE mixes (up to MAX_MIXES_PER_SET) to play back-to-back as one continuous set. Every catalog
+ *  song is pre-analyzed and tempo-verified, so any pair blends. The console edits the active mix;
+ *  the stage shows the running order. Single-mix stays the default, effortless path. */
 export default function SetupScreen({
   onBuild,
 }: {
@@ -59,7 +55,7 @@ export default function SetupScreen({
   }, [open]);
 
   const activeSet = sets[active] ?? emptyDraft();
-  const canAddSet = sets.length < MAX_SETS && sets.every(isComplete);
+  const canAddSet = sets.length < MAX_MIXES_PER_SET && sets.every(isComplete);
   const canBuild = sets.length > 0 && sets.every(isComplete);
 
   function choose(slot: 1 | 2, song: LibrarySongDTO) {
@@ -69,10 +65,6 @@ export default function SetupScreen({
       ),
     );
     setOpen(null);
-  }
-
-  function setRule(rule: number) {
-    setSets((prev) => prev.map((d, i) => (i === active ? { ...d, rule } : d)));
   }
 
   function addSet() {
@@ -89,7 +81,7 @@ export default function SetupScreen({
     setOpen(null);
   }
 
-  /** Swap set `i` with the one before it (V1 has at most two, so this is the whole reorder). */
+  /** Swap mix `i` with the one before it; repeated taps bubble it up the running order. */
   function moveUp(i: number) {
     if (i <= 0) return;
     setSets((prev) => {
@@ -115,7 +107,9 @@ export default function SetupScreen({
     <>
       <div className="console" ref={consoleRef}>
         <p className="kicker">
-          {multi ? `New set · ${sets.length} of ${MAX_SETS}` : "New mix"}
+          {multi
+            ? `New set · ${sets.length} of ${MAX_MIXES_PER_SET}`
+            : "New mix"}
         </p>
         <h1 className="title">
           {multi ? "Build your set" : "Pick your two songs"}
@@ -144,57 +138,7 @@ export default function SetupScreen({
           onChoose={(s) => choose(2, s)}
         />
 
-        <div
-          role="group"
-          aria-label="How this song plays"
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 6,
-            marginTop: 6,
-          }}
-        >
-          <span
-            style={{
-              fontSize: ".72rem",
-              opacity: 0.65,
-              letterSpacing: ".08em",
-            }}
-          >
-            HOW IT PLAYS
-          </span>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {RULES.map((r) => {
-              const on = activeSet.rule === r.id;
-              return (
-                <button
-                  key={r.id}
-                  type="button"
-                  data-testid={`rule-${r.id}`}
-                  onClick={() => setRule(r.id)}
-                  aria-pressed={on}
-                  title={r.hint}
-                  style={{
-                    padding: "6px 12px",
-                    borderRadius: 999,
-                    border: on
-                      ? "1px solid var(--accent, #7c4dff)"
-                      : "1px solid rgba(128,128,128,.35)",
-                    background: on ? "var(--accent, #7c4dff)" : "transparent",
-                    color: on ? "#fff" : "inherit",
-                    cursor: "pointer",
-                    font: "inherit",
-                    fontSize: ".85rem",
-                  }}
-                >
-                  {r.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {sets.length < MAX_SETS && (
+        {sets.length < MAX_MIXES_PER_SET && (
           <button
             type="button"
             className={styles.addSet}
@@ -203,8 +147,8 @@ export default function SetupScreen({
             onClick={addSet}
             title={
               canAddSet
-                ? "Add a second set to play back-to-back"
-                : "Finish this set first"
+                ? "Add another mix to play back-to-back"
+                : "Finish this mix first"
             }
           >
             ＋ Add another set{" "}

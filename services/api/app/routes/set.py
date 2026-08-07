@@ -33,6 +33,8 @@ from pydantic import BaseModel
 from app.config import settings
 from app.models import MixPlan
 from app.planner import fence
+from app.planner import rule_shuffle
+from app.planner.plan import force_tempo_enabled
 from app.routes import mix as mixroute
 from app.storage import maybe_sweep
 
@@ -52,8 +54,10 @@ from workers.set_render import (  # noqa: E402  (shipped engine — reuse, never
 router = APIRouter()
 log = logging.getLogger("promptdj.set")
 
-# V1 hard cap: a session holds 1 or 2 sets. Kept small on purpose (render time + file size).
-MAX_SETS = 2
+# V1 hard cap: how many mixes one continuous SET may hold. Raised 2 -> 5 (2026-08-07) with the auto-rule
+# set flow. Kept in ONE named constant on purpose — bigger sets mean longer renders + larger WAVs, so
+# this is the single dial to trade reach against cost.
+MAX_MIXES_PER_SET = 5
 
 # Bump when the set-ASSEMBLY logic changes, so stale sets aren't re-served while the per-mix renders
 # (unaffected, and expensive) stay cached.
@@ -71,11 +75,28 @@ _jobs: dict[str, tuple[str, str | None]] = {}
 class SetPairRequest(BaseModel):
     song1_id: str  # the beat / instrumental bed
     song2_id: str  # the vocal source
-    rule: int = 1  # which mixing RULE this song uses in the set: 1 = simple, 3 = chop & repeat, 4 = echo
+    rule: int = 1  # explicit RULE (1/3/4). Used by older callers + the dev CLI; IGNORED when the set is
+    #                auto-ruled (user_id + set_index below).
 
 
 class SetRequest(BaseModel):
     sets: list[SetPairRequest]
+    # AUTO RULE ASSIGNMENT (2026-08-07): when a stable user_id + the set's 0-based ordinal (set_index)
+    # are supplied, EACH mix's rule is auto-assigned by the shared shuffler — rule_for_set(user_id,
+    # set_index, position) — where position is the mix's index in the set. Same (user, set_index, pairs)
+    # -> same rules -> same set id, so a rebuild hits cache. Without them, each pair's explicit rule wins.
+    user_id: str | None = None
+    set_index: int | None = None
+
+
+def _resolve_pairs(req: "SetRequest") -> list[tuple[str, str, int]]:
+    """The (song1, song2, rule) triples for a set. With user_id + set_index the rule of the mix at each
+    position is auto-assigned by the shared shuffler; otherwise each pair's explicit rule is used."""
+    if req.user_id is not None and req.set_index is not None:
+        return [(p.song1_id, p.song2_id,
+                 rule_shuffle.rule_for_set(req.user_id, req.set_index, i))
+                for i, p in enumerate(req.sets)]
+    return [(p.song1_id, p.song2_id, p.rule) for p in req.sets]
 
 
 class SetMember(BaseModel):
@@ -84,6 +105,7 @@ class SetMember(BaseModel):
     index: int  # 1-based position in the ORIGINAL request order
     song1_id: str
     song2_id: str
+    rule: int = 1  # the mixing RULE this mix was made with (auto-assigned by the shuffler, or explicit)
     kept: bool  # False when declined (too far from the set tempo, or the pair couldn't be mixed)
     seam_at: float | None = None  # seconds into the set where this member's crossfade begins
     reason: str | None = None  # why it was dropped, in plain language (when kept is False)
@@ -189,7 +211,12 @@ def _run_set(set_id: str, pairs: list[tuple[str, str, int]]) -> None:
         bpm_of: dict[int, float] = {}    # index -> the tempo that mix really plays at
         for i, (s1, s2, _rule) in enumerate(pairs, start=1):  # mixability is the shared foundation — rule-independent
             a1, a2 = mixroute._load_analysis(s1), mixroute._load_analysis(s2)
-            opts = fence.arrangement_options(a1, a2) if (a1 and a2) else None
+            # NEVER-DECLINE (founder rule): a far-apart pair is FORCED onto the beat, not dropped for
+            # tempo. This gate must honour the same force_tempo flag the single-mix path uses
+            # (plan.build_mix_plan) — otherwise a set silently drops a pair that mixes fine on its own
+            # (the Innerbloom × Jugni Ji bug). The ONLY mixability decline left is a track with no beat grid.
+            opts = (fence.arrangement_options(a1, a2, force_tempo=force_tempo_enabled())
+                    if (a1 and a2) else None)
             if not (opts and opts.get("mixable") and opts.get("master_bpm")):
                 unmixable[i] = (opts or {}).get("reason") or "This pair couldn't be mixed."
                 continue
@@ -200,7 +227,7 @@ def _run_set(set_id: str, pairs: list[tuple[str, str, int]]) -> None:
         for i, (s1, s2, rule) in enumerate(pairs, start=1):
             if i in unmixable:
                 members.append(SetMember(
-                    index=i, song1_id=s1, song2_id=s2, kept=False, reason=unmixable[i],
+                    index=i, song1_id=s1, song2_id=s2, rule=rule, kept=False, reason=unmixable[i],
                 ))
                 continue
             mid = mixroute.mix_id_for(s1, s2, "", 1, rule)   # each song plays under ITS chosen rule
@@ -211,7 +238,7 @@ def _run_set(set_id: str, pairs: list[tuple[str, str, int]]) -> None:
             if not plan_file.exists():  # the pipeline declined this pair
                 _status, reason = mixroute._jobs.get(mid, ("error", "This pair couldn't be mixed."))
                 members.append(SetMember(
-                    index=i, song1_id=s1, song2_id=s2, kept=False,
+                    index=i, song1_id=s1, song2_id=s2, rule=rule, kept=False,
                     reason=reason or "This pair couldn't be mixed.",
                 ))
                 continue
@@ -233,7 +260,7 @@ def _run_set(set_id: str, pairs: list[tuple[str, str, int]]) -> None:
                 info = sf.info(str(wav))
                 rendered.append({"index": i, "wav": wav, "bpm": p.master_bpm,
                                  "phrase_starts": list(p.out_phrase_starts or []), "frames": info.frames})
-            members.append(SetMember(index=i, song1_id=s1, song2_id=s2, kept=True))
+            members.append(SetMember(index=i, song1_id=s1, song2_id=s2, rule=rule, kept=True))
 
         if not rendered:
             _jobs[set_id] = ("error", "None of these sets could be built — try different songs.")
@@ -273,9 +300,9 @@ def _run_set(set_id: str, pairs: list[tuple[str, str, int]]) -> None:
 @router.post("/set")
 def start_set(req: SetRequest, response: Response) -> SetJob:
     """Start building a set (or return the cached one). Returns at once."""
-    if not (1 <= len(req.sets) <= MAX_SETS):
-        raise HTTPException(400, f"A set holds 1 to {MAX_SETS} mixes.")
-    pairs = [(p.song1_id, p.song2_id, p.rule) for p in req.sets]
+    if not (1 <= len(req.sets) <= MAX_MIXES_PER_SET):
+        raise HTTPException(400, f"A set holds 1 to {MAX_MIXES_PER_SET} mixes.")
+    pairs = _resolve_pairs(req)
     for s1, s2, _rule in pairs:
         for sid in (s1, s2):
             if not mixroute._HEX_ID.fullmatch(sid):

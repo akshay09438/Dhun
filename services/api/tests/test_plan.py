@@ -300,8 +300,9 @@ def test_instrumental_only_beat_places_no_song1_vocal(monkeypatch):
 
 def test_merrygo_beat_is_marked_instrumental_only():
     from app.planner import instrumental_beats
-    assert instrumental_beats.is_instrumental_only(
-        "4fc82b59807fcbd3071bca7f612e2311f044f0e203f8e82895d7682d67629480")
+    a = make_analysis(bpm=85.0)  # no vocal regions -> only the explicit hand-list can flag it
+    a.song_id = "4fc82b59807fcbd3071bca7f612e2311f044f0e203f8e82895d7682d67629480"
+    assert instrumental_beats.is_instrumental_only(a)
 
 
 def test_hand_marked_main_drop_anchors_the_hook(monkeypatch):
