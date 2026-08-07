@@ -7,7 +7,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 import SetupScreen from "./SetupScreen";
-import type { SetPick } from "../../types";
+import { MAX_MIXES_PER_SET, type SetPick } from "../../types";
 
 afterEach(() => {
   cleanup();
@@ -132,19 +132,35 @@ test("'Add another set' is disabled until the first set is complete", async () =
   expect(add().disabled).toBe(false);
 });
 
-test("adding a second set shows a running order, caps at two, and switches the button to 'Build the set'", async () => {
+test("adding a second mix shows a running order and switches the button to 'Build the set'", async () => {
   stubLibrary();
   renderSetup();
 
   await fillActiveSet();
   fireEvent.click(screen.getByTestId("add-set"));
 
-  // Two cards in the running order; single-set default is gone.
+  // Two cards in the running order; single-mix default is gone.
   expect(screen.getByTestId("set-card-1")).toBeTruthy();
   expect(screen.getByTestId("set-card-2")).toBeTruthy();
   expect(screen.getByRole("button", { name: /build the set/i })).toBeTruthy();
 
-  // Capped at two — no more "Add another set".
+  // Under the cap, "Add another" is still offered (a set now holds up to MAX_MIXES_PER_SET).
+  expect(screen.queryByTestId("add-set")).not.toBeNull();
+});
+
+test("the set line-up caps at MAX_MIXES_PER_SET mixes", async () => {
+  stubLibrary();
+  renderSetup();
+
+  // Fill the first mix, then add + fill until the running order is full.
+  await fillActiveSet();
+  for (let n = 1; n < MAX_MIXES_PER_SET; n++) {
+    fireEvent.click(screen.getByTestId("add-set"));
+    await fillActiveSet(); // fills the newly-added (now active) mix
+  }
+
+  expect(screen.getByTestId(`set-card-${MAX_MIXES_PER_SET}`)).toBeTruthy();
+  // At the cap the "Add another" control is gone.
   expect(screen.queryByTestId("add-set")).toBeNull();
 });
 

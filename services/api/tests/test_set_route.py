@@ -108,13 +108,17 @@ def test_set_is_cached(tmp_path, monkeypatch):
     assert r2.json()["status"] == "ready"
 
 
-def test_set_declines_a_tempo_outlier_pair_and_builds_the_rest(tmp_path, monkeypatch):
+def test_set_NEVER_declines_a_far_tempo_pair_it_forces_it_onto_the_beat(tmp_path, monkeypatch):
+    """Never-decline is a PRODUCT rule and must hold inside a SET too, not only for a single mix — a
+    far-apart vocal is stretched fully onto the beat and beat-locked, never dropped for tempo. (Bug:
+    the set builder's mixability gate called the fence WITHOUT force_tempo, so it still used the old
+    'too far apart' decline — e.g. Innerbloom 122 × Jugni Ji 95 was skipped even though the same pair
+    mixes fine on its own. Founder 2026-08-07, reported after a 5-mix set dropped members 3 and 5.)"""
     _use_tmp(monkeypatch, tmp_path)
-    # One shared beat, two vocals: the second vocal is far off-tempo, so its set is declined
-    # while the first set still builds. (Deterministic: the lone 155-BPM song is the outlier.)
-    _beat(tmp_path, BEAT1, 120.0)
-    _vocal(tmp_path, VOC1, 120.0)
-    _vocal(tmp_path, VOC2, 155.0)
+    # One shared beat, two vocals: one in-band, one ~28% apart (the shape of Innerbloom × Jugni Ji).
+    _beat(tmp_path, BEAT1, 122.0)
+    _vocal(tmp_path, VOC1, 122.0)
+    _vocal(tmp_path, VOC2, 95.0)  # far apart — must be FORCED onto the 122 beat, not skipped
 
     r = client.post("/set", json=_payload((BEAT1, VOC1), (BEAT1, VOC2)))
     ready = _poll(r.json()["set_id"], "ready")
@@ -122,8 +126,9 @@ def test_set_declines_a_tempo_outlier_pair_and_builds_the_rest(tmp_path, monkeyp
 
     by_index = {m["index"]: m for m in ready["members"]}
     assert by_index[1]["kept"] is True
-    assert by_index[2]["kept"] is False
-    assert "tempo" in (by_index[2]["reason"] or "").lower()
+    # The far pair is kept (forced onto the beat) and NEVER declined for tempo.
+    assert by_index[2]["kept"] is True, by_index[2]["reason"]
+    assert "too far apart" not in (by_index[2]["reason"] or "").lower()
 
 
 def test_seam_positions_match_the_rendered_set_across_a_cut(tmp_path, monkeypatch):
@@ -192,11 +197,15 @@ def test_set_keeps_both_sets_on_one_beat_whatever_the_vocals_original_tempos(tmp
     assert by_index[2]["seam_at"] and by_index[2]["seam_at"] > 0  # a real transition was created
 
 
-def test_set_enforces_the_two_set_cap(tmp_path, monkeypatch):
+def test_set_enforces_the_max_mixes_cap(tmp_path, monkeypatch):
     _use_tmp(monkeypatch, tmp_path)
-    three = _payload((BEAT1, VOC1), (BEAT2, VOC2), (BEAT1, VOC2))
-    assert client.post("/set", json=three).status_code == 400
+    # Over the cap (6 > MAX_MIXES_PER_SET) -> 400; empty -> 400.
+    over = _payload(*([(BEAT1, VOC1)] * (set_route.MAX_MIXES_PER_SET + 1)))
+    assert client.post("/set", json=over).status_code == 400
     assert client.post("/set", json={"sets": []}).status_code == 400
+    # Three pairs is now WITHIN the raised cap, so it is NOT rejected on count (proceeds to prereqs).
+    three = _payload((BEAT1, VOC1), (BEAT2, VOC2), (BEAT1, VOC2))
+    assert client.post("/set", json=three).status_code != 400
 
 
 def test_set_blocks_when_a_song_is_not_analyzed(tmp_path, monkeypatch):
@@ -219,3 +228,40 @@ def test_set_rejects_bad_ids(tmp_path, monkeypatch):
     )
     assert client.get("/set/deadbeef").status_code == 404
     assert client.get("/set/" + "a" * 64 + "/audio").status_code == 404
+
+
+# ---- auto rule assignment: seed = user + set_index, each mix ruled by its position -------------
+
+def test_set_auto_assigns_rules_from_the_shuffler(tmp_path, monkeypatch):
+    _use_tmp(monkeypatch, tmp_path)
+    _beat(tmp_path, BEAT1, 120.0); _vocal(tmp_path, VOC1, 118.0)
+    _beat(tmp_path, BEAT2, 122.0); _vocal(tmp_path, VOC2, 119.0)
+    monkeypatch.setattr(set_route, "_run_set", lambda *a, **k: None)  # id-only check; skip the render
+    from app.planner import rule_shuffle
+
+    body = {"sets": [{"song1_id": BEAT1, "song2_id": VOC1},
+                     {"song1_id": BEAT2, "song2_id": VOC2}],
+            "user_id": "u-set", "set_index": 0}
+    id1 = client.post("/set", json=body).json()["set_id"]
+    id2 = client.post("/set", json=body).json()["set_id"]
+    assert id1 == id2  # deterministic -> same id -> a rebuild hits cache
+
+    expected = [(BEAT1, VOC1, rule_shuffle.rule_for_set("u-set", 0, 0)),
+                (BEAT2, VOC2, rule_shuffle.rule_for_set("u-set", 0, 1))]
+    assert id1 == set_route.set_id_for(expected)  # each mix ruled by its position in the set
+
+
+def test_set_consecutive_indices_and_users_diverge(tmp_path, monkeypatch):
+    _use_tmp(monkeypatch, tmp_path)
+    _beat(tmp_path, BEAT1, 120.0); _vocal(tmp_path, VOC1, 118.0)
+    _beat(tmp_path, BEAT2, 122.0); _vocal(tmp_path, VOC2, 119.0)
+    monkeypatch.setattr(set_route, "_run_set", lambda *a, **k: None)
+
+    def sid(user, idx):
+        return client.post("/set", json={
+            "sets": [{"song1_id": BEAT1, "song2_id": VOC1},
+                     {"song1_id": BEAT2, "song2_id": VOC2}],
+            "user_id": user, "set_index": idx}).json()["set_id"]
+
+    assert sid("A", 0) != sid("A", 1)  # a user's consecutive sets differ (G3)
+    assert sid("A", 0) != sid("B", 0)  # different users differ (G4)

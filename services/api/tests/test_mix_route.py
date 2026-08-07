@@ -311,3 +311,51 @@ def test_engine_version_tags_key_matching_when_enabled():
     mix can never be served as if it were key-matched."""
     assert mix_route.key_match_enabled() is True
     assert "+m10key" in mix_route.ENGINE_VERSION, mix_route.ENGINE_VERSION
+
+
+# ---- CHANGE 1/2: auto rule assignment via the deterministic shuffler ----------------------------
+
+def test_auto_rule_assignment_is_deterministic_and_cache_stable(monkeypatch, tmp_path):
+    """A user_id + generation index drives the shuffler: the rule is auto-assigned and the generation
+    is the take (cache slot). The same (user, pair, generation) must always yield the same mix id (a
+    regenerate hits cache), and that id must equal the plain cache formula with the shuffled rule +
+    take = generation + 1 (so the mix_id_for formula itself is UNCHANGED)."""
+    _use_tmp(monkeypatch, tmp_path)
+    _setup_pair(tmp_path)
+    monkeypatch.setattr(mix_route, "_run_mix", lambda *a, **k: None)  # id-only check; skip the render
+    from app.planner import rule_shuffle
+
+    body = {"song1_id": SONG1, "song2_id": SONG2, "user_id": "u-test", "generation": 0}
+    id1 = client.post("/mix", json=body).json()["mix_id"]
+    id2 = client.post("/mix", json=body).json()["mix_id"]
+    assert id1 == id2  # same (user, pair, generation) -> same id, forever
+
+    expected_rule = rule_shuffle.rule_for("u-test", SONG1, SONG2, 0)
+    expected_id = mix_route.mix_id_for(SONG1, SONG2, "", 1, expected_rule)  # take = generation + 1
+    assert id1 == expected_id
+
+
+def test_auto_rule_two_users_can_diverge_on_the_same_pair(monkeypatch, tmp_path):
+    """Different users get different orderings for the same pair (R3): at generation 0 the two users
+    below get different rules, so their generation-0 mix ids differ."""
+    _use_tmp(monkeypatch, tmp_path)
+    _setup_pair(tmp_path)
+    monkeypatch.setattr(mix_route, "_run_mix", lambda *a, **k: None)
+
+    def gen0_id(user):
+        return client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2,
+                                         "user_id": user, "generation": 0}).json()["mix_id"]
+
+    # creator-02 and creator-03 get different first rules (4 vs 1) for this pair (see the shuffler tests).
+    assert gen0_id("creator-02") != gen0_id("creator-03")
+
+
+def test_explicit_rule_still_works_without_a_user_id(monkeypatch, tmp_path):
+    """Back-compat: with no user_id/generation, the explicit rule + take are used unchanged (the set
+    path and older callers)."""
+    _use_tmp(monkeypatch, tmp_path)
+    _setup_pair(tmp_path)
+    monkeypatch.setattr(mix_route, "_run_mix", lambda *a, **k: None)
+
+    got = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2, "rule": 3, "take": 2}).json()
+    assert got["mix_id"] == mix_route.mix_id_for(SONG1, SONG2, "", 2, 3)

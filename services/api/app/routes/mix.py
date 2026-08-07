@@ -31,9 +31,12 @@ from app.audio.stems import stem_path
 from app.config import settings
 from app.models import Mix, MixPlan, TrackAnalysis, VocalChainConfig, chain_config_hash
 from app.planner import validate
+from app.planner import anomaly
 from app.planner import beatgrid
 from app.planner import hooks
+from app.planner import instrumental_beats
 from app.planner import name as name_planner
+from app.planner import rule_shuffle
 from app.planner import window
 from app.planner.keys import resolve_key_shift
 from app.planner.plan import (MixDeclined, build_mix_plan, effect_pool_enabled,
@@ -219,7 +222,26 @@ class MixRequest(BaseModel):
     song2_id: str  # the vocal source
     prompt: str = ""
     take: int = 1  # regenerate iteration — a new take is a distinct arrangement + cache slot
-    rule: int = 1  # which mixing RULE: 1 = simple mix (default), 3 = chop & repeat, 4 = echo+reverb
+    rule: int = 1  # explicit RULE (1 = simple, 3 = chop & repeat, 4 = echo). Used by the set path + tests;
+    #                IGNORED when user_id + generation drive the shuffler (below).
+    # AUTO RULE ASSIGNMENT (2026-08-07): the manual rule buttons are gone. When a stable per-browser
+    # user_id and a 0-based generation index are supplied, the rule is auto-assigned by the DETERMINISTIC
+    # shuffler (rule_shuffle.rule_for) and the generation index is the take (cache slot). Same
+    # (user, pair, generation) -> same rule -> same mix id, forever — so a regenerate hits cache.
+    user_id: str | None = None
+    generation: int | None = None
+
+
+def _resolve_rule_take(req: "MixRequest") -> tuple[int, int]:
+    """The effective (rule, take) for a request. With a user_id + generation index the rule is
+    auto-assigned by the deterministic shuffler and the 0-based generation is the take (cache slot);
+    otherwise the explicit rule/take are used (the set path + tests). This changes only WHERE `rule`
+    comes from — the cache-id formula (mix_id_for) is untouched, so existing cached mixes stay valid."""
+    if req.user_id is not None and req.generation is not None:
+        gen = max(0, req.generation)
+        rule = rule_shuffle.rule_for(req.user_id, req.song1_id, req.song2_id, gen)
+        return rule, gen + 1
+    return req.rule, req.take
 
 
 class MixNameRequest(BaseModel):
@@ -373,8 +395,10 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         # Beat-sensor health: every on-beat move trusts Song 1's downbeats, so surface a mis-detected
         # grid instead of silently locking to the wrong beats (founder rule 2026-08-07). Informational
         # for now — logged per mix; a LOW grid is where an off-beat feel would come from.
+        grid_health: dict[str, dict] = {}
         for _tag, _an in (("song1/beat", a1), ("song2/vocal", a2)):
             _gh = beatgrid.grid_health(_an.bpm, _an.downbeats)
+            grid_health[_tag] = _gh
             (log.warning if not _gh["ok"] else log.info)("mix %s beat-grid %s: %s", mix_id, _tag, _gh)
         # `rule` selects the arrangement style ON TOP of the shared BPM+key foundation build_mix_plan does:
         # 1 = dry simple mix, 3 = chop & repeat (rendered below), 4 = echo + reverb (build_mix_plan gates it).
@@ -413,6 +437,16 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
             except Exception:  # noqa: BLE001 — a matcher failure must never fail the mix; fall back to unshifted
                 log.exception("empirical chroma key-match failed for %s; leaving vocal unshifted", mix_id)
         log.info("mix %s key-shift %+d st (%s)", mix_id, shift, why)
+
+        # BACKEND ANOMALY REPORT (founder rule 2026-08-07, point 2): the mix is STILL generated from
+        # whatever we've got — forced tempo, a shaky grid, an audio-measured key — but surface each
+        # degraded/unexpected condition (what happened + what to do) so a real upload's data problems
+        # are visible on the backend instead of silent. Reporting only; never changes the mix.
+        for _a in anomaly.scan(grid_health=grid_health, tempo_forced=plan.tempo_forced,
+                               vocal_stretch=plan.vocal_stretch, key_why=why,
+                               beat_vocal_coverage=instrumental_beats.vocal_coverage(a1)):
+            (log.warning if _a.severity == "warn" else log.info)(anomaly.format_line(mix_id, _a))
+
         if shift != 0:
             s2_voc = pitch.shifted_vocal(song2_id, orig_s2_voc, shift)        # PitchError -> loud decline
             validate.assert_key_shift(orig_s2_voc, s2_voc, shift)            # K1 — independent correctness
@@ -480,7 +514,8 @@ def start_mix(req: MixRequest, response: Response) -> Mix:
         if not _HEX_ID.fullmatch(sid):
             raise HTTPException(404, "Song not found.")
 
-    mix_id = mix_id_for(req.song1_id, req.song2_id, req.prompt, req.take, req.rule)
+    rule, take = _resolve_rule_take(req)
+    mix_id = mix_id_for(req.song1_id, req.song2_id, req.prompt, take, rule)
     ready = _ready(mix_id)
     if ready is not None:
         return ready
@@ -493,7 +528,7 @@ def start_mix(req: MixRequest, response: Response) -> Mix:
         _jobs[mix_id] = ("processing", None)
         threading.Thread(
             target=_run_mix,
-            args=(mix_id, req.song1_id, req.song2_id, req.prompt, req.take, req.rule),
+            args=(mix_id, req.song1_id, req.song2_id, req.prompt, take, rule),
             daemon=True,
         ).start()
 

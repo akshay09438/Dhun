@@ -160,6 +160,7 @@ export type MixPlanDTO = {
   placements: PlacementDTO[];
   s1_vocal_regions: [number, number][]; // spans where Song 1's own vocal answers
   take: number;
+  rule?: number; // which mixing rule made this take: 1 = simple, 3 = chop & repeat, 4 = echo
   notes: string;
   source: string; // "ai" | "rules"
 };
@@ -172,24 +173,33 @@ export type MixDTO = {
   message: string | null;
 };
 
-/** Start making a mix of Song 1's beat + Song 2's vocal. Returns immediately. */
+/** Auto rule assignment: a stable per-browser id + 0-based generation index. When supplied, the backend
+ *  deterministically picks the rule (rule_shuffle) and uses the generation as the cache slot. */
+export type AutoRule = { userId: string; generation: number };
+
+/** Start making a mix of Song 1's beat + Song 2's vocal. Returns immediately.
+ *  Pass `auto` for the shuffler-assigned rule (single mixes); `take`/`rule` are used only without it. */
 export async function startMix(
   song1Id: string,
   song2Id: string,
   prompt = "",
   take = 1,
   rule = 1, // 1 = simple mix, 3 = chop & repeat
+  auto?: AutoRule,
 ): Promise<MixDTO> {
+  const body = auto
+    ? {
+        song1_id: song1Id,
+        song2_id: song2Id,
+        prompt,
+        user_id: auto.userId,
+        generation: auto.generation,
+      }
+    : { song1_id: song1Id, song2_id: song2Id, prompt, take, rule };
   const res = await fetch(`${API_BASE}/mix`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      song1_id: song1Id,
-      song2_id: song2Id,
-      prompt,
-      take,
-      rule,
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     // 409 carries a plain-language reason (e.g. "Song 1 hasn't been analyzed yet.")
@@ -210,7 +220,7 @@ export async function getMixStatus(mixId: string): Promise<MixDTO> {
   return res.json();
 }
 
-/** Make a mix and wait until it's rendered (start + poll). */
+/** Make a mix and wait until it's rendered (start + poll). Pass `auto` for the shuffler-assigned rule. */
 export async function makeMix(
   song1Id: string,
   song2Id: string,
@@ -218,8 +228,9 @@ export async function makeMix(
   take = 1,
   { pollMs = 3000, maxTries = 80 }: PollOpts = {},
   rule = 1, // 1 = simple mix, 3 = chop & repeat
+  auto?: AutoRule,
 ): Promise<MixDTO> {
-  const started = await startMix(song1Id, song2Id, prompt, take, rule);
+  const started = await startMix(song1Id, song2Id, prompt, take, rule, auto);
   if (started.status === "ready") return started;
   for (let i = 0; i < maxTries; i++) {
     const s = await getMixStatus(started.mix_id);
@@ -309,6 +320,7 @@ export type SetMemberDTO = {
   index: number; // 1-based position in the line-up
   song1_id: string;
   song2_id: string;
+  rule?: number; // the mixing rule this mix was made with (auto-assigned)
   kept: boolean; // false when declined (too far off-tempo, or the pair couldn't be mixed)
   seam_at: number | null; // seconds into the set where this member's crossfade begins
   reason: string | null; // plain-language reason it was dropped (when kept is false)
@@ -323,14 +335,30 @@ export type SetDTO = {
   message: string | null;
 };
 
-/** Start building a continuous set from an ordered list of pairs. Returns immediately. */
+/** Auto rule assignment for a set: a stable per-browser id + the set's 0-based ordinal. When supplied,
+ *  the backend assigns each mix's rule by its position in the set (rule_for_set). */
+export type AutoSet = { userId: string; setIndex: number };
+
+/** Start building a continuous set from an ordered list of pairs. Returns immediately.
+ *  Pass `auto` to have each mix's rule auto-assigned by the shuffler; otherwise each pair's rule is used. */
 export async function startSet(
   pairs: { song1_id: string; song2_id: string; rule?: number }[],
+  auto?: AutoSet,
 ): Promise<SetDTO> {
+  const body = auto
+    ? {
+        sets: pairs.map((p) => ({
+          song1_id: p.song1_id,
+          song2_id: p.song2_id,
+        })),
+        user_id: auto.userId,
+        set_index: auto.setIndex,
+      }
+    : { sets: pairs };
   const res = await fetch(`${API_BASE}/set`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sets: pairs }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const msg = await res
@@ -348,12 +376,13 @@ export async function getSetStatus(setId: string): Promise<SetDTO> {
   return res.json();
 }
 
-/** Build a set and wait until it's rendered + joined (start + poll). */
+/** Build a set and wait until it's rendered + joined (start + poll). Pass `auto` to auto-assign rules. */
 export async function makeSet(
   pairs: { song1_id: string; song2_id: string; rule?: number }[],
   { pollMs = 3000, maxTries = 120 }: PollOpts = {},
+  auto?: AutoSet,
 ): Promise<SetDTO> {
-  const started = await startSet(pairs);
+  const started = await startSet(pairs, auto);
   if (started.status === "ready") return started;
   for (let i = 0; i < maxTries; i++) {
     const s = await getSetStatus(started.set_id);

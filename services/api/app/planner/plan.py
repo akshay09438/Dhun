@@ -206,7 +206,7 @@ def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement], stretch: f
     # remix of Khuda Jaane): NEVER weave in Song 1's own vocal — it is a whole second song's lyrics
     # and would overlap Song 2's vocal. Keep the Song 2 flourish (the filter sweep into the final
     # entry); just return no Song 1 vocal regions so only Song 2 sings. (founder decision 2026-07-15)
-    if instrumental_beats.is_instrumental_only(a1.song_id):
+    if instrumental_beats.is_instrumental_only(a1):
         if len(placements) >= 2:
             placements[-1].fx = "sweep_in"
         return placements, []

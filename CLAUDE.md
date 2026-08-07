@@ -66,7 +66,7 @@ An AI that mixes music like a DJ from plain-language prompts. Upload two songs; 
 - Export the full mix or a short 15–30s clip.
 
 **Non-goals (deliberately not doing):**
-- Third songs / multi-track continuous sets (V1 is strictly two songs).
+- A third song blended into a SINGLE mix — one mix is one beat + one vocal. (Back-to-back **sets of up to 5 mixes** are a V1 feature — the core rule, `MAX_MIXES_PER_SET = 5`; only blending a 3rd song into one mix is out.)
 - Generating or synthesizing new music (we mix existing songs; that is Suno's job).
 - Streaming-catalog / 'search any song' sourcing — uploads only in V1; search is the V2 north star.
 - Live BPM / tempo change while playing (energy moves only in V1; live tempo is a V2 stretch goal).
@@ -184,7 +184,7 @@ The machine-readable form below is the single source of truth the hooks and the 
       "Export the full mix or a short 15–30s clip."
     ],
     "nonGoals": [
-      "Third songs / multi-track continuous sets (V1 is strictly two songs).",
+      "A third song blended into a SINGLE mix — one mix is one beat + one vocal (back-to-back sets of up to 5 mixes ARE a V1 feature; only a 3rd song inside one mix is out).",
       "Generating or synthesizing new music (we mix existing songs; that is Suno's job).",
       "Streaming-catalog / 'search any song' sourcing — uploads only in V1; search is the V2 north star.",
       "Live BPM / tempo change while playing (energy moves only in V1; live tempo is a V2 stretch goal).",
