@@ -25,16 +25,19 @@ from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from app.audio import pitch
+from app.audio import chroma, pitch
 from app.audio.analysis import analysis_path
 from app.audio.stems import stem_path
 from app.config import settings
 from app.models import Mix, MixPlan, TrackAnalysis, VocalChainConfig, chain_config_hash
 from app.planner import validate
+from app.planner import beatgrid
+from app.planner import hooks
 from app.planner import name as name_planner
 from app.planner import window
 from app.planner.keys import resolve_key_shift
-from app.planner.plan import MixDeclined, build_mix_plan, effect_pool_enabled, rule4_enabled
+from app.planner.plan import (MixDeclined, build_mix_plan, effect_pool_enabled,
+                              force_tempo_enabled, rule4_enabled)
 from app.storage import maybe_sweep, path_for
 
 # workers/ lives at the repo root; put it on the path so we can import the engine.
@@ -48,6 +51,7 @@ log = logging.getLogger("promptdj.mix")
 
 _HEX_ID = re.compile(r"[0-9a-f]{64}")
 _S1_STEMS = ("drums", "bass", "other")
+KEY_SHIFT_CAP = 3  # ±3 semitones, formant-preserved: the empirical chroma matcher's ceiling (founder 2026-08-07)
 
 # Bump when the fence rules, the render engine, or the planner prompt change, so a
 # cached mix from an older engine is never silently served after we improve it.
@@ -158,9 +162,11 @@ _S1_STEMS = ("drums", "bass", "other")
 # for a non-pool engine/plan change.
 # BUMPED m6.11 -> m9band15 (2026-08-06): the ±11%->±15% tempo-band widen changes mix output, so every
 # mix + set must re-render fresh (no stale ±11% cache is ever served). Unique-per-behaviour, as required.
-_ENGINE_VERSION_BASE = "m11rule"  # per-mix RULE selection (2026-08-07): Rule 3 added + Rule 4 gated to
-#                                   rule==4, so the default mix is now DRY (was always-echo). Bumped from
-#                                   "m9band15" so every stale echo-default mix re-renders under the new gate.
+_ENGINE_VERSION_BASE = "m12match"  # empirical chroma key-match fallback (2026-08-07): when key labels are
+#                                   untrusted, the vocal shift is measured from audio (AutoMashUpper) instead
+#                                   of skipped -> a formerly un-shifted clash now key-matches. Bumped from
+#                                   "m11rule" so those stale un-shifted mixes re-render under the matcher.
+#                                   (Forced tempo auto-match is gated OFF here until the validate.py approval.)
 
 # KEY MATCHING (Change ②, 2026-08-06): shift Song 2's vocal into a compatible key BEFORE the mix
 # (verified + cached upstream in app/audio/pitch.py; referee K1 re-checks the chroma). INSTANT OFF-SWITCH:
@@ -177,6 +183,7 @@ def key_match_enabled() -> bool:
 ENGINE_VERSION = (_ENGINE_VERSION_BASE
                   + ("+m8echo" if rule4_enabled() else "")           # Rule 4: gap-sized echo + reverb bed
                   + ("+m10key" if key_match_enabled() else "")       # Change ②: key-matching (pitch-shift)
+                  + ("+m12force" if force_tempo_enabled() else "")   # forced tempo auto-match (never decline)
                   + ("+m7pool" if effect_pool_enabled() else ""))    # effect pool (superseded, stays off)
 #          slices so the held-out window is FULL of vocal, not holes (founder: "more parts").
 #         (NOT m6.9: that string was already burned by a reverted experiment, so its stale renders
@@ -363,6 +370,12 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
     try:
         maybe_sweep()  # free disk (evict old regenerable renders) before this render-heavy job
         a1, a2 = _load_analysis(song1_id), _load_analysis(song2_id)
+        # Beat-sensor health: every on-beat move trusts Song 1's downbeats, so surface a mis-detected
+        # grid instead of silently locking to the wrong beats (founder rule 2026-08-07). Informational
+        # for now — logged per mix; a LOW grid is where an off-beat feel would come from.
+        for _tag, _an in (("song1/beat", a1), ("song2/vocal", a2)):
+            _gh = beatgrid.grid_health(_an.bpm, _an.downbeats)
+            (log.warning if not _gh["ok"] else log.info)("mix %s beat-grid %s: %s", mix_id, _tag, _gh)
         # `rule` selects the arrangement style ON TOP of the shared BPM+key foundation build_mix_plan does:
         # 1 = dry simple mix, 3 = chop & repeat (rendered below), 4 = echo + reverb (build_mix_plan gates it).
         plan = build_mix_plan(mix_id, a1, a2, prompt, take=take, chain=SHIPPED_CHAIN, rule=rule)
@@ -381,6 +394,24 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         orig_s2_voc = stem_path(song2_id, "vocals")
         s2_voc = orig_s2_voc
         shift, why = resolve_key_shift(a1, a2) if key_match_enabled() else (0, "key-match disabled")
+        # EMPIRICAL fallback (AutoMashUpper, Davies et al. 2013): when the key LABELS can't be trusted
+        # (flagged / low-confidence / no compatible label -> resolve_key_shift returns a "key-skip"),
+        # MEASURE the best shift from the audio chroma instead of shipping an un-shifted clash. Beat
+        # harmony = Song 1's bass+other; vocal region = its hook/first sung stretch. NEVER declines;
+        # capped at ±KEY_SHIFT_CAP (formant-preserved). Best-effort: any failure leaves the vocal
+        # un-shifted (exactly today's behaviour), never crashes the mix.
+        if key_match_enabled() and shift == 0 and why.startswith("key-skip"):
+            try:
+                region = hooks.hook_for(song2_id) or (a2.vocal_regions[0] if a2.vocal_regions else None)
+                beat_harmony = [stem_path(song1_id, "bass"), stem_path(song1_id, "other")]
+                e_shift, e_score, e_base = chroma.empirical_shift(
+                    beat_harmony, orig_s2_voc, cap=KEY_SHIFT_CAP, vocal_region=region)
+                if e_shift != 0:
+                    shift = e_shift
+                    why = (f"chroma-empirical {e_shift:+d} st (cos {e_score:.3f} vs {e_base:.3f} unshifted; "
+                           f"labels untrusted -> measured from audio)")
+            except Exception:  # noqa: BLE001 — a matcher failure must never fail the mix; fall back to unshifted
+                log.exception("empirical chroma key-match failed for %s; leaving vocal unshifted", mix_id)
         log.info("mix %s key-shift %+d st (%s)", mix_id, shift, why)
         if shift != 0:
             s2_voc = pitch.shifted_vocal(song2_id, orig_s2_voc, shift)        # PitchError -> loud decline

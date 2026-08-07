@@ -22,9 +22,12 @@ from app.planner.rule3 import Rule3Plan, unit_bars
 from workers import render
 
 SR = render.SR
-_WET = 0.40          # reverb wet on the chop tail (approved by ear in the harness)
-_CHOP_GAIN = 1.10    # chop level over the (ducked) bed
-_DUCK = 10 ** (-3 / 20)   # duck the bed ~3 dB under a chop so the echo/reverb isn't masked
+# Balance (founder decision 2026-08-07: BEAT FULL + VOCAL SUBTLE on Chop & Echo, not Simple).
+# The beat stays up front (only a light duck under a chop) and the chop sits UNDER it; reverb bumped a
+# little so the chop shares the beat's space, echo kept. Ear-tunable — the founder confirms in the app.
+_WET = 0.55          # reverb wet on the chop tail (was 0.40 — more space so the vocal glues in)
+_CHOP_GAIN = 0.90    # chop level over the bed (was 1.10 — vocal SUBTLE, sits under the beat)
+_DUCK = 10 ** (-1.0 / 20)   # duck the bed only ~1 dB under a chop (was ~3 dB) — BEAT STAYS FULL
 
 
 def envelope(path: Path, hop_ms: float = 10.0) -> tuple[np.ndarray, float]:

@@ -46,6 +46,18 @@ HOUSE_SPEED_MAX = 0.08  # ...and speed at most 8%
 WARP_LO = 0.81
 WARP_HI = 1.19
 
+# FORCED full-match mode (founder rule 2026-08-07: no pair may ever be declined). When two songs are
+# too far apart for the safe band, we do NOT decline — the beat stays master (protect its drive) and the
+# vocal is stretched FULLY onto it, then per-bar beat-locked so it can never drift off the grid. Octave
+# folding bounds the folded source to [master/√2, master·√2], so the forced vocal stretch is provably in
+# [0.71, 1.41]; these are the (slightly-margined) global + per-bar bands the referee allows ONLY for a
+# plan flagged tempo_forced. The safe path above is unchanged; this is a strictly-wider ceiling gated on
+# the forced flag, never applied to a normal mix.
+FORCE_STRETCH_LO = 0.69
+FORCE_STRETCH_HI = 1.45
+WARP_LO_FORCED = 0.55   # per-bar beat-lock grip in forced mode (wider, so a 1.26 bar still re-locks)
+WARP_HI_FORCED = 1.70
+
 # Cap the vocal slice so one long region can't dominate the whole mix — M3 is a
 # single placement; a section-length drop stays punchy.
 MAX_VOCAL_SECS = 40.0
@@ -80,9 +92,23 @@ def best_stretch(master_bpm: float, source_bpm: float) -> tuple[float, bool]:
     return round(ratio, 4), SAFE_STRETCH_LO <= ratio <= SAFE_STRETCH_HI
 
 
+_SQRT2 = 1.41421356
+
+
 def _fold_source(master_bpm: float, source_bpm: float) -> float:
-    """Octave-fold the source BPM to the multiple (x0.5 / x1 / x2) nearest the master."""
-    return min((source_bpm, source_bpm * 2, source_bpm / 2), key=lambda b: abs(b - master_bpm))
+    """Octave-fold the source BPM to the power-of-two multiple NEAREST the master — across ALL octaves,
+    not just x0.5/x1/x2. This keeps the folded source within a √2 window of the master for ANY pair
+    (e.g. 200 vs 60 folds to 240, not 120), so the FORCED vocal stretch is provably in [~0.71, ~1.41]
+    and a very-far-apart pair still gets a legal forced match instead of a disguised decline. For pairs
+    already within an octave the result is identical to the old x0.5/x1/x2 fold (behaviour-preserving)."""
+    if source_bpm <= 0 or master_bpm <= 0:
+        return source_bpm
+    b = float(source_bpm)
+    while b < master_bpm / _SQRT2:   # too low -> double up toward the master
+        b *= 2.0
+    while b > master_bpm * _SQRT2:   # too high -> halve down toward the master
+        b /= 2.0
+    return b
 
 
 def tempo_plan(master_bpm: float, source_bpm: float,
@@ -325,21 +351,33 @@ def compute_pitch_repair(bed: TrackAnalysis, voc: TrackAnalysis,
     return Decline(reason=f"keys clash and can't be pitched into the safe band (> {cap} semitones)")
 
 
-def legal_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
+def legal_options(a1: TrackAnalysis, a2: TrackAnalysis, force_tempo: bool = False) -> dict:
     """Assemble the fence: every legal, safe choice for mixing S2's vocal over S1's
-    bed — or a plain-language decline if the pair can't be blended cleanly."""
+    bed — or a plain-language decline if the pair can't be blended cleanly.
+
+    `force_tempo` (founder rule 2026-08-07): when True, a pair that would be declined for tempo is
+    NOT declined — the beat stays master and the vocal is stretched FULLY onto it (`tempo_forced`),
+    to be per-bar beat-locked downstream. The ONLY remaining decline is a track with no beat grid at
+    all (no clock to lock to — a data problem the analysis must fix, not a tempo one)."""
     if not a1.bpm or not a2.bpm or not (a1.phrase_starts or a1.downbeats or a1.beats):
         return {"mixable": False, "reason": "One track has no reliable beat to lock to."}
 
     # Movable master (house-protective): pick the shared tempo, nudging the house the minimum
     # only when a pair would otherwise be declined. bed_stretch == 1.0 is today's native path.
     master_bpm, bed_stretch, vocal_stretch, safe = tempo_plan(a1.bpm, a2.bpm)
+    tempo_forced = False
     if not safe:
-        pct = round(abs(a1.bpm / _fold_source(a1.bpm, a2.bpm) - 1) * 100)
-        return {
-            "mixable": False,
-            "reason": f"These two songs are too far apart in tempo (~{pct}% stretch) to blend cleanly.",
-        }
+        if not force_tempo:
+            pct = round(abs(a1.bpm / _fold_source(a1.bpm, a2.bpm) - 1) * 100)
+            return {
+                "mixable": False,
+                "reason": f"These two songs are too far apart in tempo (~{pct}% stretch) to blend cleanly.",
+            }
+        # FORCED full-match: beat native (protect its drive), vocal stretched fully onto it. Per-bar
+        # beat-lock (widened warp, applied downstream) then holds every bar on Song 1's grid so a large
+        # sustained stretch can't drift off-beat. bed_stretch stays 1.0 (never drag the beat).
+        src = _fold_source(a1.bpm, a2.bpm)
+        master_bpm, bed_stretch, vocal_stretch, tempo_forced = a1.bpm, 1.0, round(a1.bpm / src, 4), True
 
     # Plan against the retimed grid when the house is stretched, so anchors/drops/warp land on
     # the beats the audio will actually play at. Identity (a1g is a1) on the native path.
@@ -348,7 +386,10 @@ def legal_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
     need = (vocal_src[1] - vocal_src[0]) * vocal_stretch
     drops = candidate_drops(a1g, need)
     if not drops:
-        return {"mixable": False, "reason": "Couldn't find a spot in Song 1 with room for the vocal."}
+        if not force_tempo:
+            return {"mixable": False, "reason": "Couldn't find a spot in Song 1 with room for the vocal."}
+        # Never strand a forced mix: anchor on the first phrase/downbeat with whatever runway exists.
+        drops = list(a1g.phrase_starts or a1g.downbeats or [0.0])[:1]
 
     key_fit = (
         camelot_fit(a1.key.camelot, a2.key.camelot) if (a1.key and a2.key) else None
@@ -358,6 +399,7 @@ def legal_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
         "master_bpm": master_bpm,
         "bed_stretch": bed_stretch,
         "vocal_stretch": vocal_stretch,
+        "tempo_forced": tempo_forced,  # True -> the referee applies the wider forced band to THIS plan only
         "vocal_src": vocal_src,
         "drops": drops,  # ranked best-first
         "key_fit": key_fit,
@@ -528,10 +570,12 @@ def _hand_marked_drops(a1: TrackAnalysis, a1g: TrackAnalysis) -> list[float]:
     return sorted(set(out))
 
 
-def arrangement_options(a1: TrackAnalysis, a2: TrackAnalysis) -> dict:
+def arrangement_options(a1: TrackAnalysis, a2: TrackAnalysis, force_tempo: bool = False) -> dict:
     """The legal menu for a full arrangement: the M3 legal set plus ranked phrase
-    anchors and the available vocal slices. Declines pass through unchanged."""
-    base = legal_options(a1, a2)
+    anchors and the available vocal slices. Declines pass through unchanged.
+
+    `force_tempo` forwards to `legal_options` — never decline a pair on tempo (founder 2026-08-07)."""
+    base = legal_options(a1, a2, force_tempo=force_tempo)
     if not base["mixable"]:
         return base
     a1g = base["a1_grid"]  # the retimed grid (== a1 on the native path); everything grid-derived uses it
