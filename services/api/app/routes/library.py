@@ -41,6 +41,30 @@ def _manifest_path():
     return settings.data_dir / "library" / "manifest.json"
 
 
+def song_names(ids, data_dir=None) -> dict:
+    """Map catalog song ids -> display names, for labelling ops events on the dashboard.
+    Best-effort and read-only: a missing/broken manifest, or an unknown id, simply yields no
+    entry (never raises). `data_dir` lets a caller resolve against its own (possibly test) data
+    folder; defaults to the configured one."""
+    dd = data_dir if data_dir is not None else settings.data_dir
+    p = dd / "library" / "manifest.json"
+    out: dict[str, str] = {}
+    if not p.exists():
+        return out
+    try:
+        entries = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return out
+    wanted = set(ids)
+    for e in entries if isinstance(entries, list) else []:
+        sid = str(e.get("song_id", ""))
+        if sid in wanted:
+            name = str(e.get("name", "")).strip()
+            if name:
+                out[sid] = name
+    return out
+
+
 @router.get("/library")
 def get_library() -> dict:
     """The curated catalog: every manifest entry whose audio actually exists."""

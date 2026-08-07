@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 from app.config import settings  # noqa: E402
+from app.routes.admin import router as admin_router  # noqa: E402
 from app.routes.analysis import router as analysis_router  # noqa: E402
 from app.routes.library import router as library_router  # noqa: E402
 from app.routes.live import router as live_router  # noqa: E402
@@ -46,6 +47,7 @@ app.include_router(mix_router)
 app.include_router(set_router)
 app.include_router(live_router)
 app.include_router(library_router)
+app.include_router(admin_router)  # read-only internal ops dashboard API (/admin/*)
 
 # Serve the built web app (apps/web/dist) at "/" so a single origin — and a single
 # tunnel — serves both the UI and the API (no CORS, keys never cross-origin). Mounted
