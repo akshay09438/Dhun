@@ -438,12 +438,24 @@ def test_gate_b_plan_determinism_on_a_fixed_analysis(monkeypatch):
     assert sig == _GATE_B_PLAN_SIG, f"plan changed vs the pinned baseline — RE-BASELINE DELIBERATELY: {sig}"
 
 
-def test_declines_when_unmixable():
+def test_far_tempo_forces_and_never_declines():
+    # Founder rule 2026-08-07: NO pair is declined for tempo. A far-apart pair (used to raise
+    # MixDeclined at ±15%) now FORCES a full match — beat native, vocal stretched fully onto it,
+    # per-bar beat-locked, within the forced band.
     a1 = make_analysis(bpm=120.0)
-    a2 = make_analysis(bpm=158.0, vocal_regions=[(16.0, 40.0)])  # still too far even at ±15%
-    with pytest.raises(planner.MixDeclined) as exc:
+    a2 = make_analysis(bpm=158.0, vocal_regions=[(16.0, 40.0)])
+    p = planner.build_mix_plan("m" * 64, a1, a2)
+    assert p.tempo_forced and p.placements
+    assert fence.FORCE_STRETCH_LO <= p.vocal_stretch <= fence.FORCE_STRETCH_HI
+
+
+def test_declines_only_when_no_beat_grid():
+    # The SOLE remaining decline: the beat song has no grid to lock to (a detection failure, not a
+    # tempo one). Everything with a usable beat now produces a mix.
+    a1 = make_analysis(bpm=120.0).model_copy(update={"beats": [], "downbeats": [], "phrase_starts": []})
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(16.0, 40.0)])
+    with pytest.raises(planner.MixDeclined):
         planner.build_mix_plan("m" * 64, a1, a2)
-    assert "tempo" in str(exc.value).lower()
 
 
 def test_long_song_vocal_spans_the_full_song(monkeypatch):

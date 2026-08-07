@@ -140,15 +140,17 @@ def test_mix_blocks_when_not_analyzed(tmp_path, monkeypatch):
     assert "analyzed" in r.json()["detail"].lower()
 
 
-def test_mix_declines_far_tempo_with_reason(tmp_path, monkeypatch):
+def test_mix_far_tempo_forces_instead_of_declining(tmp_path, monkeypatch):
+    # Founder rule 2026-08-07: a far-apart pair (this used to error with a tempo reason) now FORCES a
+    # full match and produces a mix — never declined for tempo.
     _use_tmp(monkeypatch, tmp_path)
-    _setup_pair(tmp_path, song2_bpm=158.0)  # too far to blend cleanly, even at the ±15% band
+    _setup_pair(tmp_path, song2_bpm=158.0)
 
     r = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2})
     assert r.status_code == 202
-    body = _poll(r.json()["mix_id"], "error")
-    assert body["status"] == "error"
-    assert "tempo" in body["message"].lower()
+    body = _poll(r.json()["mix_id"], "ready")
+    assert body["status"] == "ready", body.get("message")
+    assert body["plan"]["tempo_forced"] is True
 
 
 def test_mix_carries_contrast(tmp_path, monkeypatch):

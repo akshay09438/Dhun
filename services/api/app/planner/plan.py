@@ -38,7 +38,7 @@ _GOOD_PARTS_WINDOW_ENABLED = False
 # validate.py (a protected file) is the other half; both flip together at the founder's morning approval.
 # With it ON, a far-apart pair's vocal is stretched fully onto the beat and per-bar beat-locked (widened
 # warp) so it can never drift off the grid.
-_FORCE_TEMPO_ENABLED = False
+_FORCE_TEMPO_ENABLED = True  # ON (founder-approved 2026-08-07, with the validate.py forced-band change)
 _ENTRY_MARGIN = 1.0  # secs of beat-only breathing room between one vocal's end and the next entry
 _WINDOW_STEP = 8.0  # ~a phrase; min spare room in a region worth sliding the vocal window for regenerate variety
 _OUTRO_SECS = 12.0  # good-parts: beat runway kept AFTER the last vocal ends, so the windowed mix winds
