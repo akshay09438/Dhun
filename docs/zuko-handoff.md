@@ -4,7 +4,32 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
-2026-08-07 — **The FOUR-RULE product is BUILT and internally verified, on a feature branch (NOT merged to `main`).** This session took Rule 3 (chop & repeat) from a throwaway ear-approved harness all the way into real engine code and wired the app so a user **picks a rule per song** (Simple / Chop & repeat / Echo), on the shared BPM+key foundation, with best-parts + set-transitions common to every rule. Rule 4 became a distinct pick (dry default, echo on Rule 4). The app runs locally end-to-end. **Nothing merged; `main` unchanged.** The next real step is the founder's **final product testing** on the running app, then the merge PR (which is also where the functional/technical spec bodies get their full Rule-3/4 sections — the spec headers already carry a dated banner).
+2026-08-07 (GOODNIGHT run, branch `feat/auto-match-keymatch`) — **NEW BASE RULES built for Rule 1/3/4: "measure the key from audio" + "never decline any pair (match the vocal's BPM to the beat, beat-locked)".** Triggered by the founder's research brief (AutoMashUpper / fuzzy keymixing) after Rapture × Jugni "sounded like two songs". Root cause found = a **key clash** the app refused to fix because BOTH songs' key labels are flagged. **Almost everything is BUILT, TESTED, and APPLIED on this branch (553 tests green); ONE protected-file change (`validate.py`) is STAGED for the founder's morning tap, then the app is ready to try.**
+
+### ☀️ MORNING — do these in order
+
+1. **Approve the one staged card.** Run `node .zuko/apply-queued-edit.js --task auto-match-validate --ack "<your words>"` (or the `/zuko:goodnight --review` flow). It applies the validator change that lets far-apart pairs mix. The card explains it; the comprehension question's answer is: _only a mix might sound off — no data risk, fully reversible._
+2. **Flip the feature ON.** In `services/api/app/planner/plan.py` set `_FORCE_TEMPO_ENABLED = True` (this is the other half — the never-decline switch, held OFF overnight so nothing broke). _(I could not flip it overnight; it pairs with the staged validator.)_
+3. **Start the app** (API :8000 + web :5173) and try **Rapture × Jugni** on Simple / Chop / Echo — it will now mix (vocal pulled to 120, key-matched +3 semitones into Rapture's key). Ear-check the Chop balance (beat fuller, vocal subtler).
+4. If it sounds right → **merge to `main` + push**. If a balance is off, tell me and I'll tune.
+
+### What's APPLIED overnight (non-dangerous, on the branch, 553 tests green)
+
+- **Empirical key-match** (`app/audio/chroma.py` + `routes/mix.py`): when key labels are untrusted (common on real uploads), the vocal shift is **measured from the audio** (AutoMashUpper chroma) instead of skipped. Rapture × Jugni → **+3 st = Rapture's exact key** (cos 0.907 vs 0.855). Formant-preserved, ±3 cap.
+- **Never-decline tempo** (`planner/fence.py` + `plan.py` + `models.py`), gated behind `_FORCE_TEMPO_ENABLED` (**OFF** until step 2): far-apart pair → vocal stretched fully onto the beat, **per-bar beat-locked** (widened grip) so it can't drift; `_fold_source` folds all octaves so ANY pair stays in-band. Proven end-to-end on Rule 1/3/4.
+- **Chop balance** (`workers/rule3.py`): beat full + vocal subtle + a touch more reverb (Chop & Echo only, per your call). **Ear-confirm.**
+- **Beat-sensor health** (`planner/beatgrid.py`): every mix logs its grid health so a mis-read beat is visible. (Rapture & Jugni both read healthy — the off-beat feel was the key, not the beat.)
+
+### What's STAGED (protected file — needs your tap, step 1)
+
+- `planner/validate.py`: widen the tempo/warp bands **only for a `tempo_forced` plan** (all other quality guards + the on-beat check unchanged), plus an extra guard that rejects any forced section that fails to beat-lock (so "forced" can never ship off-beat). Adversarially reviewed (`not-proven-safe` = correct, it's half a feature gated off; the fixable findings were fixed/tested).
+
+### PARKED (honest)
+
+- **Rule-4 (Echo) balance** — needs `render.py` (protected) + your ear; do in an attended session.
+- **Deeper beat-detection rebuild** — a project of its own; you chose "harden + verify" tonight (done).
+
+_(Prior state — the four-rule product on branch `feat/rule3-rule4-set-builder` — is unchanged and still awaiting its own merge; this branch builds on top of it.)_
 
 ## Where things stand (one breath)
 

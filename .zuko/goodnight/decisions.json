@@ -1,11 +1,19 @@
 {
-  "session": "2026-07-09-goodnight-10-mashups",
-  "task": "Render 10 beat×vocal mashups with the deterministic engine (all built features except the AI judgment layer). Best-effort; report declines.",
+  "session": "2026-08-07-auto-match-keymatch",
   "decisions": {
-    "cost_and_go": "Yes - run all 10 overnight; OK to spend a few dollars of Replicate credit re-processing ~15 songs (split+analyze, cached).",
-    "engine": "Deterministic (rules path - pop ANTHROPIC_API_KEY). Full engine: tempo-match, energy-sync, four beat moves, echo, both-vocals-trade, beat-lock. AI vocal-placement OFF.",
-    "risky_pairs": "Best-effort: render every pair that blends; skip + honestly report any the engine declines or that fail."
+    "run_mode": "goodnight; apply non-dangerous overnight, STAGE validate.py + render.py for morning tap, then localhost link + deploy",
+    "never_decline": "STRICT: no pair may ever return 'mix cannot be created'. If nothing fits, take best available.",
+    "tempo": "Vocal BPM ALWAYS matched to beat's native BPM (Version A, beat = master). Per-bar beat-locked so nothing drifts off-beat.",
+    "key_shift_ceiling": "+-3 semitones, formant-preserved. Empirical chroma (AutoMashUpper) picks the shift; labels are only a prior. If no shift within +-3 is compatible, apply the empirically-best available.",
+    "key_method": "AutoMashUpper cosine over beat-sync chroma, fuzzy cap, formant-preserved (base rule for Rule 1/3/4).",
+    "balance": "beat-full + vocal-subtle applies to ECHO (Rule 4) and CHOP (Rule 3) ONLY. Simple (Rule 1) keeps current balance.",
+    "beat_detection": "Harden + verify: confidence gate, ensure beat-lock snaps to detected downbeats, retry/flag low-confidence grids. No full detector rebuild tonight.",
+    "rules_scope": "Key-match + tempo auto-match become the BASE rule under Rule 1, Rule 3, Rule 4."
   },
-  "save_to": "C:/Users/Akshay/OneDrive/Desktop/DJAI SONGS",
-  "verify_first_on": "Father Ocean x Der Lagi Lekin (known-good) before spending on all 15 songs"
+  "research_basis": [
+    "AutoMashUpper (Davies/Hamel/Yoshii/Goto ISMIR2013) - H_n(r,k) cosine over beat-sync chroma, gamma=0.2 tempo reward",
+    "Lee et al ISMIR2015 - vocal-over-instrumental; harmonic-change-balance; drop rhythmic/spectral for lead vocal",
+    "TIV.lib arXiv 2008.11529 - tonal interval space (future refinement)",
+    "Fuzzy keymixing +-2 (extend +-3 with formant correction); CDJ-3000 Key Sync"
+  ]
 }

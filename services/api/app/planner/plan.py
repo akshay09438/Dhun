@@ -32,6 +32,13 @@ _MAX_PLACEMENTS = 3
 # remix the FULL song, not the best ~90s). Kept as a flag — not deleted — so it's a one-line revert
 # and the window machinery (window.py + render/validate window-handling) stays dormant + tested.
 _GOOD_PARTS_WINDOW_ENABLED = False
+# FORCED tempo auto-match (founder rule 2026-08-07: no pair may ever be declined). OFF by default so
+# tonight's applied state is unchanged (far-apart pairs still get the clean "too far apart" message,
+# never a broken render). Turning this ON is HALF a feature — the referee's forced-band relaxation in
+# validate.py (a protected file) is the other half; both flip together at the founder's morning approval.
+# With it ON, a far-apart pair's vocal is stretched fully onto the beat and per-bar beat-locked (widened
+# warp) so it can never drift off the grid.
+_FORCE_TEMPO_ENABLED = True  # ON (founder-approved 2026-08-07, with the validate.py forced-band change)
 _ENTRY_MARGIN = 1.0  # secs of beat-only breathing room between one vocal's end and the next entry
 _WINDOW_STEP = 8.0  # ~a phrase; min spare room in a region worth sliding the vocal window for regenerate variety
 _OUTRO_SECS = 12.0  # good-parts: beat runway kept AFTER the last vocal ends, so the windowed mix winds
@@ -84,6 +91,14 @@ def rule4_enabled() -> bool:
     """Whether Rule 4 (gap-sized echo + continuous reverb bed) is live. Folded into the mix/set cache id
     so flipping it re-renders every mix WITH the echo/reverb instead of serving an OFF cache."""
     return _RULE4_ENABLED
+
+
+def force_tempo_enabled() -> bool:
+    """Whether forced tempo auto-match (never decline a far-apart pair) is live. Folded into
+    ENGINE_VERSION so flipping it auto-invalidates the mix/set caches — the app's standing convention
+    that every behaviour-changing flag re-renders, so a forced mix can never be served from a stale
+    non-forced (or declined) cache."""
+    return _FORCE_TEMPO_ENABLED
 _POOL_SELECT_VERSION = "pool1"  # salt so a future pool change reshuffles the per-pair combo order
 _POOL_SPACE_INTERIOR = ["room", "hall", "plate", "predelay"]  # length-preserving reverbs (any placement)
 _POOL_SPACE_FINAL = ["throw", "freeze"]  # tail-extenders — only the final placement (referee-enforced)
@@ -520,14 +535,18 @@ def _spans_song(placements: list[Placement], track_end: float) -> bool:
 
 
 def _attach_warp(placements: list[Placement], a1: TrackAnalysis, a2: TrackAnalysis,
-                 stretch: float) -> list[Placement]:
+                 stretch: float, forced: bool = False) -> list[Placement]:
     """Give each Song-2 placement a per-bar phase-lock warp map (M4d) so its vocal re-locks
     to Song 1's beat instead of drifting under one global stretch. With no usable grid on
-    either side, leave warp empty — the engine then uses the legacy global stretch."""
+    either side, leave warp empty — the engine then uses the legacy global stretch.
+
+    `forced` widens the per-bar grip band (WARP_*_FORCED) so a large forced stretch (e.g. 1.26) still
+    re-locks EVERY bar to Song 1's downbeats — the guarantee that a forced full-match never drifts."""
     if not (a1.downbeats and a2.downbeats):
         return placements
+    lo, hi = (fence.WARP_LO_FORCED, fence.WARP_HI_FORCED) if forced else (fence.WARP_LO, fence.WARP_HI)
     for p in placements:
-        p.warp = fence.warp_map(p.anchor, p.vocal_src, a1.downbeats, a2.downbeats, stretch)
+        p.warp = fence.warp_map(p.anchor, p.vocal_src, a1.downbeats, a2.downbeats, stretch, lo=lo, hi=hi)
     return placements
 
 
@@ -602,9 +621,10 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     treatment. False (or the module `_EFFECT_POOL_ENABLED` off) => no picks => byte-identical to the
     pre-pool render (the debug / golden-regression path)."""
     chain = chain or VocalChainConfig()
-    opts = fence.arrangement_options(a1, a2)
+    opts = fence.arrangement_options(a1, a2, force_tempo=_FORCE_TEMPO_ENABLED)
     if not opts["mixable"]:
         raise MixDeclined(opts["reason"])
+    forced = bool(opts.get("tempo_forced", False))  # far-apart pair: vocal stretched fully, beat-locked wide
     # The signature HOOK to land on the drop (curated per song; None -> fall back to loudest peak).
     opts["hook"] = hooks.hook_for(a2.song_id)
     # Plan against the (possibly retimed) grid the movable master chose — warp, flourishes and
@@ -627,13 +647,13 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     source = "ai" if placements else "rules"
     if not placements:
         placements = _default_arrangement(opts, take)
-    placements = _attach_warp(placements, a1g, a2, opts["vocal_stretch"])  # per-bar beat-lock
+    placements = _attach_warp(placements, a1g, a2, opts["vocal_stretch"], forced=forced)  # per-bar beat-lock
     placements = _dedupe_nonoverlapping(placements, opts["vocal_stretch"])
     # The arc guard: if the plan (AI's or a thin fallback) clusters instead of spanning the
     # song, rebuild it as a deterministic energy arc so the vocal always reaches the whole
     # track with a strong finish — the founder's acceptance test, guaranteed by construction.
     if not _spans_song(placements, opts.get("track_end", 0.0)):
-        rebuilt = _attach_warp(_default_arrangement(opts, take), a1g, a2, opts["vocal_stretch"])
+        rebuilt = _attach_warp(_default_arrangement(opts, take), a1g, a2, opts["vocal_stretch"], forced=forced)
         placements = _dedupe_nonoverlapping(rebuilt, opts["vocal_stretch"])
         source = "rules"
     placements, s1_regions = _apply_flourishes(a1g, placements, opts["vocal_stretch"],
@@ -717,6 +737,7 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         mix_id=mix_id, song1_id=a1.song_id, song2_id=a2.song_id, rule=rule,
         master_bpm=opts["master_bpm"], vocal_stretch=opts["vocal_stretch"],
         bed_stretch=opts.get("bed_stretch", 1.0),  # movable master: how much Song 1's bed is stretched
+        tempo_forced=forced,  # far-apart forced full-match -> referee uses the wider forced band on THIS plan
         vocal_src=first.vocal_src, anchor=first.anchor,  # scalar mirrors first (M3 back-compat)
         placements=placements, s1_vocal_regions=s1_regions, stem_moves=stem_moves, take=take,
         window=window_span,

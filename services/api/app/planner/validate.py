@@ -29,9 +29,10 @@ import soundfile as sf
 
 from app.audio.chroma import best_rotation, chroma
 from app.models import MixPlan, TrackAnalysis
-from app.planner.fence import (HOUSE_SLOW_MAX, HOUSE_SPEED_MAX, LEAD_XFADE_SECS,
-                               SAFE_STRETCH_HI, SAFE_STRETCH_LO, WARP_HI, WARP_LO,
-                               placement_end, retimed_analysis)
+from app.planner.fence import (FORCE_STRETCH_HI, FORCE_STRETCH_LO, HOUSE_SLOW_MAX,
+                               HOUSE_SPEED_MAX, LEAD_XFADE_SECS, SAFE_STRETCH_HI,
+                               SAFE_STRETCH_LO, WARP_HI, WARP_HI_FORCED, WARP_LO,
+                               WARP_LO_FORCED, placement_end, retimed_analysis)
 from app.planner.window import window_analysis
 
 # A sample magnitude at or above this counts as clipping (square-wave distortion).
@@ -111,19 +112,32 @@ def _placements_of(plan: MixPlan) -> list:
     return [type("P", (), {"anchor": plan.anchor, "vocal_src": plan.vocal_src, "warp": []})()]
 
 
-def _warp_violations(p, downbeats: list[float]) -> list[str]:
+def _warp_violations(p, downbeats: list[float], forced: bool = False) -> list[str]:
     """R7: a warped placement must re-lock cleanly — every per-bar stretch inside the WARP grip
     band (WARP_LO..WARP_HI, wider than the global SAFE_STRETCH band: a per-bar re-lock is a
     transient single-bar correction, not a sustained stretch), and every full-bar boundary on a
     Song 1 downbeat (the vocal's own end, the last boundary, may fall mid-bar). Empty warp =>
-    nothing to check (legacy path)."""
+    nothing to check (legacy path).
+
+    `forced` (tempo_forced plans only): use the WIDER forced grip band — a forced full-match warps
+    each bar harder (e.g. 1.26) to keep a far-apart vocal locked; the on-downbeat boundary check below
+    is UNCHANGED, so every bar must still land on Song 1's grid (forced never means off-beat)."""
     warp = getattr(p, "warp", None)
     if not warp:
         return []
+    lo, hi = (WARP_LO_FORCED, WARP_HI_FORCED) if forced else (WARP_LO, WARP_HI)
     out: list[str] = []
+    # Forced single-global-segment drift guard: a forced placement that FAILED to per-bar lock (one
+    # segment) and runs longer than ~2 bars has no interior downbeat to catch drift, so a large forced
+    # stretch could slide off-beat unseen. Reject it — a forced mix is never shipped off the grid
+    # (founder: never off-beat). Non-forced single-segment (the legacy global-stretch path) is untouched.
+    if forced and len(warp) == 1 and len(downbeats) >= 2:
+        bar = downbeats[1] - downbeats[0]
+        if bar > 0 and warp[0][2] > 2.0 * bar + 1e-6:
+            out.append("a forced placement could not beat-lock (single-stretch drift) (R7)")
     cum = p.anchor
     for i, (s0, s1, out_secs) in enumerate(warp):
-        if out_secs <= 0 or not (WARP_LO - 1e-6 <= (s1 - s0) / out_secs <= WARP_HI + 1e-6):
+        if out_secs <= 0 or not (lo - 1e-6 <= (s1 - s0) / out_secs <= hi + 1e-6):
             msg = "a beat-lock bar is outside the safe stretch band (R7)"
             if msg not in out:
                 out.append(msg)
@@ -318,6 +332,7 @@ def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[s
     # engage on the SAME 1e-6 threshold the planner and engine use, so the three can never disagree
     # about whether the grid moved (an off-beat mix the referee couldn't see). bed_stretch == 1.0
     # (every existing plan) skips this whole block -> validated exactly as before.
+    forced = getattr(plan, "tempo_forced", False)  # far-apart forced full-match -> wider tempo/warp band
     bed_stretch = getattr(plan, "bed_stretch", 1.0) or 1.0
     if abs(bed_stretch - 1.0) >= 1e-6:
         if not (1.0 - HOUSE_SLOW_MAX - 1e-6 <= bed_stretch <= 1.0 + HOUSE_SPEED_MAX + 1e-6):
@@ -325,7 +340,11 @@ def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[s
         if a1.bpm and abs(plan.master_bpm - a1.bpm * bed_stretch) > 0.1:
             violations.append("the master tempo is inconsistent with the house stretch (B3)")
         a1 = retimed_analysis(a1, plan.master_bpm)
-    if not SAFE_STRETCH_LO <= plan.vocal_stretch <= SAFE_STRETCH_HI:
+    # A forced full-match intentionally stretches the vocal beyond the safe band (octave-folding bounds
+    # it to [FORCE_STRETCH_LO, FORCE_STRETCH_HI]); it is per-bar beat-locked below so it stays on-grid.
+    # The wider band applies ONLY to a tempo_forced plan — a normal mix is judged exactly as before.
+    lo, hi = (FORCE_STRETCH_LO, FORCE_STRETCH_HI) if forced else (SAFE_STRETCH_LO, SAFE_STRETCH_HI)
+    if not lo <= plan.vocal_stretch <= hi:
         violations.append("tempo stretch is outside the safe band (B3)")
 
     # Good-parts window: the plan's anchors/warp/stem-moves are WINDOW-RELATIVE (0-based from the
@@ -346,7 +365,7 @@ def validate_plan(plan: MixPlan, a1: TrackAnalysis, a2: TrackAnalysis) -> list[s
         fx = getattr(p, "fx", None)
         if fx is not None and fx not in _KNOWN_FX:
             violations.append(f"unknown effect '{fx}' (the engine would silently do nothing)")
-        violations.extend(_warp_violations(p, a1.downbeats))  # R7: beat-lock re-locks cleanly
+        violations.extend(_warp_violations(p, a1.downbeats, forced=forced))  # R7: beat-lock re-locks cleanly
     for a, b in zip(ordered, ordered[1:]):  # R1: one vocal at a time — no S2↔S2 overlap
         # Uses the shared rendered-length math (warp-aware source/stretch), so the referee
         # and the driver measure a vocal's real end identically and can never drift apart.

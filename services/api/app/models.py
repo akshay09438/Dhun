@@ -228,6 +228,9 @@ class MixPlan(BaseModel):
     master_bpm: float  # everything locks to Song 1's tempo (the master clock)
     vocal_stretch: float  # atempo ratio applied to Song 2's vocal (~master/song2 bpm)
     bed_stretch: float = 1.0  # movable master: ratio Song 1's whole bed is stretched by (1.0 = native)
+    tempo_forced: bool = False  # far-apart forced full-match: vocal stretched fully onto the beat,
+    # per-bar beat-locked with the wider forced band. The referee (validate.py) applies the wider
+    # tempo/warp bounds ONLY to a plan carrying this flag — never to a normal (safe-band) mix.
     vocal_src: tuple[float, float]  # [start, end] secs of Song 2's vocal to use
     anchor: float  # secs into Song 1 where the vocal enters (a phrase-start downbeat)
     beat_breath: bool = False  # drop Song 1's beat for one bar just before the vocal

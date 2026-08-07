@@ -18,13 +18,17 @@ Every mix = two songs → the engine **matches** them → a chosen **rule** arra
 
 ## 1. The Foundation — the same in every rule
 
-Before **any** rule runs, the engine reads both songs with its analyzer ("the sensor") and fixes the match. Nothing about the rule matters until the songs are locked in tempo and key. If they can't be, the mix is **declined** — we never ship something warped or out of key.
+_Updated 2026-08-07 (founder rule): **no pair is ever declined.** The vocal's BPM is ALWAYS matched to the beat, however far apart; key is chosen by **measuring the audio** (labels are only a hint); the vocal stays beat-locked so it never goes off-beat._
 
-- **Track BPM.** Detect each song's tempo and every beat & downbeat. The beat song is the master clock.
-- **Stretch BPM.** Time-stretch the vocal song onto the beat's grid, **bar by bar**, so the vocal locks to the beat and can never drift.
-- **Track key.** Detect each song's musical key (Camelot).
-- **Change key.** Shift the vocal into a compatible key — small shift (cap ≈ ±2–3 semitones), voice quality preserved. Zero shift when they already agree.
-- **The guard.** If the tempo stretch or key shift would exceed the safe band, **decline** the mix rather than force it.
+Before **any** rule runs, the engine reads both songs with its analyzer ("the sensor") and fixes the match. Nothing about the rule matters until the songs are locked in tempo and key.
+
+- **Track BPM.** Detect each song's tempo and every beat & downbeat, and check the grid is healthy (regular spacing that agrees with the tempo — a mis-read grid is flagged, `planner/beatgrid.py`). The beat song is the master clock.
+- **Stretch BPM (always match).** Time-stretch the vocal song onto the beat's grid, **bar by bar**, so the vocal locks to the beat and can never drift. When the pair is far apart, the vocal is stretched **fully** onto the beat (the beat keeps its native tempo and drive) and each bar is re-locked to a downbeat with a wider grip — so even a big stretch still lands on-beat. _Never declined for tempo._
+- **Track key.** Detect each song's musical key (Camelot) **with a confidence**.
+- **Change key (measured, not guessed).** Shift the vocal into a compatible key. When the key labels are trustworthy, use fuzzy keymixing (match the Camelot number, ignore the letter, smallest shift). When a label is **untrusted** (flagged / low-confidence — common on real uploads), **measure** the shift from the audio: chromagram of the beat's harmony vs the vocal, rotate the vocal across candidate shifts, pick the best harmonic fit (AutoMashUpper, `audio/chroma.py`). Cap ±3 semitones, **formant-preserved** so the voice never chipmunks. Zero shift when they already agree.
+- **The only decline left.** A track with **no usable beat grid at all** (no clock to lock to) is the sole un-mixable case — a detection problem, not a tempo/key one. Everything else always produces a mix.
+
+_Research basis: AutoMashUpper (Davies et al., ISMIR 2013, `archives.ismir.net/ismir2013/paper/000077.pdf`) for the chroma match; fuzzy keymixing / CDJ-3000 Key Sync for the ±2–3 cap; Lee et al. (ISMIR 2015, `.../ismir2015/paper/000302.pdf`) vocal-over-instrumental asymmetry as a future refinement._
 
 > **Founder's rule:** BPM tracking + stretching and key tracking + changing are the **base of all rules**. Any pair going through any rule is matched first; only then does the rule build the mix.
 
