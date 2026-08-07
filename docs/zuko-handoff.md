@@ -4,7 +4,23 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
-2026-08-07 (later) — **BUILT, NOT MERGED: AUTOMATIC RULE ASSIGNMENT on branch `feat/randomized-rule-assignment` (off `main`, all changes in the working tree — nothing committed).** The three manual rule buttons are gone; each generation's mixing style is auto-assigned by a deterministic shuffler and shown as a label. Two flows share ONE engine: a single mix you can re-roll up to **5** times a sitting (was 2), and a **set of up to 5 mixes** (was 2), each mix auto-styled by its position. Founder-confirmed the algorithm ("keep dealing", not strict-repeat) and the "auto-assign sets too" scope live this session. **Full backend 580 passed, web 52 passed, typecheck + lint clean; app runs locally (API :8000, web :5173).** Awaiting founder review before commit/merge.
+2026-08-07 (session close) — **COMMITTED + PUSHED to GitHub (branch `feat/randomized-rule-assignment`, commit `b8a776f`), NOT yet merged to `main`.** `main` is untouched; the branch is on `origin` and local↔origin are in sync (0 ahead / 0 behind), working tree clean. **The whole session's work is in that one commit:** (1) AUTOMATIC RULE ASSIGNMENT — the three manual rule buttons are gone; each generation's mixing style is auto-assigned by a deterministic shuffler (`app/planner/rule_shuffle.py`) and shown as a label; ONE shared engine, two callers — single-mix re-roll (up to **5** a sitting, was 2) and a **set of up to 5 mixes** (was 2), each mix auto-styled by its position; founder-confirmed the "keep dealing" algorithm + "auto-assign sets too". (2) The four fixes below (never-decline in sets, backend anomaly reporting, the R1/beat-vocal fix, set-cap→5 docs). **Verification (this session, on the committed code): full backend 591 passed; web 52 passed; typecheck + lint clean.** App runs locally (API :8000, web :5173).
+
+### DO FIRST NEXT SESSION
+
+- **Founder ear-test on the running app, then merge.** Nothing is merged to `main` yet. The founder wanted to test locally first. Once they're happy, the remaining step is to **open the PR and merge `feat/randomized-rule-assignment` into `main`** (GitHub offered the PR link on push: `https://github.com/akshay09438/Dhun/pull/new/feat/randomized-rule-assignment`). Do NOT merge without the founder's go-ahead.
+- Concretely worth an ear-check: (a) "I Adore You" as a beat now sings its lyrics in the gaps; (b) Rapture × Uff Teri Ada builds (Rapture music-only); (c) a far-apart pair in a SET (e.g. Innerbloom × Jugni Ji) is forced onto the beat, not skipped; (d) the auto-assigned style label + "another take" up to 5; (e) a set of up to 5 mixes.
+
+### In flight — honest state (session close)
+
+- **Nothing is half-coded or uncommitted.** The entire session is in commit `b8a776f`, pushed to `origin/feat/randomized-rule-assignment`; `git status` is clean and local↔origin are in sync (0/0). `main` is untouched — the branch is **NOT merged** (awaiting the founder's ear-test + go-ahead to open the PR / merge).
+
+### Verification evidence (this session, on the committed code)
+
+- **Backend:** `cd services/api && .venv/Scripts/python.exe -m pytest -q -p no:randomly` → **591 passed** (~4 min).
+- **Web:** `npm run typecheck` → clean; `npm run lint` → clean; `npm test` → **52 passed** (8 files).
+- **New/changed tests:** `test_rule_shuffle.py` (22), `test_anomaly.py` (6), `test_instrumental_beats.py` (6, rewritten to hand-list-only), `test_set_route.py` (+ never-decline + auto-rule), `test_mix_route.py` (+ auto-rule), `App.test.tsx`/`SetupScreen.test.tsx` (auto-rule UI, edited under the `.zuko/approve.js` flow).
+- **Real-data checks (in-process):** "I Adore You" sings (s1_vocal_regions = 4 gaps, validate PASSES); Rapture music-only (s1_vocal_regions `[]`, validate PASSES); a far-apart SET pair (122×95) forced onto the beat and kept.
 
 ### Fixes this session (same branch, on top of the auto-rule work)
 
