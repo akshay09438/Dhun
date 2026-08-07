@@ -4,7 +4,37 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
-2026-08-07 (session close) — **COMMITTED + PUSHED to GitHub (branch `feat/randomized-rule-assignment`, commit `b8a776f`), NOT yet merged to `main`.** `main` is untouched; the branch is on `origin` and local↔origin are in sync (0 ahead / 0 behind), working tree clean. **The whole session's work is in that one commit:** (1) AUTOMATIC RULE ASSIGNMENT — the three manual rule buttons are gone; each generation's mixing style is auto-assigned by a deterministic shuffler (`app/planner/rule_shuffle.py`) and shown as a label; ONE shared engine, two callers — single-mix re-roll (up to **5** a sitting, was 2) and a **set of up to 5 mixes** (was 2), each mix auto-styled by its position; founder-confirmed the "keep dealing" algorithm + "auto-assign sets too". (2) The four fixes below (never-decline in sets, backend anomaly reporting, the R1/beat-vocal fix, set-cap→5 docs). **Verification (this session, on the committed code): full backend 591 passed; web 52 passed; typecheck + lint clean.** App runs locally (API :8000, web :5173).
+2026-08-08 (session close) — **EVERYTHING MERGED TO `main` AND VERIFIED GREEN.** Two GitHub PRs landed on `main`: **#9** (the automatic-rule-assignment + set/tempo/vocal fixes, formerly branch `feat/randomized-rule-assignment`) and **#10** (the NEW internal **dev app** / ops dashboard, formerly branch `feat/dev-ops-dashboard`, which was stacked on #9). `main` is now `43e8929`; local `main` is fast-forwarded and in sync with `origin/main`; working tree clean.
+
+**Naming set this session (use these):** **"dev app"** = the internal developer/ops dashboard at `/#dev`; **"dj user app"** = the regular DJ console end users use. (They are ONE web app, two entrances: `/` for users, `/#dev` for the team.)
+
+**What shipped this session (the dev app, PR #10):** a read-only ops dashboard that records **every mix/set outcome** to a tiny SQLite event log (`services/api/app/events.py` → `data/events.db`, gitignored) via non-fatal hooks in `_run_mix`/`_run_set`; a read-only API (`routes/admin.py`: `/admin/summary|events|devices|retention`, behind an optional `PROMPTDJ_DASHBOARD_TOKEN` gate); and the web `AdminScreen` (reached by a `#dev` hash gate in `main.tsx`) showing a health strip, a newest-first paged feed with red/amber/green health + the engine's own "what to do" note on degraded mixes + ▶ play + the mixing style per mix, a **by-device** rollup, and **device-level retention** (returning vs new, first/last-seen dates — counts persistent browsers, not verified people, until login). No render/validate/storage/config engine file was touched; the only dangerous-surface edit was the new `AdminScreen.test.tsx`, added via the founder-approved `.zuko/approve.js` flow (approvals cleared after landing).
+
+### DO FIRST NEXT SESSION
+
+- **Founder ear-test on the running `main`.** Both the rule-assignment work AND the dev app are now live on `main` — the rule-assignment ear-test the founder wanted now happens on `main`. If anything sounds off, fix forward on `main` (via a branch + PR, never direct).
+- **To see the dev app with real data:** run the app from `main`, make a mix in the dj user app, then open `http://localhost:5173/#dev`. (The event log starts empty — the session's 2 demo mixes were wiped.)
+
+### In flight — honest state
+
+- **Nothing is half-coded or uncommitted.** All feature work is merged to `main` and green. This handoff + the doc freshness fixes ("not merged" → "merged") are on branch `docs/handoff-2026-08-08` (docs only), pending its own small PR.
+
+### Verification evidence (this session, on the merged `main` @ `43e8929`)
+
+- **Backend:** `cd services/api && .venv/Scripts/python.exe -m pytest -q -p no:randomly` → **619 passed** (~3:42).
+- **Web:** `npm run typecheck` → clean; `npm run lint` → clean; `npm test` → **65 passed** (9 files).
+- **Live end-to-end demo:** started the app from the merged code on spare ports, made **2 real mixes through the actual `/mix` route** (Father Ocean × Der Lagi, I Adore You × Dooriyan) → both recorded in the event log and shown in the live `/#dev` dashboard with real anomaly detail (`suspicious_beat_vocal` ~99%, `key_measured` +3 st) and playable audio. Demo `events.db` wiped afterward.
+- **New dev-app tests (all green):** `test_events.py` (17), `test_admin_route.py` (9), `test_events_integration.py` (2), `AdminScreen.test.tsx` (13).
+
+### Open escalations / re-verify next session (claims, not facts)
+
+- **DEV APP SECURITY — re-verify before ANY internet deploy.** The `/#dev` dashboard exposes user content (the songs each device mixed). It is **open on localhost** and safe there, but it MUST have `PROMPTDJ_DASHBOARD_TOKEN` set (a shared secret) before it is served at any internet-reachable URL — otherwise it is an unauthenticated user-data endpoint. The gate is built and tested (`test_admin_route.py`), but "is the token actually set in the deployed env?" is a human/deploy-time check, not something code review can prove.
+- **Deferred by design (cheap to add later — the event log already carries a plain `user_id` column):** real logins/usernames and TRUE per-person retention & cohorts. The current retention is honest but DEVICE-level (a persistent browser tag), so it is directional, not a headcount of people.
+- **Pre-existing flake carried:** `test_cache_sweep.py` (order/timing-dependent on Windows; it exercises `storage.py`, a dangerous surface — diagnose before any "fix").
+
+---
+
+### Earlier — 2026-08-07 (session close) — **COMMITTED + PUSHED to GitHub (branch `feat/randomized-rule-assignment`, commit `b8a776f`), NOT yet merged to `main`.** _(Superseded — this branch is now MERGED to `main` as PR #9; see the 2026-08-08 entry above.)_ `main` is untouched; the branch is on `origin` and local↔origin are in sync (0 ahead / 0 behind), working tree clean. **The whole session's work is in that one commit:** (1) AUTOMATIC RULE ASSIGNMENT — the three manual rule buttons are gone; each generation's mixing style is auto-assigned by a deterministic shuffler (`app/planner/rule_shuffle.py`) and shown as a label; ONE shared engine, two callers — single-mix re-roll (up to **5** a sitting, was 2) and a **set of up to 5 mixes** (was 2), each mix auto-styled by its position; founder-confirmed the "keep dealing" algorithm + "auto-assign sets too". (2) The four fixes below (never-decline in sets, backend anomaly reporting, the R1/beat-vocal fix, set-cap→5 docs). **Verification (this session, on the committed code): full backend 591 passed; web 52 passed; typecheck + lint clean.** App runs locally (API :8000, web :5173).
 
 ### DO FIRST NEXT SESSION
 
