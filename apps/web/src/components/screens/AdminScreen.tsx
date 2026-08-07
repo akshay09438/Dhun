@@ -4,9 +4,11 @@ import {
   DashboardLockedError,
   getOpsDevices,
   getOpsEvents,
+  getOpsRetention,
   getOpsSummary,
   type OpsDevice,
   type OpsEvent,
+  type OpsRetention,
   type OpsSummary,
 } from "../../lib/api";
 import styles from "./AdminScreen.module.css";
@@ -23,6 +25,7 @@ export function AdminScreen() {
   const [events, setEvents] = useState<OpsEvent[]>([]);
   const [total, setTotal] = useState(0);
   const [devices, setDevices] = useState<OpsDevice[]>([]);
+  const [retention, setRetention] = useState<OpsRetention | null>(null);
   const [deviceFilter, setDeviceFilter] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +47,13 @@ export function AdminScreen() {
       setTotal(ev.total);
       setDevices(dev);
       setLocked(false);
+      // Retention is a supplementary view — a failure fetching it must never break the core
+      // failure-visibility dashboard, so it loads separately and degrades to "not shown".
+      try {
+        setRetention(await getOpsRetention());
+      } catch {
+        setRetention(null);
+      }
     } catch (e) {
       if (e instanceof DashboardLockedError) setLocked(true);
       else
@@ -180,6 +190,7 @@ export function AdminScreen() {
       {!loading && !error && view === "devices" && (
         <DevicesView
           devices={devices}
+          retention={retention}
           onPick={(id) => {
             setDeviceFilter(id === "(no id)" ? null : id);
             setView("activity");
@@ -325,38 +336,73 @@ function EventRow({
 
 function DevicesView({
   devices,
+  retention,
   onPick,
 }: {
   devices: OpsDevice[];
+  retention: OpsRetention | null;
   onPick: (id: string) => void;
 }) {
   if (devices.length === 0) {
     return <div className={styles.state}>No devices yet.</div>;
   }
   return (
-    <div className={styles.list} data-testid="device-list">
-      {devices.map((d) => (
-        <button
-          key={d.user_id}
-          className={styles.devRow}
-          onClick={() => onPick(d.user_id)}
-        >
-          <span className={styles.devId}>{d.user_id}</span>
-          <span className={styles.badge}>{d.total} made</span>
-          {d.degraded > 0 && (
-            <span className={styles.meta} style={{ color: "var(--amber)" }}>
-              {d.degraded} degraded
+    <>
+      {retention && (
+        <div className={styles.retention} data-testid="retention-strip">
+          <span>
+            <b>{retention.returning_devices}</b> of {retention.total_devices}{" "}
+            came back another day
+          </span>
+          <span className={styles.dotsep}>·</span>
+          <span>
+            <b>{retention.new_today}</b> new today
+          </span>
+          <span className={styles.dotsep}>·</span>
+          <span>
+            <b>{retention.returning_today}</b> returned today
+          </span>
+        </div>
+      )}
+      <div className={styles.list} data-testid="device-list">
+        {devices.map((d) => (
+          <button
+            key={d.user_id}
+            className={styles.devRow}
+            onClick={() => onPick(d.user_id)}
+          >
+            <span className={styles.devId}>{d.user_id}</span>
+            <span className={styles.badge}>{d.total} made</span>
+            {d.active_days >= 2 && (
+              <span
+                className={styles.badge}
+                style={{ borderColor: "var(--green)", color: "var(--green)" }}
+              >
+                returning · {d.active_days} days
+              </span>
+            )}
+            {d.degraded > 0 && (
+              <span className={styles.meta} style={{ color: "var(--amber)" }}>
+                {d.degraded} degraded
+              </span>
+            )}
+            {d.failed > 0 && (
+              <span className={styles.meta} style={{ color: "var(--danger)" }}>
+                {d.failed} failed
+              </span>
+            )}
+            <span className={styles.meta} title="first seen → last seen">
+              {fmtTime(d.first_at)} → {fmtTime(d.last_at)}
             </span>
-          )}
-          {d.failed > 0 && (
-            <span className={styles.meta} style={{ color: "var(--danger)" }}>
-              {d.failed} failed
-            </span>
-          )}
-          <span className={styles.meta}>{fmtTime(d.last_at)}</span>
-        </button>
-      ))}
-    </div>
+          </button>
+        ))}
+      </div>
+      <p className={styles.retentionNote}>
+        Retention counts devices (a saved browser tag), not verified people — a
+        new browser or cleared storage reads as new. Directional until sign-in
+        adds real usernames.
+      </p>
+    </>
   );
 }
 

@@ -288,7 +288,9 @@ def devices(data_dir: Path) -> list[dict[str, Any]]:
                        COUNT(*) AS total,
                        SUM(CASE WHEN health='red'   THEN 1 ELSE 0 END) AS failed,
                        SUM(CASE WHEN health='amber' THEN 1 ELSE 0 END) AS degraded,
-                       MAX(created_at) AS last_at
+                       MIN(created_at) AS first_at,
+                       MAX(created_at) AS last_at,
+                       COUNT(DISTINCT substr(created_at, 1, 10)) AS active_days
                 FROM events
                 GROUP BY COALESCE(user_id, '(no id)')
                 ORDER BY total DESC, last_at DESC
@@ -300,3 +302,30 @@ def devices(data_dir: Path) -> list[dict[str, Any]]:
     except Exception:  # noqa: BLE001
         log.exception("events: devices rollup failed")
         return []
+
+
+def retention(data_dir: Path) -> dict[str, Any]:
+    """Honest, device-level retention — 'are the same people coming back to make more?'. It counts
+    DEVICES (a persistent per-browser tag), not verified people: a returning device is a real return
+    signal, but a new browser / cleared storage reads as new, so treat these as directional until login.
+
+    - total_devices:     distinct devices that have made anything
+    - returning_devices:  devices active on 2+ distinct days (came back another day at least once)
+    - new_today:          devices whose FIRST activity was today
+    - returning_today:    devices active today whose first activity was on an earlier day
+    Dates are the server-local day (same basis as the summary strip)."""
+    today = datetime.now().date().isoformat()
+    devs = devices(data_dir)
+    total = len(devs)
+    new_today = sum(1 for d in devs if (d.get("first_at") or "")[:10] == today)
+    returning_today = sum(
+        1 for d in devs
+        if (d.get("last_at") or "")[:10] == today and (d.get("first_at") or "")[:10] < today
+    )
+    returning_devices = sum(1 for d in devs if (d.get("active_days") or 0) >= 2)
+    return {
+        "total_devices": total,
+        "returning_devices": returning_devices,
+        "new_today": new_today,
+        "returning_today": returning_today,
+    }

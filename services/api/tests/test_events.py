@@ -124,6 +124,40 @@ def test_recording_is_non_fatal_on_a_bad_data_dir(tmp_path):
     assert events.query_events(bad)["total"] == 0          # read also degrades gracefully
 
 
+def test_devices_include_first_seen_last_seen_and_active_days(tmp_path):
+    _mix(tmp_path, mix_id="a" * 64, user_id="dev-1", created_at="2026-08-05T10:00:00")
+    _mix(tmp_path, mix_id="b" * 64, user_id="dev-1", created_at="2026-08-05T11:00:00")  # same day
+    _mix(tmp_path, mix_id="c" * 64, user_id="dev-1", created_at="2026-08-08T09:00:00")  # a later day
+    row = next(d for d in events.devices(tmp_path) if d["user_id"] == "dev-1")
+    assert row["first_at"] == "2026-08-05T10:00:00"
+    assert row["last_at"] == "2026-08-08T09:00:00"
+    assert row["active_days"] == 2   # two distinct calendar days
+    assert row["total"] == 3
+
+
+def test_retention_counts_returning_devices(tmp_path):
+    # dev-1 came back on a second day; dev-2 only ever made one, on one day.
+    _mix(tmp_path, mix_id="a" * 64, user_id="dev-1", created_at="2026-08-05T10:00:00")
+    _mix(tmp_path, mix_id="b" * 64, user_id="dev-1", created_at="2026-08-08T10:00:00")
+    _mix(tmp_path, mix_id="c" * 64, user_id="dev-2", created_at="2026-08-08T10:00:00")
+    r = events.retention(tmp_path)
+    assert r["total_devices"] == 2
+    assert r["returning_devices"] == 1   # only dev-1 was active on 2+ days
+
+
+def test_retention_new_vs_returning_today(tmp_path):
+    from datetime import datetime
+    today = datetime.now().isoformat(timespec="seconds")
+    # dev-old first appeared long ago and is back today -> returning_today
+    _mix(tmp_path, mix_id="a" * 64, user_id="dev-old", created_at="2020-01-01T10:00:00")
+    _mix(tmp_path, mix_id="b" * 64, user_id="dev-old", created_at=today)
+    # dev-new's very first activity is today -> new_today
+    _mix(tmp_path, mix_id="c" * 64, user_id="dev-new", created_at=today)
+    r = events.retention(tmp_path)
+    assert r["new_today"] == 1        # dev-new
+    assert r["returning_today"] == 1  # dev-old came back today
+
+
 def test_via_marks_a_mix_made_inside_a_set(tmp_path):
     _mix(tmp_path, via="set")
     assert events.query_events(tmp_path)["events"][0]["via"] == "set"

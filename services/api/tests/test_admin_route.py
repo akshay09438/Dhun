@@ -72,6 +72,31 @@ def test_devices_endpoint_busiest_first(tmp_path, monkeypatch):
     assert rows[0]["failed"] == 1
 
 
+def test_devices_endpoint_includes_retention_fields(tmp_path, monkeypatch):
+    _use_tmp(monkeypatch, tmp_path)
+    events.record_mix(tmp_path, mix_id="a" * 64, status="ok", user_id="dev-1",
+                      created_at="2026-08-05T10:00:00")
+    events.record_mix(tmp_path, mix_id="b" * 64, status="ok", user_id="dev-1",
+                      created_at="2026-08-08T10:00:00")
+    rows = client.get("/admin/devices").json()
+    row = next(r for r in rows if r["user_id"] == "dev-1")
+    assert row["first_at"] == "2026-08-05T10:00:00"
+    assert row["active_days"] == 2
+
+
+def test_retention_endpoint(tmp_path, monkeypatch):
+    _use_tmp(monkeypatch, tmp_path)
+    events.record_mix(tmp_path, mix_id="a" * 64, status="ok", user_id="dev-1",
+                      created_at="2026-08-05T10:00:00")
+    events.record_mix(tmp_path, mix_id="b" * 64, status="ok", user_id="dev-1",
+                      created_at="2026-08-08T10:00:00")
+    events.record_mix(tmp_path, mix_id="c" * 64, status="ok", user_id="dev-2",
+                      created_at="2026-08-08T10:00:00")
+    r = client.get("/admin/retention").json()
+    assert r["total_devices"] == 2
+    assert r["returning_devices"] == 1
+
+
 def test_token_gate_open_when_unset(tmp_path, monkeypatch):
     _use_tmp(monkeypatch, tmp_path)
     monkeypatch.delenv("PROMPTDJ_DASHBOARD_TOKEN", raising=False)

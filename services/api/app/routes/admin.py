@@ -61,5 +61,13 @@ def admin_events(
 @router.get("/devices")
 def admin_devices() -> list:
     """The 'user by user' rollup — one row per anonymous device, busiest first, with its
-    mix count and how many broke or came out degraded. (A device, not a person, until login.)"""
+    mix count, how many broke or came out degraded, when it was first/last seen, and on how
+    many distinct days it was active. (A device, not a person, until login.)"""
     return events.devices(settings.data_dir)
+
+
+@router.get("/retention")
+def admin_retention() -> dict:
+    """Device-level retention — returning vs new. Directional (counts persistent browsers, not
+    verified people) until login; see events.retention for the exact meaning of each number."""
+    return events.retention(settings.data_dir)

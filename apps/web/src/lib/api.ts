@@ -443,7 +443,17 @@ export type OpsDevice = {
   total: number;
   failed: number;
   degraded: number;
+  first_at: string;
   last_at: string;
+  active_days: number; // distinct days this device made anything (>=2 = it came back)
+};
+
+/** Device-level retention (directional — counts persistent browsers, not verified people, until login). */
+export type OpsRetention = {
+  total_devices: number;
+  returning_devices: number; // active on 2+ distinct days
+  new_today: number;
+  returning_today: number;
 };
 
 /** Error thrown when the dashboard API is locked (a token is required but missing/wrong). */
@@ -498,6 +508,11 @@ export function getOpsEvents(
 /** The per-device rollup, busiest first. */
 export function getOpsDevices(): Promise<OpsDevice[]> {
   return getAdmin<OpsDevice[]>("/admin/devices");
+}
+
+/** Device-level retention: how many devices are returning vs new. */
+export function getOpsRetention(): Promise<OpsRetention> {
+  return getAdmin<OpsRetention>("/admin/retention");
 }
 
 const VOCAL_BUS_POLL_MS = 1500;

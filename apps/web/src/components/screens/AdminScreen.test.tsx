@@ -94,16 +94,27 @@ const DEVICES = [
     total: 2,
     failed: 1,
     degraded: 1,
+    first_at: "2026-08-05T09:00:00", // seen on an earlier day too -> returning
     last_at: "2026-08-07T12:00:00",
+    active_days: 2,
   },
   {
     user_id: "dev-1",
     total: 1,
     failed: 0,
     degraded: 0,
+    first_at: "2026-08-07T10:00:00",
     last_at: "2026-08-07T10:00:00",
+    active_days: 1,
   },
 ];
+
+const RETENTION = {
+  total_devices: 2,
+  returning_devices: 1,
+  new_today: 1,
+  returning_today: 1,
+};
 
 /** Route the mocked fetch by URL. `events` may be a function of the URL (for pagination). */
 function stubApi(opts?: {
@@ -121,6 +132,7 @@ function stubApi(opts?: {
         json: async () => data,
       });
       if (url.includes("/admin/summary")) return ok(SUMMARY);
+      if (url.includes("/admin/retention")) return ok(RETENTION);
       if (url.includes("/admin/devices")) return ok(DEVICES);
       if (url.includes("/admin/events")) {
         return ok(
@@ -212,6 +224,46 @@ test("the 'by device' view lists devices busiest-first", async () => {
   const devList = await screen.findByTestId("device-list");
   expect(within(devList).getByText("dev-2")).toBeTruthy();
   expect(within(devList).getByText("2 made")).toBeTruthy();
+});
+
+test("the 'by device' view shows the retention strip and a returning badge", async () => {
+  stubApi();
+  render(<AdminScreen />);
+  await screen.findByTestId("event-list");
+  fireEvent.click(screen.getByText("By device"));
+  const strip = await screen.findByTestId("retention-strip");
+  expect(strip.textContent).toContain("came back another day");
+  expect(strip.textContent).toContain("new today");
+  // dev-2 was active on 2 days -> a "returning · N days" badge; dev-1 (1 day) gets none
+  expect(screen.getByText(/returning · 2 days/)).toBeTruthy();
+});
+
+test("retention failing does not break the core dashboard (loads independently)", async () => {
+  // retention 404s; everything else is fine -> the activity feed still renders, no error state.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const ok = (data: unknown) => ({
+        ok: true,
+        status: 200,
+        json: async () => data,
+      });
+      if (url.includes("/admin/retention"))
+        return { ok: false, status: 404, json: async () => ({}) };
+      if (url.includes("/admin/summary")) return ok(SUMMARY);
+      if (url.includes("/admin/devices")) return ok(DEVICES);
+      if (url.includes("/admin/events"))
+        return ok({ events: EVENTS, total: 3 });
+      return { ok: false, status: 404, json: async () => ({}) };
+    }),
+  );
+  render(<AdminScreen />);
+  const list = await screen.findByTestId("event-list");
+  expect(within(list).getAllByTestId("event-row")).toHaveLength(3);
+  // devices view still works; it just shows no retention strip
+  fireEvent.click(screen.getByText("By device"));
+  await screen.findByTestId("device-list");
+  expect(screen.queryByTestId("retention-strip")).toBeNull();
 });
 
 test("empty state when nothing has been made yet", async () => {
