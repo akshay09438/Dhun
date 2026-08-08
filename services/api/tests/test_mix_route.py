@@ -359,3 +359,20 @@ def test_explicit_rule_still_works_without_a_user_id(monkeypatch, tmp_path):
 
     got = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2, "rule": 3, "take": 2}).json()
     assert got["mix_id"] == mix_route.mix_id_for(SONG1, SONG2, "", 2, 3)
+
+
+def test_vocal_rich_beat_never_gets_the_chop_rule(monkeypatch):
+    """A vocal-rich beat (guest-verse-marked) must never be handed rule 3 (chop): the chop renderer
+    discards the beat's guest verse, so the beat's OWN lyrics vanish (the Wake Me Up x Wari Jawa bug —
+    it worked on Lean On only because that landed on rule 1/4). The effective rule must avoid chop."""
+    from app.planner import beat_guest_verse, rule_shuffle
+    beat, voc = "e" * 64, "d" * 64
+    # Sanity: the shuffler DOES deal rule 3 to this pair on some generation (else the test is vacuous).
+    assert 3 in [rule_shuffle.rule_for("u1", beat, voc, g) for g in range(30)]
+    # Mark the beat vocal-rich; now the EFFECTIVE rule for every generation must avoid the chop.
+    monkeypatch.setattr(beat_guest_verse, "guest_verse_for",
+                        lambda sid: (10.0, 25.0) if sid == beat else None)
+    effective = [mix_route._resolve_rule_take(
+        mix_route.MixRequest(song1_id=beat, song2_id=voc, user_id="u1", generation=g))[0]
+        for g in range(30)]
+    assert 3 not in effective, f"a vocal-rich beat was sent to the chop renderer: {effective}"

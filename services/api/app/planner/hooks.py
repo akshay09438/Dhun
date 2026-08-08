@@ -56,6 +56,18 @@ HOOKS: dict[str, tuple[float, float]] = {
     "b07a768b3409725988f2d08e2445b46f787e86a3da1233d987999f5ecb2d77c3": (57.0, 77.0),
     # Khuda Jaane (Bachna Ae Haseeno) — "Khuda jaane ke main fida hoon…" — first chorus (0:59), 0:12–1:24 vocal run.
     "457d170c17dea1fc8644c479788efff6c1bfc5b5c4b3fa5897e43a6c0e5ce751": (59.0, 84.0),
+    # --- Three vocal-heavy EDM beats (Wake Me Up / Faded / Lean On), founder-marked by ear
+    #     2026-08-08 via scripts/mark_drops.html. Uploaded AS BEATS, so hook_for (called for the Song-2
+    #     vocal only) leaves these inert until one is used as a vocal donor — captured now as ground
+    #     truth for the catalog. ---
+    # Wake Me Up (Avicii) — hook line.
+    "e6722353c4251a3f9af0a76ab620b22f61fa6e385846ae67073debafa6acf1ad": (38.78, 69.81),
+    # Faded (Alan Walker) — hook line.
+    "f61ea8edc6c56a0a1da0de64d26768618e6007262fbca7738d8571ccfa92c7fa": (31.66, 54.17),
+    # Lean On (Major Lazer & DJ Snake) — hook line.
+    "ed2c86b75c81961842d7ea6509d0d962efd1798c49e45bed01395db0d49bcc46": (49.03, 68.65),
+    # Closer (The Chainsmokers ft. Halsey) — founder-marked hook 0:51-1:10 (2026-08-08).
+    "3f260b5cadb5a20ca475f50553f4d8512ed2764ba9f4d7988f9c1e0111d25f4e": (51.0, 70.0),
 }
 
 

@@ -24,6 +24,19 @@ MAIN_DROPS: dict[str, list[float]] = {
     # detection ranks 7:05 above 6:17, so without this mark the signature line drifts off the hand-over
     # (measured: the hook slid to 7:05 and 6:17 got an 8s scrap). 2026-07-16.
     "2471e18e1eb820114c0782501babac43b6e5b52c06254da4c1fe0d9e8369c406": [377.0],
+    # --- Three vocal-heavy EDM beats, founder-marked by ear 2026-08-08 (scripts/mark_drops.html).
+    #     energy_drops OVER-FIRES on these (measured 2026-08-08: precision ~36%, 14 found vs 6 real —
+    #     Wake Me Up 7-for-2, Lean On 6-for-2), so the vocal could sync to a false drop. These ear-marks
+    #     REPLACE detection with the real drops. Recall was already 83% (the real ones ARE found, ~0.15
+    #     bars off), so the marks mostly strip the false positives. ---
+    # Wake Me Up (Avicii) — the two real drops.
+    "e6722353c4251a3f9af0a76ab620b22f61fa6e385846ae67073debafa6acf1ad": [38.31, 93.09],
+    # Faded (Alan Walker).
+    "f61ea8edc6c56a0a1da0de64d26768618e6007262fbca7738d8571ccfa92c7fa": [54.65, 76.36],
+    # Lean On (Major Lazer & DJ Snake).
+    "ed2c86b75c81961842d7ea6509d0d962efd1798c49e45bed01395db0d49bcc46": [29.42, 48.97],
+    # Closer (The Chainsmokers ft. Halsey) — founder-marked drops 0:31 and 1:11 (2026-08-08).
+    "3f260b5cadb5a20ca475f50553f4d8512ed2764ba9f4d7988f9c1e0111d25f4e": [31.0, 71.0],
 }
 
 

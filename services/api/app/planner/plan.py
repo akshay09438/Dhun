@@ -18,7 +18,7 @@ import random
 
 from app.models import (DuckMove, MixPlan, Placement, TrackAnalysis, VocalChainConfig,
                         VocalProcessMove, chain_config_hash)
-from app.planner import fence, hooks, instrumental_beats, llm, window
+from app.planner import beat_guest_verse, fence, hooks, instrumental_beats, llm, window
 
 # Phase 0 (T1): the AI arrangement engine is OFF by default. The founder prefers the
 # deterministic rules arrangement (`_default_arrangement`) — a note-for-note match to the loved
@@ -193,6 +193,17 @@ def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement], stretch: f
     """On a confident Song 1: let Song 1 LEAD with its own vocal in the gaps (both songs trade —
     Step 1) and put a filter-sweep into the final (big) entry. On a shaky Song 1, play safe — no
     flourishes and at most two placements — rather than bet fancy moves on bad data."""
+    # VOCAL-RICH BEAT (hand-marked): the beat sings ONE founder-verified guest-verse window, then hands
+    # the mic to Song 2 (held out until the window ends by the entry floor, vocal_windows). Only that
+    # window is placed as the beat's own vocal - never the whole song - so a non-stop singer (Lean On)
+    # doesn't fight Song 2. TRUSTED even on a shaky grid (the window is ear-verified), so this runs
+    # BEFORE the confidence gate. Song 2's sweep still fires. The R1 clamp downstream keeps it off Song
+    # 2 by construction. (founder rule 2026-08-08, ear-approved.)
+    gv = beat_guest_verse.guest_verse_for(a1.song_id)
+    if gv is not None:
+        if len(placements) >= 2:
+            placements[-1].fx = "sweep_in"
+        return placements, [(float(gv[0]), float(gv[1]))]
     if not _confident(a1):
         # Play safe (<=2 placements, no flourishes) — but keep the arc's ENDS (first + last),
         # not the first two, so a long shaky song still gets an early AND a late entry instead
@@ -232,6 +243,42 @@ def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement], stretch: f
     if len(placements) >= 2:  # one filter sweep, into the final (biggest) entry
         placements[-1].fx = "sweep_in"
     return placements, s1_regions
+
+
+def _clamp_s1_regions_to_r1(regions: list[tuple[float, float]], placements: list[Placement],
+                            stretch: float) -> list[tuple[float, float]]:
+    """Trim Song 1's own vocal regions so NONE illegally overlaps a Song 2 placement (R1 — one lead
+    voice at a time). A region may only ring INTO an entry as a lead-in crossfade: start at/before the
+    entry's anchor and end within `fence.LEAD_XFADE_SECS` of it. Anything that starts INSIDE a Song 2
+    line, or rings longer than the crossfade, is trimmed — making the R1 invariant the arrangement
+    already intends TRUE BY CONSTRUCTION, so a vocal-dense pair is never skipped for a residual overlap
+    the merge left behind. A no-op when the beat's vocal already hands off cleanly.
+
+    Song 2's placements never overlap each other (the S2<->S2 R1 check guarantees it), so a start pushed
+    to one placement's end can never land inside another's interior — a single pass suffices.
+    """
+    if not regions or not placements:
+        return list(regions)
+    spans = sorted((p.anchor, fence.placement_end(p.anchor, p.vocal_src, stretch, getattr(p, "warp", None)))
+                   for p in placements)
+    anchors = [a for a, _ in spans]
+    xf = fence.LEAD_XFADE_SECS
+    out: list[tuple[float, float]] = []
+    for s, e in regions:
+        for a, p_end in spans:  # never START inside a Song 2 line — push the start to that line's end
+            if a + 1e-6 < s < p_end - 1e-6:
+                s = p_end
+                break
+        if e - s <= 1e-6:
+            continue
+        later = [a for a in anchors if a >= s - 1e-6]  # the beat may ring into the NEXT entry only
+        if later:
+            e = min(e, min(later) + xf)
+        if e - s > 1e-6:
+            # Keep full precision: rounding a start pushed to a placement's end nudges it a hair BELOW
+            # that end, and R1's 1e-6 tolerance then reads it as an overlap and skips the mix.
+            out.append((s, e))
+    return out
 
 
 def _held_out_lead_in(a1: TrackAnalysis, placements: list[Placement],
@@ -662,6 +709,14 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     if _confident(a1g):  # only produce (build/echo/stem-moves) on a trustworthy grid — shaky songs stay safe
         placements = _produce_drops(placements, opts.get("drops", []), s1_regions,
                                     opts["vocal_stretch"], opts["master_bpm"], a1g)
+        # R1 SAFETY CLAMP against the FINALIZED placements: _produce_drops can nudge an anchor onto the
+        # grid, and that hair's-width shift is enough to turn a vocal-dense beat's own lead/lick tail
+        # into a residual overlap the referee rejects — SKIPPING the whole mix. Trim Song 1's own vocal
+        # to a clean hand-off so the plan always satisfies R1 (we never relax R1 itself). Both songs
+        # still trade wherever there is room — this is what lets a dense beat like Faded KEEP its lyrics
+        # and still mix, the way 'I Adore You' already does. Runs AFTER produce_drops so it measures the
+        # SAME placements the referee will; s1_regions is [] on the shaky/instrumental path (a no-op).
+        s1_regions = _clamp_s1_regions_to_r1(s1_regions, placements, opts["vocal_stretch"])
         # Step 3: auto-perform each produced drop's tension arc (cut to just the beat, then bass held
         # silent through the build, then the slam), on the retimed grid the audio plays at. Keys off
         # build_bars, so it only fires where a real drop got a build. Skips any drop where Father

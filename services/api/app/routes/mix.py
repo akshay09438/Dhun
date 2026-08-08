@@ -38,6 +38,7 @@ from app.planner import beatgrid
 from app.planner import hooks
 from app.planner import instrumental_beats
 from app.planner import name as name_planner
+from app.planner import beat_guest_verse
 from app.planner import rule_shuffle
 from app.planner import window
 from app.planner.keys import resolve_key_shift
@@ -189,7 +190,8 @@ ENGINE_VERSION = (_ENGINE_VERSION_BASE
                   + ("+m8echo" if rule4_enabled() else "")           # Rule 4: gap-sized echo + reverb bed
                   + ("+m10key" if key_match_enabled() else "")       # Change ②: key-matching (pitch-shift)
                   + ("+m12force" if force_tempo_enabled() else "")   # forced tempo auto-match (never decline)
-                  + ("+m7pool" if effect_pool_enabled() else ""))    # effect pool (superseded, stays off)
+                  + ("+m7pool" if effect_pool_enabled() else "")     # effect pool (superseded, stays off)
+                  + "+m13vrb")                                       # vocal-rich beats: guest verse + R1 clamp + no-chop
 #          slices so the held-out window is FULL of vocal, not holes (founder: "more parts").
 #         (NOT m6.9: that string was already burned by a reverted experiment, so its stale renders
 #          would have been served as cache hits. A version string must be unique PER BEHAVIOUR.)
@@ -242,8 +244,8 @@ def _resolve_rule_take(req: "MixRequest") -> tuple[int, int]:
     if req.user_id is not None and req.generation is not None:
         gen = max(0, req.generation)
         rule = rule_shuffle.rule_for(req.user_id, req.song1_id, req.song2_id, gen)
-        return rule, gen + 1
-    return req.rule, req.take
+        return beat_guest_verse.no_chop_rule(req.song1_id, rule), gen + 1
+    return beat_guest_verse.no_chop_rule(req.song1_id, req.rule), req.take
 
 
 class MixNameRequest(BaseModel):
