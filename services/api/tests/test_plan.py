@@ -298,11 +298,60 @@ def test_instrumental_only_beat_places_no_song1_vocal(monkeypatch):
     assert sum(1 for p in plan.placements if p.fx == "sweep_in") == 1  # Song 2's flourish still fires
 
 
+def _r1_legal(regions, placements, stretch):
+    """Mirror validate's R1 (Song 1 vs Song 2): every region is non-overlapping or a lead-in crossfade."""
+    for s, e in regions:
+        for p in placements:
+            p_end = fence.placement_end(p.anchor, p.vocal_src, stretch, getattr(p, "warp", None))
+            if s < p_end - 1e-6 and e > p.anchor + 1e-6:  # overlaps this placement at all
+                is_xfade = s <= p.anchor + 1e-6 and e <= p.anchor + fence.LEAD_XFADE_SECS + 1e-6
+                if not is_xfade:
+                    return False
+    return True
+
+
+def test_clamp_trims_song1_vocal_off_song2_so_r1_holds():
+    """A vocal-dense beat's own licks can ring into / start inside Song 2's lines — an R1 breach that
+    SKIPS the whole mix. The clamp trims them to a clean hand-off so the plan always passes R1, without
+    muting the beat where it does have room. Inputs are the measured Faded x With You breach."""
+    from app.models import Placement
+    placements = [
+        Placement(anchor=55.2, vocal_src=(0.0, 19.6)),   # ends 74.8
+        Placement(anchor=76.6, vocal_src=(0.0, 52.0)),   # ends 128.6
+        Placement(anchor=155.2, vocal_src=(0.0, 52.1)),  # ends 207.3
+    ]
+    regions = [(51.2, 56.5), (72.6, 76.6), (130.6, 156.4)]
+    assert not _r1_legal(regions, placements, 1.0)             # the bug: illegal overlaps -> skip
+    clamped = planner._clamp_s1_regions_to_r1(regions, placements, 1.0)
+    assert _r1_legal(clamped, placements, 1.0)                 # fixed: clean hand-offs
+    assert clamped                                             # and the beat still leads where it can
+
+
 def test_merrygo_beat_is_marked_instrumental_only():
     from app.planner import instrumental_beats
     a = make_analysis(bpm=85.0)  # no vocal regions -> only the explicit hand-list can flag it
     a.song_id = "4fc82b59807fcbd3071bca7f612e2311f044f0e203f8e82895d7682d67629480"
     assert instrumental_beats.is_instrumental_only(a)
+
+
+def test_vocal_rich_beat_sings_its_guest_verse_then_hands_off(monkeypatch):
+    """A hand-marked vocal-rich beat sings ONE guest-verse window, then Song 2 takes over — even on a
+    shaky grid (the window is founder-verified, so it's trusted). One voice at a time: R1 holds."""
+    monkeypatch.setattr(planner, "_ai_arrange", lambda opts, prompt, take: None)
+    a1 = make_analysis(bpm=120.0, n_bars=64, vocal_regions=[(8.0, 170.0)])  # a non-stop singer (Lean On shape)
+    a2 = make_analysis(bpm=118.0, vocal_regions=[(0.0, 20.0), (30.0, 50.0)])
+    a1.song_id = "b" * 64
+    a1.bpm_confidence = 0.2  # shaky grid — would normally suppress every flourish
+    win = (29.0, 45.0)
+    # One source of truth: patching guest_verse_for drives BOTH the beat's sung window and the floor.
+    monkeypatch.setattr(planner.beat_guest_verse, "guest_verse_for",
+                        lambda sid: win if sid == a1.song_id else None)
+
+    plan = planner.build_mix_plan("m" * 64, a1, a2)
+
+    assert plan.s1_vocal_regions == [win]                              # beat sings ONLY its guest verse
+    assert all(p.anchor >= win[1] - 1e-6 for p in plan.placements)     # Song 2 held out until after it
+    assert not validate.validate_plan(plan, a1, a2)                    # R1 holds (no overlap)
 
 
 def test_hand_marked_main_drop_anchors_the_hook(monkeypatch):

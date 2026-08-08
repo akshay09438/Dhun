@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from app import events
 from app.config import settings
 from app.models import MixPlan
+from app.planner import beat_guest_verse
 from app.planner import fence
 from app.planner import rule_shuffle
 from app.planner.plan import force_tempo_enabled
@@ -95,9 +96,11 @@ def _resolve_pairs(req: "SetRequest") -> list[tuple[str, str, int]]:
     position is auto-assigned by the shared shuffler; otherwise each pair's explicit rule is used."""
     if req.user_id is not None and req.set_index is not None:
         return [(p.song1_id, p.song2_id,
-                 rule_shuffle.rule_for_set(req.user_id, req.set_index, i))
+                 beat_guest_verse.no_chop_rule(
+                     p.song1_id, rule_shuffle.rule_for_set(req.user_id, req.set_index, i)))
                 for i, p in enumerate(req.sets)]
-    return [(p.song1_id, p.song2_id, p.rule) for p in req.sets]
+    return [(p.song1_id, p.song2_id, beat_guest_verse.no_chop_rule(p.song1_id, p.rule))
+            for p in req.sets]
 
 
 class SetMember(BaseModel):

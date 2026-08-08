@@ -35,5 +35,12 @@ def vocal_entry_earliest_for(song_id: str) -> float:
 
     0.0 means no restriction — the arrangement spans the whole song, as it does for every beat that
     is not hand-marked here.
+
+    A vocal-RICH beat with a guest-verse window (app/planner/beat_guest_verse.py) holds Song 2 out
+    until that window ENDS, so the beat sings its own line first and the two never overlap.
     """
+    from app.planner import beat_guest_verse  # local import avoids an import cycle
+    gv = beat_guest_verse.guest_verse_for(song_id)
+    if gv is not None:
+        return gv[1]  # Song 2 enters right after the beat's guest verse
     return VOCAL_ENTRY_EARLIEST.get(song_id, 0.0)

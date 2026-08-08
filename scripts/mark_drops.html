@@ -342,18 +342,29 @@
     <script>
       // ---- known catalog names (song_id -> friendly name). Unknown songs show a short hash. ----
       const NAMES = {
-        ac59f8c4af7e89e916dc825690ade5dbc2b9c6f221c5a7ef863eb9863f3826e1:
-          "Father Ocean (Ben Böhmer Remix) [beat]",
-        c0c6ab91a06e24367e84874da81d4abc285779f50e8f1aeacf70a655cabceb0b:
-          "Don't Start Now (Dua Lipa) [vocals]",
-        bbab7b9f875f071f8e3b53aa73e64c02b3f39730d0a1feec48af6b54de501430:
-          "Der Lagi Lekin (ZNMD) [vocals]",
-        fedc95c90aff7c957f398f302a6a3ed4c7dbf48d7a6667c8294e0b4030355e20:
-          "Tujhe Bhula Diya (Anjaana Anjaani) [vocals]",
-        ae132f3a444f5121d75097a44110a0323365e6dc4a8d0736a924c00b2ac210c1:
-          "With You (AP Dhillon) [vocals]",
-        "6ad6903592cd668502c5f4546618aec807c6eadb974fa6437fef7180fbffddc2":
-          "Tere Bina [vocals]",
+        "2c17fc64b6928f0499a306402b676bc62e3118588e42494c8ec7063a7a948267": "Anchor Point (Ahmed Spins) [beat]",
+        "bbab7b9f875f071f8e3b53aa73e64c02b3f39730d0a1feec48af6b54de501430": "Der Lagi Lekin (ZNMD) [vocals]",
+        "c0c6ab91a06e24367e84874da81d4abc285779f50e8f1aeacf70a655cabceb0b": "Don't Start Now (Dua Lipa) [vocals]",
+        "c4b28366d0bd8a5dd0447d1dece9e204ae45f648ee066e0fc9bc04a068ba8b34": "Dooriyan [vocals]",
+        "f61ea8edc6c56a0a1da0de64d26768618e6007262fbca7738d8571ccfa92c7fa": "Faded [beat]",
+        "ac59f8c4af7e89e916dc825690ade5dbc2b9c6f221c5a7ef863eb9863f3826e1": "Father Ocean (Ben Böhmer Remix) [beat]",
+        "4e24629370d87c887e2c0d711e740d4aa0c28206e6de6b499ee436cd5e72d97f": "How Deep Is Your Love [vocals]",
+        "b8696c4dec8a4d50c2ee493360a868d46ffcc915a43b0fdfdbe30241d9962bef": "I Adore You [beat]",
+        "2471e18e1eb820114c0782501babac43b6e5b52c06254da4c1fe0d9e8369c406": "Innerbloom (RÜFÜS DU SOL) [beat]",
+        "cb3e96493087255ef535db47d04388f51d2de27e20c6cb13dd626092778aae43": "Jugni Ji [vocals]",
+        "457d170c17dea1fc8644c479788efff6c1bfc5b5c4b3fa5897e43a6c0e5ce751": "Khuda Jaane [vocals]",
+        "ed2c86b75c81961842d7ea6509d0d962efd1798c49e45bed01395db0d49bcc46": "Lean On [beat]",
+        "b07a768b3409725988f2d08e2445b46f787e86a3da1233d987999f5ecb2d77c3": "Mera Yaar [vocals]",
+        "4fc82b59807fcbd3071bca7f612e2311f044f0e203f8e82895d7682d67629480": "Merrygo beat [beat]",
+        "84e4ea36d2f3cb34f7e1beb4ce1bace077083994e700b7cc73347e2f5b5438f3": "Nadan Parinde [vocals]",
+        "7f0b66c94d2be61f18a64485dba0a33b5f4387ccce2ff1b5d23aa7da469076eb": "Rapture (Black Coffee) [beat]",
+        "84ff0d8b12455dc66e971874b64ae3b816d622f7fc947cfba12cca77fe6eea88": "Tere Bin [vocals]",
+        "6ad6903592cd668502c5f4546618aec807c6eadb974fa6437fef7180fbffddc2": "Tere Bina [vocals]",
+        "fedc95c90aff7c957f398f302a6a3ed4c7dbf48d7a6667c8294e0b4030355e20": "Tujhe Bhula Diya (Anjaana Anjaani) [vocals]",
+        "5c3ce60868f97c5657d32cc14a028b349fab07bfdf984c40f401790fd1c82375": "Uff Teri Ada [vocals]",
+        "e6722353c4251a3f9af0a76ab620b22f61fa6e385846ae67073debafa6acf1ad": "Wake Me Up [beat]",
+        "0bcbcd12d965a7d03f314424670768ed9074c18f6f2af961fb05d77c803f3d7b": "Wari Jawa [vocals]",
+        "ae132f3a444f5121d75097a44110a0323365e6dc4a8d0736a924c00b2ac210c1": "With You (AP Dhillon) [vocals]",
       };
       const SONG_RE = /^([0-9a-f]{64})\.wav$/; // the bare song WAVs only — not .mix.wav, not stems
       const $ = (s) => document.querySelector(s);
