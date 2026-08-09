@@ -4,7 +4,7 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
-2026-08-09 (session close) — **FIVE FIXES on branch `fix/download-and-abrupt-vocal-fade` — all committed + pushed to `origin` (akshay09438/Dhun), suites GREEN, app live on localhost, PR NOT merged yet (the founder merges it).** Compare link: https://github.com/akshay09438/Dhun/pull/new/fix/download-and-abrupt-vocal-fade. This branch was cut from `feat/vocal-rich-beat-rule` HEAD, so its PR ALSO carries the prior vocal-rich-beat-rule commits — all belong on `main` together. Branch is 6 commits ahead of `main` (5 this session + the vocal-rich feature).
+2026-08-09 (session close) — **FIVE FIXES — MERGED to `main` (2026-08-09, via PRs #12/#13; latest merge `f8ad403`), suites GREEN, app live on localhost.** The merge ALSO landed the prior vocal-rich-beat-rule feature (the fix branch was cut from it), so `main` now has both. Local `main` was re-synced to `origin/main` after a transient Windows/OneDrive file lock stalled the first pull (harmless; `git reset --hard origin/main` recovered it, no work lost). This handoff commit itself missed PR #12 (pushed just after the founder opened it) and is being re-added on branch `docs/handoff-2026-08-09` — a docs-only follow-up. The five fixes below are ALL on `main`.
 
 **What shipped this session (each a `/zuko:fix`, in order):**
 
@@ -16,7 +16,7 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ### DO FIRST NEXT SESSION
 
-1. **If the founder merged the PR to `main`,** pull `main`, delete the branch, and re-verify green on `main` (the merge also lands the vocal-rich-beat-rule feature).
+1. **DONE 2026-08-09:** PR #12 merged to `main` (`e26983f`); local `main` re-synced and RE-VERIFIED green on `main` — sanity sweep 280 plans / 0 referee failures / 0 rule back-to-back, and the full backend suite (see Verification). Merge this `docs/handoff-2026-08-09` follow-up too, then the `fix/download-and-abrupt-vocal-fade` branch can be deleted.
 2. **Founder ear-check follow-ups (only if they ask):** the vocal-fade lengths are single dials — `_EXIT_FADE_MS=400`, `_BEAT_VOCAL_FADE_MS=1500` (`render.py`), `_SENTENCE_FINISH_MAX_S=5` (`plan.py`). Adjusting them is a light change (the render ones are DANGEROUS → confirm-and-apply).
 3. **Run `scripts/sanity_check.py` whenever songs are added** — it's the standing sense/bug/sanity sweep the founder asked for.
 
