@@ -4,6 +4,44 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
+2026-08-09 (session close, later — **Grinder Discord bot**) — **"GRINDER" DISCORD BOT (`/mix` + `/set`) + A WEB-LAUNCH COST ESTIMATE — MERGED to `main` via PR #16 (`c99fe44`), LIVE in the founder's server. Bot tests 15 green; no engine file touched.**
+
+**What shipped this session (a `/zuko:goodnight` batch + live follow-ups):**
+
+1. **Grinder — a throwaway Discord bot** (`services/discord-bot/`, discord.py 2.x, own venv), a convenience-first front-end to the existing mix engine for a store-sector validation demo. Commands: **`/mix`** (autocomplete beat+vocals → in-channel MP3 clip + 🔄 Another take / 🔊 Play in voice / ⏹️ Leave voice), **`/set`** (a step-by-step builder — two dropdowns + ➕ Add mix / ↩️ Remove last / ✅ Build set — for a continuous **2–5-mix** set), `/songs`. Reuses the engine over its LOCAL HTTP API (`/library`, `/mix`, `/set`, audio) with the same auto-rule shuffler — **`render.py`/`validate.py`/the whole engine UNTOUCHED**. Runs locally, $0 for catalog songs. Voice works (PyNaCl installed). Launchers `Start-Grinder.bat` / `Set-Grinder-Token.bat` / `Set-Grinder-Server.bat`. UX rationale: `docs/grinder-discord-demo.md`.
+2. **Dropdown-reset fix** (a `/zuko:fix`): the `/set` builder dropdowns snapped back to the placeholder after a pick because the chosen option wasn't flagged `default` on re-render. Fixed with `helpers.select_option_specs` + `SetBuilderView._refresh_selects`; reproducing tests added.
+3. **Web-launch cost estimate** — `docs/reference/web-launch-cost-estimate.md`: one-time ~$4 to load 200 songs' stems; monthly ~$40 (100 users) / ~~$260 (1k) / ~$1,800 (10k), dominated by the per-mix Claude call (~~$0.008); storage/bandwidth near-zero on R2. Unit prices web-verified Aug 2026.
+
+Also handled live during setup: the founder created the Discord app + token (token lives ONLY in the local gitignored `.env`); a first invite used the wrong Application id — corrected to the running bot's real app id `1535995274705768540`; command-sync was made non-crashing (falls back to a global sync on a `50001 Missing Access`).
+
+### DO FIRST NEXT SESSION
+
+1. **Confirm a mix/set actually PLAYS (audibly) in Discord.** The founder ran `/mix` and the `/set` builder and the commands work end-to-end (login, guild sync, catalog load, clip path), but an explicit "I heard the finished clip and it sounds good" was NOT captured this session. First thing: run `Start-Grinder.bat` (or `.venv/Scripts/python.exe bot.py` in `services/discord-bot`, with the engine on :8000), make one `/mix` and one `/set`, and confirm the clip plays and sounds right.
+2. **(If the founder wants it) build the PARKED Discord tracking view** — a `via="discord"` source tag + Discord username + a Discord-specific unique-users/retention panel on the `/#dev` dashboard. NOTE: recording ALREADY works — Grinder mixes/sets are logged to `events.db` with the Discord user id as `user_id`, so the existing dashboard already counts them (pooled with web, shown as numeric ids). This is a display/tagging add, not a new pipeline. Touches `routes/mix.py`/`routes/set.py` (add a `via`/source field — NON-dangerous) + web `AdminScreen.tsx` (non-dangerous; no need to touch its `.test.tsx`).
+3. **The bot runs LOCALLY** (founder's PC; the PowerShell window open = Grinder online). For the validation meeting it must be running; there is no cloud host (deliberate for a demo).
+
+### In flight — honest state
+
+- **Nothing half-done.** Grinder is complete, merged, and live; the dropdown fix landed. Working tree clean apart from a benign Windows CRLF flag on `apps/web/src/components/screens/ExportScreen.tsx`/`.test.tsx` (content-identical, NOT touched this session).
+- **Deliberately PARKED (not bugs):** the Discord-specific tracking view (above). Nothing else.
+
+### Verification evidence (this session)
+
+- **Grinder bot suite:** `services/discord-bot/.venv/Scripts/python.exe -m pytest tests -q` → **15 passed (2.8s)** (mocked httpx + real ffmpeg; the dropdown-fix reproducing test included — RED before the fix, GREEN after).
+- **Bot modules compile:** `py_compile bot.py api_client.py media.py voice_player.py helpers.py botconfig.py` → OK.
+- **Live end-to-end (real Discord):** Grinder logged in as `Grinder#7345`; `commands synced to guild 1533819407866793985` (merrygo); catalog `24 songs (10 beats, 14 vocals)` loaded from the engine (`GET /library 200`); founder saw and used `/mix` and the `/set` builder.
+- **Engine (backend/web) suites:** NOT re-run this session — **no engine/web file was changed** (Grinder is an additive, separate package). They stand as of the prior session's green run below.
+
+### Open escalations / RE-VERIFY next session (claims, not settled facts)
+
+- **No dangerous-surface file was touched this session** (the bot reuses the engine over HTTP; nothing in the dangerous-5% list was edited). Nothing dangerous from this session to re-verify.
+- **The bot token is a secret held ONLY in the founder's local `services/discord-bot/.env`** (gitignored; never committed, never seen by the agent). If Grinder is ever hosted beyond the founder's PC, that `.env` + token handling become a real secret-management surface to treat carefully.
+- **Nothing is waiting on a human.**
+
+---
+
+## Previous session (2026-08-09 — five fixes)
+
 2026-08-09 (session close) — **FIVE FIXES — MERGED to `main` (2026-08-09, via PRs #12/#13; latest merge `f8ad403`), suites GREEN, app live on localhost.** The merge ALSO landed the prior vocal-rich-beat-rule feature (the fix branch was cut from it), so `main` now has both. Local `main` was re-synced to `origin/main` after a transient Windows/OneDrive file lock stalled the first pull (harmless; `git reset --hard origin/main` recovered it, no work lost). This handoff commit itself missed PR #12 (pushed just after the founder opened it) and is being re-added on branch `docs/handoff-2026-08-09` — a docs-only follow-up. The five fixes below are ALL on `main`.
 
 **What shipped this session (each a `/zuko:fix`, in order):**
