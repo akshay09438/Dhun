@@ -1,0 +1,6 @@
+# Prompt-DJ Discord bot — runtime dependencies.
+# Voice playback also needs PyNaCl; it's installed best-effort by the launcher because it
+# can be awkward to build on some Windows/ARM setups. The bot's core (clip-in-channel) does
+# NOT need PyNaCl and works without it.
+discord.py>=2.4,<3
+httpx>=0.27,<1
