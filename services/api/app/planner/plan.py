@@ -86,11 +86,24 @@ def effect_pool_enabled() -> bool:
 # LIVE since 2026-08-05 (founder chose the boldest echo level, _DELAY_ECHO_WET=1.10, and deployed it).
 _RULE4_ENABLED = True
 
+# Musical exit-fade (2026-08-09, founder fix "lyrics end abruptly"): ease each vocal line OUT over
+# its last _EXIT_FADE_MS instead of the 8 ms click-killer cut. The engine applies it LENGTH-PRESERVING
+# (it only tapers existing samples, never extends a placement), so it can never create a two-voices
+# overlap or move a placement end. OFF => exit_fade_ms stays 0.0 => byte-identical to the pre-fade render.
+_EXIT_FADE_ENABLED = True
+_EXIT_FADE_MS = 400.0  # fade length in ms; ear-tunable (a beat is ~500 ms at 120 BPM)
+
 
 def rule4_enabled() -> bool:
     """Whether Rule 4 (gap-sized echo + continuous reverb bed) is live. Folded into the mix/set cache id
     so flipping it re-renders every mix WITH the echo/reverb instead of serving an OFF cache."""
     return _RULE4_ENABLED
+
+
+def exit_fade_enabled() -> bool:
+    """Whether the musical vocal exit-fade is live. Folded into ENGINE_VERSION so flipping it
+    auto-invalidates the mix/set caches; OFF => exit_fade_ms stays 0.0 => byte-identical to pre-fade."""
+    return _EXIT_FADE_ENABLED
 
 
 def force_tempo_enabled() -> bool:
@@ -785,6 +798,13 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         effects_selected = ["gap_echo", "reverb_bed"]
     elif _EFFECT_POOL_ENABLED and effect_variety:
         effects_selected = _select_effects(a1, a2, prompt, take, placements, s1_regions, opts["vocal_stretch"])
+
+    # Musical exit-fade (2026-08-09): ask the engine to ease each vocal line OUT instead of cutting it.
+    # Length-preserving in the engine, so it never moves a placement end or overlaps the next voice.
+    # OFF => 0.0 => byte-identical to the pre-fade render (the golden-fixture plan never sets this).
+    if _EXIT_FADE_ENABLED:
+        for p in placements:
+            p.exit_fade_ms = _EXIT_FADE_MS
 
     variety_on = (_RULE4_ENABLED or _EFFECT_POOL_ENABLED) and effect_variety
     first = placements[0]

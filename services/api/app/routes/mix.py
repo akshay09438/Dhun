@@ -43,7 +43,7 @@ from app.planner import rule_shuffle
 from app.planner import window
 from app.planner.keys import resolve_key_shift
 from app.planner.plan import (MixDeclined, build_mix_plan, effect_pool_enabled,
-                              force_tempo_enabled, rule4_enabled)
+                              exit_fade_enabled, force_tempo_enabled, rule4_enabled)
 from app.storage import maybe_sweep, path_for
 
 # workers/ lives at the repo root; put it on the path so we can import the engine.
@@ -191,7 +191,8 @@ ENGINE_VERSION = (_ENGINE_VERSION_BASE
                   + ("+m10key" if key_match_enabled() else "")       # Change ②: key-matching (pitch-shift)
                   + ("+m12force" if force_tempo_enabled() else "")   # forced tempo auto-match (never decline)
                   + ("+m7pool" if effect_pool_enabled() else "")     # effect pool (superseded, stays off)
-                  + "+m13vrb")                                       # vocal-rich beats: guest verse + R1 clamp + no-chop
+                  + "+m13vrb"                                        # vocal-rich beats: guest verse + R1 clamp + no-chop
+                  + ("+m14fade" if exit_fade_enabled() else ""))     # musical exit-fade on each vocal line's tail
 #          slices so the held-out window is FULL of vocal, not holes (founder: "more parts").
 #         (NOT m6.9: that string was already burned by a reverted experiment, so its stale renders
 #          would have been served as cache hits. A version string must be unique PER BEHAVIOUR.)

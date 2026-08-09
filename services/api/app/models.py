@@ -91,6 +91,12 @@ class Placement(BaseModel):
     # vocal itself — there is no per-throw plan data. False => neither => byte-identical to the pre-Rule-4
     # render. (The old phrase-throw `throws` field was removed with the cut-ratio model.)
     reverb_bed: bool = False
+    # A musical fade-out on the LAST exit_fade_ms of this vocal so a sung line eases out
+    # instead of cutting abruptly (the 8 ms edge fade only kills clicks). LENGTH-PRESERVING:
+    # the engine only tapers existing samples, never extends the placement — so it can't
+    # create a two-voices overlap or move any placement end (R1/length math unaffected).
+    # 0 => no musical fade (only the edge fade) => byte-identical to the pre-fade render.
+    exit_fade_ms: float = 0.0
 
 
 class StemMove(BaseModel):
