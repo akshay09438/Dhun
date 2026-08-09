@@ -109,6 +109,44 @@ def finish_sentences_enabled() -> bool:
     return _FINISH_SENTENCES_ENABLED
 
 
+_FINISH_BEAT_VOCAL_ENABLED = True  # extend the BEAT song's own vocal (Song 1) to finish its phrase too
+_BEAT_FINISH_MAX_S = 3.0           # cap how far a beat-vocal region may extend to finish its line
+
+
+def finish_beat_vocal_enabled() -> bool:
+    """Whether the beat song's own vocal also finishes its phrase at the hand-off. Folded into
+    ENGINE_VERSION; OFF (or an analysis without vocal_pauses) => the prior beat-vocal behaviour."""
+    return _FINISH_BEAT_VOCAL_ENABLED
+
+
+def _finish_beat_vocal_phrases(regions: list[tuple[float, float]], a1: TrackAnalysis,
+                               placements: list[Placement]) -> list[tuple[float, float]]:
+    """Extend each Song-1 (BEAT) vocal region's END forward to the beat singer's next breath
+    (a1.vocal_pauses) so the beat's OWN line finishes its sentence before it hands the mic to Song 2 —
+    instead of cutting mid-word. Bounded by _BEAT_FINISH_MAX_S and, crucially, by the R1 crossfade
+    allowance: it may ring at most `fence.LEAD_XFADE_SECS` past the entry it hands into, so it stays a
+    legal lead-in crossfade (the `_clamp_s1_regions_to_r1` pass and the referee both re-check this). Only
+    ever LENGTHENS a region; no vocal_pauses / flag off => unchanged."""
+    if not _FINISH_BEAT_VOCAL_ENABLED:
+        return regions
+    pauses = sorted(getattr(a1, "vocal_pauses", []) or [])
+    if not pauses or not regions:
+        return regions
+    anchors = sorted(p.anchor for p in placements)
+    out: list[tuple[float, float]] = []
+    for s, e in regions:
+        next_breath = next((t for t in pauses if t > e + 1e-3), None)
+        if next_breath is None:
+            out.append((s, e))
+            continue
+        target = min(next_breath, e + _BEAT_FINISH_MAX_S)
+        later = [a for a in anchors if a >= s - 1e-6]  # the Song-2 entry this region hands into
+        if later:  # never ring past the R1 crossfade allowance of that entry
+            target = min(target, min(later) + fence.LEAD_XFADE_SECS)
+        out.append((s, round(target, 3)) if target > e + 1e-3 else (s, e))
+    return out
+
+
 def _finish_sentences(placements: list[Placement], a2: TrackAnalysis, stretch: float) -> list[Placement]:
     """Extend each Song-2 vocal slice's END forward to the singer's next breath (a2.vocal_pauses) so a
     sung line finishes its sentence instead of cutting mid-word at the MAX_VOCAL_SECS cap. Bounded two
@@ -764,6 +802,10 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         source = "rules"
     placements, s1_regions = _apply_flourishes(a1g, placements, opts["vocal_stretch"],
                                                opts.get("vocal_entry_floor", 0.0))
+    # Beat song finishes ITS OWN line too: extend each Song-1 vocal region to the beat singer's next
+    # breath so the beat's lyric completes before handing off — bounded to the R1 crossfade allowance
+    # (the clamp below + the referee re-check R1). Uses a1's own breath map (a1g == a1 with windowing off).
+    s1_regions = _finish_beat_vocal_phrases(s1_regions, a1g, placements)
     stem_moves: list = []
     if _confident(a1g):  # only produce (build/echo/stem-moves) on a trustworthy grid — shaky songs stay safe
         placements = _produce_drops(placements, opts.get("drops", []), s1_regions,

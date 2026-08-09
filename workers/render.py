@@ -35,6 +35,9 @@ _TARGET_PEAK = 10 ** (-1.0 / 20)  # -1 dBFS headroom
 _CEILING = 0.999  # brickwall safety — must stay below the validator's clip ceiling
 _FADE_MS = 8.0  # edge fade that kills entry/exit clicks
 _XFADE_MS = 8.0  # equal-power crossfade at each bar join in a beat-locked (warped) vocal
+_BEAT_VOCAL_FADE_MS = 1500.0  # the BEAT song's own vocal eases out over this at a standalone hand-off
+#                               (a graceful musical fade, longer than a Song-2 line's tail) so it never
+#                               chops; where it overlaps the incoming vocal the crossfade already trails it.
 # atempo handles 0.5–2.0 in a single pass; clamp a bar's ratio only to keep the FILTER
 # valid. The MUSICAL safe band (~0.92–1.08, no warble) is enforced upstream by the
 # planner's warp_map and the referee's R7 — so a real bar is never near these limits, and
@@ -1111,8 +1114,8 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
                 start = min(over) - a0
                 ramp = np.linspace(1.0, 0.0, len(take) - start, dtype=np.float32)
                 take[start:] *= ramp[:, None]
-            elif s1_exit_ms > 0.0:  # standalone answer: ease its tail out (length-preserving) instead of the cut
-                take = _exit_fade(take, s1_exit_ms)
+            elif s1_exit_ms > 0.0:  # standalone answer: ease the BEAT vocal out with a graceful (long) fade,
+                take = _exit_fade(take, max(s1_exit_ms, _BEAT_VOCAL_FADE_MS))  # so its line never chops mid-word
             bed = _hold(bed, a0 + len(take))
             bed[a0:a0 + len(take)] += take
 
