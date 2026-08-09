@@ -33,6 +33,13 @@ def match_songs(pool, current: str | None, limit: int = 25):
     return [s for s in pool if cur in s.name.lower()][:limit]
 
 
+def select_option_specs(songs, selected_id, limit: int = 25):
+    """(label, value, is_default) triples for a Discord dropdown, marking the currently-selected
+    song as the default option. Without this flag Discord re-renders the dropdown blank (back to
+    its placeholder) after a pick, so the chosen song's name doesn't 'stay up there'."""
+    return [(s.name[:100], s.id, s.id == selected_id) for s in list(songs)[:limit]]
+
+
 def safe_filename(name: str | None, fallback: str = "mix") -> str:
     """A filesystem/Discord-safe attachment name derived from a mix's display name."""
     keep = "".join(c if (c.isalnum() or c in " -_") else "_" for c in (name or "")).strip()

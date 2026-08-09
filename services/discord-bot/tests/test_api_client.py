@@ -73,6 +73,48 @@ def test_start_mix_raises_friendly_engine_error():
         assert "analyzed" in str(e)
 
 
+def test_start_set_sends_pairs_and_returns_id():
+    seen = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        import json
+        seen.update(json.loads(req.content))
+        return httpx.Response(202, json={"set_id": "e" * 64, "status": "processing"})
+
+    async def go():
+        c = _client_with(handler)
+        sid = await c.start_set([("a" * 64, "b" * 64), ("c" * 64, "d" * 64)],
+                                user_id="u1", set_index=0)
+        await c.close()
+        return sid
+
+    sid = asyncio.run(go())
+    assert sid == "e" * 64
+    assert seen["sets"] == [{"song1_id": "a" * 64, "song2_id": "b" * 64},
+                            {"song1_id": "c" * 64, "song2_id": "d" * 64}]
+    assert seen["user_id"] == "u1" and seen["set_index"] == 0
+
+
+def test_wait_for_set_returns_members_and_duration():
+    calls = {"n": 0}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] < 2:
+            return httpx.Response(200, json={"status": "processing"})
+        return httpx.Response(200, json={"status": "ready", "duration": 312.5,
+                                         "members": [{"index": 1, "kept": True}]})
+
+    async def go():
+        c = _client_with(handler)
+        res = await c.wait_for_set("e" * 64, poll=0.0, timeout=5.0)
+        await c.close()
+        return res
+
+    res = asyncio.run(go())
+    assert res.status == "ready" and res.duration == 312.5 and len(res.members) == 1
+
+
 def test_wait_for_mix_polls_until_ready():
     calls = {"n": 0}
 

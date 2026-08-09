@@ -43,6 +43,9 @@ lives in the engine.
   - **🔄 Another take** — a different arrangement (up to 5 takes).
   - **🔊 Play in voice** — the bot joins your voice channel and plays it live.
   - **⏹️ Leave voice** — stop and leave.
+- **`/set`** — build a continuous back-to-back set of **2–5 mixes**. A step-by-step builder:
+  pick a beat + a vocal from dropdowns → **➕ Add mix** → repeat → **✅ Build set**. The finished
+  set posts as one clip (with **🔊 Play in voice**).
 - **`/songs`** — list the beats and vocals available.
 
 ---

@@ -29,6 +29,15 @@ class MixResult:
     notes: str | None = None
 
 
+@dataclasses.dataclass
+class SetResult:
+    set_id: str
+    status: str                 # "ready" | "error" | "processing" | "idle"
+    message: str | None = None
+    duration: float | None = None
+    members: list | None = None  # [{index, song1_id, song2_id, rule, kept, seam_at, reason}]
+
+
 class EngineError(RuntimeError):
     """A plain-language failure from the engine, safe to show a user."""
 
@@ -125,3 +134,47 @@ class PromptDJClient:
             return r.json().get("name")
         except httpx.HTTPError:
             return None
+
+    # ---- Sets (a continuous back-to-back set of 2–5 mixes) --------------------------------
+    async def start_set(self, pairs: list[tuple[str, str]], user_id: str, set_index: int = 0) -> str:
+        """Kick off (or hit the cache for) a set from ordered (beat, vocals) pairs; returns its id.
+        Uses the same auto-rule shuffler the web set builder uses (user_id + set_index)."""
+        payload = {
+            "sets": [{"song1_id": a, "song2_id": b} for a, b in pairs],
+            "user_id": user_id, "set_index": set_index,
+        }
+        r = await self._client.post("/set", json=payload)
+        if r.status_code not in (200, 202):
+            raise EngineError(_friendly(r))
+        return r.json()["set_id"]
+
+    async def set_status(self, set_id: str) -> SetResult:
+        r = await self._client.get(f"/set/{set_id}")
+        r.raise_for_status()
+        d = r.json()
+        return SetResult(set_id=set_id, status=d.get("status", "idle"), message=d.get("message"),
+                         duration=d.get("duration"), members=d.get("members"))
+
+    async def wait_for_set(self, set_id: str, *, poll: float = 3.0, timeout: float = 1200.0,
+                           on_progress=None) -> SetResult:
+        """Poll until the set is ready or errors (sets render several mixes, so allow longer)."""
+        elapsed = 0.0
+        while True:
+            res = await self.set_status(set_id)
+            if res.status in ("ready", "error"):
+                return res
+            if on_progress is not None:
+                await on_progress(elapsed)
+            await asyncio.sleep(poll)
+            elapsed += poll
+            if elapsed >= timeout:
+                return SetResult(set_id=set_id, status="error",
+                                 message="This set took too long. Try fewer mixes, or try again.")
+
+    async def fetch_set_audio(self, set_id: str, dest_path) -> str:
+        async with self._client.stream("GET", f"/set/{set_id}/audio") as r:
+            r.raise_for_status()
+            with open(dest_path, "wb") as f:
+                async for chunk in r.aiter_bytes():
+                    f.write(chunk)
+        return str(dest_path)
