@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Prompt-DJ — Song Marker (drop · best part · vocal)</title>
+    <title>Prompt-DJ — Song Marker (drop · best part)</title>
     <style>
       :root {
         --bg: #f6f6f7;
@@ -15,9 +15,6 @@
         --violet-soft: #efeaff;
         --drop: #e0562d; /* drop */
         --hook: #137a4b; /* best part */
-        --hook-soft: #e2f4ea;
-        --vin: #1f7ae0; /* vocal-in point */
-        --vwin: #b8299b; /* vocal window */
       }
       @media (prefers-color-scheme: dark) {
         :root {
@@ -30,9 +27,6 @@
           --violet-soft: #2a2340;
           --drop: #ff7a52;
           --hook: #4fd39a;
-          --hook-soft: #193029;
-          --vin: #5aa8ff;
-          --vwin: #f06fd6;
         }
       }
       * {
@@ -103,16 +97,6 @@
         background: var(--hook);
         color: #fff;
         border-color: var(--hook);
-      }
-      .vin-btn {
-        background: var(--vin);
-        color: #fff;
-        border-color: var(--vin);
-      }
-      .vwin-btn {
-        background: var(--vwin);
-        color: #fff;
-        border-color: var(--vwin);
       }
       .row {
         display: flex;
@@ -189,12 +173,6 @@
         border-radius: 50%;
         background: var(--drop);
       }
-      .vtick {
-        background: var(--vin);
-      }
-      .vtick::after {
-        background: var(--vin);
-      }
       .hookspan {
         position: absolute;
         top: 0;
@@ -202,14 +180,6 @@
         background: color-mix(in srgb, var(--hook) 30%, transparent);
         border-left: 2px solid var(--hook);
         border-right: 2px solid var(--hook);
-      }
-      .vwinspan {
-        position: absolute;
-        top: 0;
-        bottom: 0;
-        background: color-mix(in srgb, var(--vwin) 26%, transparent);
-        border-left: 2px solid var(--vwin);
-        border-right: 2px solid var(--vwin);
       }
       .time {
         font-variant-numeric: tabular-nums;
@@ -234,12 +204,6 @@
       }
       .marks .hk b {
         color: var(--hook);
-      }
-      .marks .vi b {
-        color: var(--vin);
-      }
-      .marks .vw b {
-        color: var(--vwin);
       }
       .x {
         cursor: pointer;
@@ -296,11 +260,9 @@
     <div class="wrap">
       <h1>🎧 Song Marker</h1>
       <p class="sub">
-        Play each song and mark four things: every real
-        <b style="color: var(--drop)">drop</b>, the
-        <b style="color: var(--hook)">best part</b> (the memorable stretch),
-        where the <b style="color: var(--vin)">vocal comes in</b>, and the
-        <b style="color: var(--vwin)">vocal window</b> (the main sung section).
+        Play each song and mark two things: every real
+        <b style="color: var(--drop)">drop</b>, and the
+        <b style="color: var(--hook)">best part</b> (the memorable stretch).
         Works on your raw song files too. Export one CSV. Nothing leaves your
         computer.
       </p>
@@ -370,13 +332,6 @@
           <span
             ><i class="dot" style="background: var(--hook)"></i> best part</span
           >
-          <span
-            ><i class="dot" style="background: var(--vin)"></i> vocal-in</span
-          >
-          <span
-            ><i class="dot" style="background: var(--vwin)"></i> vocal
-            window</span
-          >
         </div>
         <div class="row" style="margin: 10px 0 4px">
           <button class="drop-btn big" id="dropBtn">
@@ -385,21 +340,14 @@
           <button class="hook-btn big" id="hookBtn">
             ◆ Best part <span class="hint" style="color: #fff">(H)</span>
           </button>
-          <button class="vin-btn big" id="vinBtn">
-            ▲ Vocal-in <span class="hint" style="color: #fff">(V)</span>
-          </button>
-          <button class="vwin-btn big" id="vwinBtn">
-            ▬ Vocal window <span class="hint" style="color: #fff">(B)</span>
-          </button>
           <button id="undoBtn">
             ↶ Undo drop <span class="hint">(U)</span>
           </button>
         </div>
         <p class="hint" style="margin: 6px 0 10px">
           <kbd>Space</kbd> play/pause · <kbd>D</kbd> drop ·
-          <kbd>H</kbd> best-part start then end · <kbd>V</kbd> vocal-in ·
-          <kbd>B</kbd> vocal-window start then end · <kbd>U</kbd> undo last drop
-          · <kbd>←</kbd><kbd>→</kbd> jump 5s · <kbd>N</kbd> next song
+          <kbd>H</kbd> best-part start then end · <kbd>U</kbd> undo last drop ·
+          <kbd>←</kbd><kbd>→</kbd> jump 5s · <kbd>N</kbd> next song
         </p>
         <div class="marks" id="marks"></div>
         <div
@@ -473,7 +421,7 @@
 
       let songs = []; // {key, name, file, url}
       let idx = -1;
-      // marks[key] = { drops:[], hook:[a,b]|null, hookPending, vins:[], vwin:[a,b]|null, vwinPending }
+      // marks[key] = { drops:[], hook:[a,b]|null, hookPending }
       let marks = JSON.parse(localStorage.getItem("pdj_marks") || "{}");
 
       const save = () =>
@@ -494,25 +442,11 @@
       }
       function ensure(key) {
         if (!marks[key])
-          marks[key] = {
-            drops: [],
-            hook: null,
-            hookPending: null,
-            vins: [],
-            vwin: null,
-            vwinPending: null,
-          };
-        const mk = marks[key]; // migrate older saved shapes
-        if (!mk.vins) mk.vins = [];
-        if (mk.vwin === undefined) mk.vwin = null;
-        if (mk.vwinPending === undefined) mk.vwinPending = null;
-        return mk;
+          marks[key] = { drops: [], hook: null, hookPending: null };
+        return marks[key];
       }
       function hasMarks(mk) {
-        return (
-          mk &&
-          (mk.drops.length || mk.hook || (mk.vins && mk.vins.length) || mk.vwin)
-        );
+        return mk && (mk.drops.length || mk.hook);
       }
       function markedCount() {
         return songs.filter((s) => hasMarks(marks[s.key])).length;
@@ -553,8 +487,6 @@
           const bits = [];
           if (mk && mk.drops.length) bits.push(mk.drops.length + " drop");
           if (mk && mk.hook) bits.push("best");
-          if (mk && mk.vins && mk.vins.length) bits.push("voc-in");
-          if (mk && mk.vwin) bits.push("voc-win");
           const d = document.createElement("div");
           d.className = "song" + (i === idx ? " active" : "");
           d.innerHTML = `<span>${s.name}</span><span class="tag">${bits.length ? `<span class="done">✓ ${bits.join(" + ")}</span>` : "unmarked"}</span>`;
@@ -579,7 +511,6 @@
         renderMarks();
         drawTimeline();
         updateHookBtn();
-        updateVwinBtn();
       }
 
       function chip(cls, html, onRemove) {
@@ -633,54 +564,15 @@
           span.innerHTML = `<b>◆ best-part start</b> ${fmt(mk.hookPending)} <span class="hint">— press H again at the end</span>`;
           el.appendChild(span);
         }
-        mk.vins
-          .slice()
-          .sort((a, b) => a - b)
-          .forEach((t) => {
-            const real = mk.vins.indexOf(t);
-            el.appendChild(
-              chip("vi", `<b>▲ vocal-in</b> ${fmt(t)}`, () => {
-                mk.vins.splice(real, 1);
-                save();
-                renderMarks();
-                drawTimeline();
-                renderList();
-              }),
-            );
-          });
-        if (mk.vwin) {
-          el.appendChild(
-            chip(
-              "vw",
-              `<b>▬ vocal window</b> ${fmt(mk.vwin[0])} → ${fmt(mk.vwin[1])}`,
-              () => {
-                mk.vwin = null;
-                mk.vwinPending = null;
-                save();
-                renderMarks();
-                drawTimeline();
-                updateVwinBtn();
-                renderList();
-              },
-            ),
-          );
-        } else if (mk.vwinPending != null) {
-          const span = document.createElement("span");
-          span.className = "m vw";
-          span.innerHTML = `<b>▬ vocal-window start</b> ${fmt(mk.vwinPending)} <span class="hint">— press B again at the end</span>`;
-          el.appendChild(span);
-        }
-        if (!hasMarks(mk) && mk.hookPending == null && mk.vwinPending == null)
+        if (!hasMarks(mk) && mk.hookPending == null)
           el.innerHTML =
-            '<span class="hint">No marks yet. Play, then tap D at each drop, H for the best part, V/B for vocals.</span>';
+            '<span class="hint">No marks yet. Play, then tap D at each drop and H for the best part.</span>';
       }
 
       function drawTimeline() {
         const tl = $("#timeline");
         const dur = audio.duration || 0;
-        [...tl.querySelectorAll(".tick,.vtick,.hookspan,.vwinspan")].forEach(
-          (n) => n.remove(),
-        );
+        [...tl.querySelectorAll(".tick,.hookspan")].forEach((n) => n.remove());
         if (!dur) return;
         const mk = ensure(songs[idx].key);
         if (mk.hook) {
@@ -690,22 +582,9 @@
           h.style.width = (100 * (mk.hook[1] - mk.hook[0])) / dur + "%";
           tl.appendChild(h);
         }
-        if (mk.vwin) {
-          const w = document.createElement("div");
-          w.className = "vwinspan";
-          w.style.left = (100 * mk.vwin[0]) / dur + "%";
-          w.style.width = (100 * (mk.vwin[1] - mk.vwin[0])) / dur + "%";
-          tl.appendChild(w);
-        }
         mk.drops.forEach((t) => {
           const d = document.createElement("div");
           d.className = "tick";
-          d.style.left = (100 * t) / dur + "%";
-          tl.appendChild(d);
-        });
-        mk.vins.forEach((t) => {
-          const d = document.createElement("div");
-          d.className = "tick vtick";
           d.style.left = (100 * t) / dur + "%";
           tl.appendChild(d);
         });
@@ -727,11 +606,6 @@
       function undoDrop() {
         if (!songs[idx]) return;
         ensure(songs[idx].key).drops.pop();
-        refresh();
-      }
-      function markVin() {
-        if (!songs[idx]) return;
-        ensure(songs[idx].key).vins.push(now());
         refresh();
       }
 
@@ -762,33 +636,6 @@
         renderList();
       }
 
-      function updateVwinBtn() {
-        const mk = songs[idx] ? ensure(songs[idx].key) : null;
-        $("#vwinBtn").innerHTML =
-          mk && mk.vwinPending != null
-            ? '▬ Vocal-window END <span class="hint" style="color:#fff">(B)</span>'
-            : '▬ Vocal window <span class="hint" style="color:#fff">(B)</span>';
-      }
-      function markVwin() {
-        const s = songs[idx];
-        if (!s) return;
-        const mk = ensure(s.key);
-        const t = now();
-        if (mk.vwinPending == null && !mk.vwin) mk.vwinPending = t;
-        else if (mk.vwinPending != null) {
-          mk.vwin = [Math.min(mk.vwinPending, t), Math.max(mk.vwinPending, t)];
-          mk.vwinPending = null;
-        } else {
-          mk.vwinPending = t;
-          mk.vwin = null;
-        }
-        save();
-        renderMarks();
-        drawTimeline();
-        updateVwinBtn();
-        renderList();
-      }
-
       // ---- CSV ----
       function toCsv() {
         const rows = [["song_key", "song_name", "kind", "t_start", "t_end"]];
@@ -808,20 +655,6 @@
               "hook",
               mk.hook[0].toFixed(2),
               mk.hook[1].toFixed(2),
-            ]);
-          (mk.vins || [])
-            .slice()
-            .sort((a, b) => a - b)
-            .forEach((t) =>
-              rows.push([s.key, s.name, "vocal_in", t.toFixed(2), ""]),
-            );
-          if (mk.vwin)
-            rows.push([
-              s.key,
-              s.name,
-              "vocal_window",
-              mk.vwin[0].toFixed(2),
-              mk.vwin[1].toFixed(2),
             ]);
         }
         return rows
@@ -854,20 +687,10 @@
             );
           const [key, , kind, ts, te] = c;
           if (!key) continue;
-          acc[key] = acc[key] || {
-            drops: [],
-            hook: null,
-            hookPending: null,
-            vins: [],
-            vwin: null,
-            vwinPending: null,
-          };
+          acc[key] = acc[key] || { drops: [], hook: null, hookPending: null };
           if (kind === "drop") acc[key].drops.push(parseFloat(ts));
           else if (kind === "hook")
             acc[key].hook = [parseFloat(ts), parseFloat(te)];
-          else if (kind === "vocal_in") acc[key].vins.push(parseFloat(ts));
-          else if (kind === "vocal_window")
-            acc[key].vwin = [parseFloat(ts), parseFloat(te)];
         }
         marks = Object.assign(marks, acc);
         save();
@@ -876,7 +699,6 @@
           renderMarks();
           drawTimeline();
           updateHookBtn();
-          updateVwinBtn();
         }
       }
 
@@ -917,8 +739,6 @@
       };
       $("#dropBtn").onclick = markDrop;
       $("#hookBtn").onclick = markHook;
-      $("#vinBtn").onclick = markVin;
-      $("#vwinBtn").onclick = markVwin;
       $("#undoBtn").onclick = undoDrop;
       $("#nextBtn").onclick = () => load(idx + 1);
       $("#prevBtn").onclick = () => load(idx - 1);
@@ -935,12 +755,6 @@
         } else if (k === "h") {
           e.preventDefault();
           markHook();
-        } else if (k === "v") {
-          e.preventDefault();
-          markVin();
-        } else if (k === "b") {
-          e.preventDefault();
-          markVwin();
         } else if (k === "u") {
           e.preventDefault();
           undoDrop();
@@ -956,7 +770,6 @@
           audio.currentTime = Math.max(0, audio.currentTime - 5);
       });
       updateHookBtn();
-      updateVwinBtn();
       if (Object.keys(marks).length)
         $("#loadHint").innerHTML +=
           " <b>(your previous marks were restored — load the same folder to continue.)</b>";
