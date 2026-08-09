@@ -9,11 +9,11 @@ finance-grade forecast. USD first, ₹ at ~83/USD._
 
 ## The bottom line
 
-| Size | Active users | **Monthly cost (USD)** | **Monthly cost (₹)** | One-time setup |
-| --- | --- | --- | --- | --- |
-| **Validation** | ~100 | **~$40 / mo** (~$30 optimized) | **~₹3,300 / mo** | ~$5 (₹400) |
-| **Small launch** | ~1,000 | **~$260 / mo** (~$160 optimized) | **~₹21,500 / mo** | ~$5 |
-| **Growth** | ~10,000 | **~$1,800 / mo** (~$800 optimized) | **~₹1,50,000 / mo** | ~$5 |
+| Size             | Active users | **Monthly cost (USD)**             | **Monthly cost (₹)** | One-time setup |
+| ---------------- | ------------ | ---------------------------------- | -------------------- | -------------- |
+| **Validation**   | ~100         | **~$40 / mo** (~$30 optimized)     | **~₹3,300 / mo**     | ~$26 (₹2,150)  |
+| **Small launch** | ~1,000       | **~$260 / mo** (~$160 optimized)   | **~₹21,500 / mo**    | ~$26           |
+| **Growth**       | ~10,000      | **~$1,800 / mo** (~$800 optimized) | **~₹1,50,000 / mo**  | ~$26           |
 
 **The one figure that matters:** almost the entire bill is the **AI "mix planning" call** — one
 small Claude request per mix (~$0.008). Everything else — storing 200 songs + stems, the
@@ -39,42 +39,48 @@ which roughly halves-to-thirds it, plus the app's existing cache (a repeated pai
 
 ## 1. One-time setup — loading the 200-song catalog
 
-| Item | Unit | 200 songs |
-| --- | --- | --- |
-| Stem separation (Replicate Demucs, ~$0.018/song) | per song | **~$3.60** |
-| Music analysis (BPM/key) | local / negligible | ~$0 |
-| **Total one-time** | | **~$4–5 (₹350–420)** |
+Each song needs TWO paid Replicate (cloud GPU) passes — split into stems, and analyze its
+structure (beat / downbeats / sections). The analysis runs on a pricier A100 GPU, so **it, not
+the stems, dominates this cost** (corrected 2026-08-09 — an earlier version wrongly treated
+analysis as free/local).
 
-Re-run only when the catalog changes. This is a **one-time ~$4**, not a recurring cost — the
-whole point of the curated catalog is that stems/analysis are computed once and cached forever.
+| Item                                                          | Unit            | 200 songs          |
+| ------------------------------------------------------------- | --------------- | ------------------ |
+| Stem separation (Replicate Demucs, T4, ~$0.018/song)          | per song        | ~$3.60             |
+| **Structure analysis (All-In-One, A100, ~94 s, ~$0.11/song)** | per song        | **~$22**           |
+| **Total one-time**                                            | **~$0.13/song** | **~$26 (₹~2,150)** |
+
+Longer tracks cost more (analysis time varies with song length), so budget **~$26–37
+(₹2,150–3,050)** for ~200–215 songs. Re-run only when the catalog changes — stems + analysis are
+cached forever per song, so this is a genuine one-time cost.
 
 ## 2. Per-mix marginal cost (what one new mix costs)
 
-| Item | Cost per mix |
-| --- | --- |
-| Claude Haiku planning call (~3k in + 1k out tokens) | **~$0.008** |
-| CPU render (deterministic DSP) | negligible (server time) |
-| Store the rendered mix (~3.5 MB MP3) | negligible |
-| **Per mix (list price)** | **~$0.008 (₹0.66)** |
-| Per mix, optimized (prompt caching −90% input, batch −50%) | **~$0.003 (₹0.25)** |
+| Item                                                       | Cost per mix             |
+| ---------------------------------------------------------- | ------------------------ |
+| Claude Haiku planning call (~3k in + 1k out tokens)        | **~$0.008**              |
+| CPU render (deterministic DSP)                             | negligible (server time) |
+| Store the rendered mix (~3.5 MB MP3)                       | negligible               |
+| **Per mix (list price)**                                   | **~$0.008 (₹0.66)**      |
+| Per mix, optimized (prompt caching −90% input, batch −50%) | **~$0.003 (₹0.25)**      |
 
-Because the app is **content-addressed cached**, the *same* pair/take is planned **once** and
+Because the app is **content-addressed cached**, the _same_ pair/take is planned **once** and
 served free forever after — so real-world cost is often below list.
 
 ## 3. Monthly cost by size
 
 All using **R2 (zero egress)** + **Haiku planner**. "Claude" = users × 20 mixes × per-mix.
 
-| Line | 100 users | 1,000 users | 10,000 users |
-| --- | --- | --- | --- |
-| Compute (API + render worker) | ~$25 | ~$75 | ~$150 |
-| Object storage (44 GB + growing mix cache, R2 @ $0.015/GB) | ~$1 | ~$2 | ~$5 |
-| Database (Postgres) | $0 (free tier) | ~$25 | ~$50 |
-| Bandwidth (R2 egress) | **$0** | **$0** | **$0** |
-| AI planning (Claude Haiku, list) | ~$16 | ~$160 | ~$1,600 |
-| **Total (list)** | **~$42 / mo** | **~$262 / mo** | **~$1,805 / mo** |
-| **Total (optimized Claude)** | **~$32 / mo** | **~$162 / mo** | **~$805 / mo** |
-| **In ₹ (list)** | **~₹3,500** | **~₹21,700** | **~₹1,49,800** |
+| Line                                                       | 100 users      | 1,000 users    | 10,000 users     |
+| ---------------------------------------------------------- | -------------- | -------------- | ---------------- |
+| Compute (API + render worker)                              | ~$25           | ~$75           | ~$150            |
+| Object storage (44 GB + growing mix cache, R2 @ $0.015/GB) | ~$1            | ~$2            | ~$5              |
+| Database (Postgres)                                        | $0 (free tier) | ~$25           | ~$50             |
+| Bandwidth (R2 egress)                                      | **$0**         | **$0**         | **$0**           |
+| AI planning (Claude Haiku, list)                           | ~$16           | ~$160          | ~$1,600          |
+| **Total (list)**                                           | **~$42 / mo**  | **~$262 / mo** | **~$1,805 / mo** |
+| **Total (optimized Claude)**                               | **~$32 / mo**  | **~$162 / mo** | **~$805 / mo**   |
+| **In ₹ (list)**                                            | **~₹3,500**    | **~₹21,700**   | **~₹1,49,800**   |
 
 > **If you ever use S3/CloudFront instead of R2**, add bandwidth: ~$0.6 / $6 / $60 per month at
 > the three sizes (700 GB/mo at 10k users ≈ $60). R2's zero egress avoids this entirely — it's
@@ -96,7 +102,7 @@ All using **R2 (zero egress)** + **Haiku planner**. "Claude" = users × 20 mixes
 ## 5. Not included (flag before a real launch)
 
 - **User uploads** (V1 is catalog-only). If you allow uploads later, **each uploaded song adds a
-  ~$0.018 stem-separation cost** and storage — a real per-upload variable cost.
+  ~$0.13 processing cost (stems + structure analysis)** and storage — a real per-upload variable cost.
 - **Domain, email, error monitoring, backups** — small but real (~$5–20/mo combined).
 - **The Discord bot** (Grinder) is separate and runs locally for the demo — ~$0. Hosting it 24/7
   later would be ~$5–15/mo on the same small compute.
@@ -107,19 +113,19 @@ All using **R2 (zero egress)** + **Haiku planner**. "Claude" = users × 20 mixes
 
 ## Appendix — unit prices (verified Aug 2026)
 
-| Item | Price | Source |
-| --- | --- | --- |
-| Replicate Demucs (T4, ~81 s/song) | ~$0.018 / song | replicate.com/cjwbw/demucs + /pricing |
-| Claude Haiku 4.5 | $1.00 / M input, $5.00 / M output | Anthropic pricing (Aug 2026) |
-| Claude Sonnet (intro→Aug 31) | $2 / $10 per M | Anthropic pricing |
-| Cloudflare R2 | $0.015 / GB-mo, **$0 egress** | R2 pricing |
-| AWS S3 Standard | $0.023 / GB-mo, ~$0.09/GB egress | S3 pricing |
-| S3 + CloudFront egress | ~$0.085 / GB | CloudFront pricing |
-| Bunny CDN | $0.005–0.01 / GB | Bunny pricing |
-| Compute (Fly / Render / Railway, ~1 vCPU/2 GB) | ~$11 / $25 / ~$30 / mo | vendor pages |
-| Managed Postgres (Supabase Pro / Neon) | $0 free → ~$19–25 / mo | vendor pages |
-| Audio size (3.5 min) | WAV ~37 MB · MP3 128k ~3.4 MB | deterministic |
-| 4 stems / song (WAV) | ~148 MB (FLAC ~75 MB) | deterministic |
+| Item                                           | Price                             | Source                                |
+| ---------------------------------------------- | --------------------------------- | ------------------------------------- |
+| Replicate Demucs (T4, ~81 s/song)              | ~$0.018 / song                    | replicate.com/cjwbw/demucs + /pricing |
+| Claude Haiku 4.5                               | $1.00 / M input, $5.00 / M output | Anthropic pricing (Aug 2026)          |
+| Claude Sonnet (intro→Aug 31)                   | $2 / $10 per M                    | Anthropic pricing                     |
+| Cloudflare R2                                  | $0.015 / GB-mo, **$0 egress**     | R2 pricing                            |
+| AWS S3 Standard                                | $0.023 / GB-mo, ~$0.09/GB egress  | S3 pricing                            |
+| S3 + CloudFront egress                         | ~$0.085 / GB                      | CloudFront pricing                    |
+| Bunny CDN                                      | $0.005–0.01 / GB                  | Bunny pricing                         |
+| Compute (Fly / Render / Railway, ~1 vCPU/2 GB) | ~$11 / $25 / ~$30 / mo            | vendor pages                          |
+| Managed Postgres (Supabase Pro / Neon)         | $0 free → ~$19–25 / mo            | vendor pages                          |
+| Audio size (3.5 min)                           | WAV ~37 MB · MP3 128k ~3.4 MB     | deterministic                         |
+| 4 stems / song (WAV)                           | ~148 MB (FLAC ~75 MB)             | deterministic                         |
 
 **Confidence:** high on Replicate/Claude/storage/CDN unit prices and audio-size math; medium on
 the compute band and the 81 s Demucs runtime (varies by input). The scenario totals inherit the
