@@ -86,11 +86,104 @@ def effect_pool_enabled() -> bool:
 # LIVE since 2026-08-05 (founder chose the boldest echo level, _DELAY_ECHO_WET=1.10, and deployed it).
 _RULE4_ENABLED = True
 
+# Musical exit-fade (2026-08-09, founder fix "lyrics end abruptly"): ease each vocal line OUT over
+# its last _EXIT_FADE_MS instead of the 8 ms click-killer cut. The engine applies it LENGTH-PRESERVING
+# (it only tapers existing samples, never extends a placement), so it can never create a two-voices
+# overlap or move a placement end. OFF => exit_fade_ms stays 0.0 => byte-identical to the pre-fade render.
+_EXIT_FADE_ENABLED = True
+_EXIT_FADE_MS = 400.0  # fade length in ms; ear-tunable (a beat is ~500 ms at 120 BPM)
+
+# Phrase-safe slice ends (2026-08-09, founder fix "vocals cut mid-sentence"): extend each vocal slice's
+# END forward to the singer's next BREATH (a2.vocal_pauses) so a line finishes its sentence instead of
+# being chopped at the fixed MAX_VOCAL_SECS cap. Bounded so the extended vocal never runs into the next
+# line (stays one-voice-at-a-time, referee-safe) — Stage 1 is finish-into-the-beat-gap only. OFF, or no
+# vocal_pauses in the analysis (older cache) => unchanged.
+_FINISH_SENTENCES_ENABLED = True
+_SENTENCE_FINISH_MAX_S = 5.0     # never extend a slice more than this to finish a sentence
+_SENTENCE_FINISH_MARGIN_S = 2.0  # keep this much beat-only room before the next line (safety vs the warp/dedupe)
+
+
+def finish_sentences_enabled() -> bool:
+    """Whether phrase-safe slice ends are live. Folded into ENGINE_VERSION so flipping it re-renders
+    every mix; OFF (or an analysis without vocal_pauses) => the prior fixed-length slice behaviour."""
+    return _FINISH_SENTENCES_ENABLED
+
+
+_FINISH_BEAT_VOCAL_ENABLED = True  # extend the BEAT song's own vocal (Song 1) to finish its phrase too
+_BEAT_FINISH_MAX_S = 3.0           # cap how far a beat-vocal region may extend to finish its line
+
+
+def finish_beat_vocal_enabled() -> bool:
+    """Whether the beat song's own vocal also finishes its phrase at the hand-off. Folded into
+    ENGINE_VERSION; OFF (or an analysis without vocal_pauses) => the prior beat-vocal behaviour."""
+    return _FINISH_BEAT_VOCAL_ENABLED
+
+
+def _finish_beat_vocal_phrases(regions: list[tuple[float, float]], a1: TrackAnalysis,
+                               placements: list[Placement]) -> list[tuple[float, float]]:
+    """Extend each Song-1 (BEAT) vocal region's END forward to the beat singer's next breath
+    (a1.vocal_pauses) so the beat's OWN line finishes its sentence before it hands the mic to Song 2 —
+    instead of cutting mid-word. Bounded by _BEAT_FINISH_MAX_S and, crucially, by the R1 crossfade
+    allowance: it may ring at most `fence.LEAD_XFADE_SECS` past the entry it hands into, so it stays a
+    legal lead-in crossfade (the `_clamp_s1_regions_to_r1` pass and the referee both re-check this). Only
+    ever LENGTHENS a region; no vocal_pauses / flag off => unchanged."""
+    if not _FINISH_BEAT_VOCAL_ENABLED:
+        return regions
+    pauses = sorted(getattr(a1, "vocal_pauses", []) or [])
+    if not pauses or not regions:
+        return regions
+    anchors = sorted(p.anchor for p in placements)
+    out: list[tuple[float, float]] = []
+    for s, e in regions:
+        next_breath = next((t for t in pauses if t > e + 1e-3), None)
+        if next_breath is None:
+            out.append((s, e))
+            continue
+        target = min(next_breath, e + _BEAT_FINISH_MAX_S)
+        later = [a for a in anchors if a >= s - 1e-6]  # the Song-2 entry this region hands into
+        if later:  # never ring past the R1 crossfade allowance of that entry
+            target = min(target, min(later) + fence.LEAD_XFADE_SECS)
+        out.append((s, round(target, 3)) if target > e + 1e-3 else (s, e))
+    return out
+
+
+def _finish_sentences(placements: list[Placement], a2: TrackAnalysis, stretch: float) -> list[Placement]:
+    """Extend each Song-2 vocal slice's END forward to the singer's next breath (a2.vocal_pauses) so a
+    sung line finishes its sentence instead of cutting mid-word at the MAX_VOCAL_SECS cap. Bounded two
+    ways: never past _SENTENCE_FINISH_MAX_S of extension, and never so far the extended vocal would run
+    into the next line (rendered room before the next anchor, minus a margin, converted back to Song-2
+    source time via the stretch) — so it can't create a two-voices overlap. Only ever LENGTHENS a slice;
+    no vocal_pauses (older cached analysis) or the flag off => returns the placements unchanged."""
+    if not _FINISH_SENTENCES_ENABLED:
+        return placements
+    pauses = sorted(getattr(a2, "vocal_pauses", []) or [])
+    if not pauses or stretch <= 0:
+        return placements
+    ordered = sorted(placements, key=lambda pl: pl.anchor)
+    for idx, p in enumerate(ordered):
+        s0, e0 = p.vocal_src
+        next_breath = next((t for t in pauses if t > e0 + 1e-3), None)
+        if next_breath is None:
+            continue
+        target = min(next_breath, e0 + _SENTENCE_FINISH_MAX_S)
+        if idx + 1 < len(ordered):  # don't run into the next line
+            room_rendered = ordered[idx + 1].anchor - _SENTENCE_FINISH_MARGIN_S - p.anchor
+            target = min(target, s0 + max(0.0, room_rendered) * stretch)  # rendered_secs = source_len / stretch
+        if target > e0 + 1e-3:
+            p.vocal_src = (s0, round(target, 3))
+    return placements
+
 
 def rule4_enabled() -> bool:
     """Whether Rule 4 (gap-sized echo + continuous reverb bed) is live. Folded into the mix/set cache id
     so flipping it re-renders every mix WITH the echo/reverb instead of serving an OFF cache."""
     return _RULE4_ENABLED
+
+
+def exit_fade_enabled() -> bool:
+    """Whether the musical vocal exit-fade is live. Folded into ENGINE_VERSION so flipping it
+    auto-invalidates the mix/set caches; OFF => exit_fade_ms stays 0.0 => byte-identical to pre-fade."""
+    return _EXIT_FADE_ENABLED
 
 
 def force_tempo_enabled() -> bool:
@@ -694,17 +787,25 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     source = "ai" if placements else "rules"
     if not placements:
         placements = _default_arrangement(opts, take)
+    # Phrase-safe slice ends: extend each slice to the singer's next breath (finish the sentence) BEFORE
+    # the per-bar warp, so the beat-lock covers the finished line. Bounded so it never overlaps the next.
+    placements = _finish_sentences(placements, a2, opts["vocal_stretch"])
     placements = _attach_warp(placements, a1g, a2, opts["vocal_stretch"], forced=forced)  # per-bar beat-lock
     placements = _dedupe_nonoverlapping(placements, opts["vocal_stretch"])
     # The arc guard: if the plan (AI's or a thin fallback) clusters instead of spanning the
     # song, rebuild it as a deterministic energy arc so the vocal always reaches the whole
     # track with a strong finish — the founder's acceptance test, guaranteed by construction.
     if not _spans_song(placements, opts.get("track_end", 0.0)):
-        rebuilt = _attach_warp(_default_arrangement(opts, take), a1g, a2, opts["vocal_stretch"], forced=forced)
+        rebuilt = _finish_sentences(_default_arrangement(opts, take), a2, opts["vocal_stretch"])
+        rebuilt = _attach_warp(rebuilt, a1g, a2, opts["vocal_stretch"], forced=forced)
         placements = _dedupe_nonoverlapping(rebuilt, opts["vocal_stretch"])
         source = "rules"
     placements, s1_regions = _apply_flourishes(a1g, placements, opts["vocal_stretch"],
                                                opts.get("vocal_entry_floor", 0.0))
+    # Beat song finishes ITS OWN line too: extend each Song-1 vocal region to the beat singer's next
+    # breath so the beat's lyric completes before handing off — bounded to the R1 crossfade allowance
+    # (the clamp below + the referee re-check R1). Uses a1's own breath map (a1g == a1 with windowing off).
+    s1_regions = _finish_beat_vocal_phrases(s1_regions, a1g, placements)
     stem_moves: list = []
     if _confident(a1g):  # only produce (build/echo/stem-moves) on a trustworthy grid — shaky songs stay safe
         placements = _produce_drops(placements, opts.get("drops", []), s1_regions,
@@ -785,6 +886,13 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         effects_selected = ["gap_echo", "reverb_bed"]
     elif _EFFECT_POOL_ENABLED and effect_variety:
         effects_selected = _select_effects(a1, a2, prompt, take, placements, s1_regions, opts["vocal_stretch"])
+
+    # Musical exit-fade (2026-08-09): ask the engine to ease each vocal line OUT instead of cutting it.
+    # Length-preserving in the engine, so it never moves a placement end or overlaps the next voice.
+    # OFF => 0.0 => byte-identical to the pre-fade render (the golden-fixture plan never sets this).
+    if _EXIT_FADE_ENABLED:
+        for p in placements:
+            p.exit_fade_ms = _EXIT_FADE_MS
 
     variety_on = (_RULE4_ENABLED or _EFFECT_POOL_ENABLED) and effect_variety
     first = placements[0]

@@ -43,7 +43,8 @@ from app.planner import rule_shuffle
 from app.planner import window
 from app.planner.keys import resolve_key_shift
 from app.planner.plan import (MixDeclined, build_mix_plan, effect_pool_enabled,
-                              force_tempo_enabled, rule4_enabled)
+                              exit_fade_enabled, finish_beat_vocal_enabled,
+                              finish_sentences_enabled, force_tempo_enabled, rule4_enabled)
 from app.storage import maybe_sweep, path_for
 
 # workers/ lives at the repo root; put it on the path so we can import the engine.
@@ -191,7 +192,10 @@ ENGINE_VERSION = (_ENGINE_VERSION_BASE
                   + ("+m10key" if key_match_enabled() else "")       # Change ②: key-matching (pitch-shift)
                   + ("+m12force" if force_tempo_enabled() else "")   # forced tempo auto-match (never decline)
                   + ("+m7pool" if effect_pool_enabled() else "")     # effect pool (superseded, stays off)
-                  + "+m13vrb")                                       # vocal-rich beats: guest verse + R1 clamp + no-chop
+                  + "+m13vrb"                                        # vocal-rich beats: guest verse + R1 clamp + no-chop
+                  + ("+m14fade" if exit_fade_enabled() else "")      # musical exit-fade on each vocal line's tail
+                  + ("+m15phrase" if finish_sentences_enabled() else "")   # phrase-safe slice ends (finish the sentence)
+                  + ("+m16beat" if finish_beat_vocal_enabled() else ""))   # beat vocal finishes its phrase + graceful fade
 #          slices so the held-out window is FULL of vocal, not holes (founder: "more parts").
 #         (NOT m6.9: that string was already burned by a reverted experiment, so its stale renders
 #          would have been served as cache hits. A version string must be unique PER BEHAVIOUR.)
@@ -243,8 +247,13 @@ def _resolve_rule_take(req: "MixRequest") -> tuple[int, int]:
     comes from — the cache-id formula (mix_id_for) is untouched, so existing cached mixes stay valid."""
     if req.user_id is not None and req.generation is not None:
         gen = max(0, req.generation)
-        rule = rule_shuffle.rule_for(req.user_id, req.song1_id, req.song2_id, gen)
-        return beat_guest_verse.no_chop_rule(req.song1_id, rule), gen + 1
+        # Pick from ONLY the beat's usable styles up front, so the effective rule never repeats
+        # back-to-back (a guest-verse beat has {simple, echo} → strict alternation). This SUPERSEDES the
+        # old rule_for + no_chop_rule remap, which collapsed chop→echo AFTER the shuffle and produced two
+        # echoes in a row. A normal beat's set is {1,3,4}, so its rule is byte-identical to before.
+        rule = rule_shuffle.rule_for_available(
+            req.user_id, req.song1_id, req.song2_id, gen, beat_guest_verse.available_rules(req.song1_id))
+        return rule, gen + 1
     return beat_guest_verse.no_chop_rule(req.song1_id, req.rule), req.take
 
 

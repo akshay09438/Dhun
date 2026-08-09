@@ -50,6 +50,11 @@ class TrackAnalysis(BaseModel):
     energy_curve: list[float] = []  # 0..1 per bar
     vocal_regions: list[tuple[float, float]] = []  # [start,end] secs where vocals sing
     vocal_confidence: float | None = None
+    # Fine-grained breath/phrase boundaries (secs) — times where the singing pauses, from a ~30 ms
+    # envelope of the vocal stem (much finer than the bar-level vocal_regions). Used to end a vocal
+    # slice on a natural breath so a sung line never cuts mid-sentence. [] => unknown (older cached
+    # analysis or no stem) → the arranger falls back to its prior fixed-length behaviour.
+    vocal_pauses: list[float] = []
 
 
 class StemSet(BaseModel):
@@ -91,6 +96,12 @@ class Placement(BaseModel):
     # vocal itself — there is no per-throw plan data. False => neither => byte-identical to the pre-Rule-4
     # render. (The old phrase-throw `throws` field was removed with the cut-ratio model.)
     reverb_bed: bool = False
+    # A musical fade-out on the LAST exit_fade_ms of this vocal so a sung line eases out
+    # instead of cutting abruptly (the 8 ms edge fade only kills clicks). LENGTH-PRESERVING:
+    # the engine only tapers existing samples, never extends the placement — so it can't
+    # create a two-voices overlap or move any placement end (R1/length math unaffected).
+    # 0 => no musical fade (only the edge fade) => byte-identical to the pre-fade render.
+    exit_fade_ms: float = 0.0
 
 
 class StemMove(BaseModel):

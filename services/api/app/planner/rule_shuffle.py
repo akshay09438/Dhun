@@ -68,6 +68,11 @@ def _cycle_seed(base: str, cycle: int) -> int:
     return int.from_bytes(hashlib.sha256(raw).digest()[:8], "big")
 
 
+def _seed_int(base: str) -> int:
+    """A stable portable int from a seed string (sha256, never Python's salted hash())."""
+    return int.from_bytes(hashlib.sha256(base.encode("utf-8")).digest()[:8], "big")
+
+
 def _shuffled_deck(base: str, cycle: int) -> list[tuple[int, int, int]]:
     """This seed's personal 'deck' for one cycle: the 6 orderings shuffled by the seeded PRNG.
     random.Random(int seed) is deterministic and portable across CPython versions/platforms."""
@@ -143,6 +148,29 @@ def rule_at_from_seed(base: str, position: int) -> int:
     return rule_sequence_from_seed(base, position + 1)[position]
 
 
+def sequence_over(base: str, count: int, allowed: tuple[int, ...]) -> list[int]:
+    """A balanced, strict-no-repeat sequence over EXACTLY the `allowed` rules, deterministic per base.
+
+    `allowed == RULES` (1,3,4) => the full three-rule shuffler, byte-identical to before (so a normal
+    beat's cached mixes never change). TWO allowed rules => strict alternation — the correct no-repeat
+    sequence for a beat that supports only two styles (a guest-verse beat, where chop is unavailable, so
+    only {simple, echo} remain). This is what keeps the effective rule the user hears from EVER repeating
+    back-to-back — the raw shuffler's no-repeat guarantee was being broken by the post-hoc chop->echo
+    remap; picking from the available set up front fixes it at the source."""
+    allowed = tuple(allowed)
+    if allowed == RULES:
+        return rule_sequence_from_seed(base, count)
+    if count < 0:
+        raise ValueError("count must be >= 0")
+    if len(allowed) == 2:
+        r0, r1 = allowed
+        first, second = (r0, r1) if (_seed_int(f"{base}{_SEP}2rule") & 1) == 0 else (r1, r0)
+        return [first if i % 2 == 0 else second for i in range(count)]
+    if len(allowed) == 1:  # only one style exists for this beat — every mix is it (no alternative)
+        return [allowed[0]] * count
+    raise ValueError(f"unsupported rule set {allowed!r}")
+
+
 # ================================ flow 1: single-pair re-roll =================================
 
 def _pair_base(user_id: str, song1_id: str, song2_id: str) -> str:
@@ -157,6 +185,16 @@ def rule_for(user_id: str, song1_id: str, song2_id: str, n: int) -> int:
 def rule_sequence(user_id: str, song1_id: str, song2_id: str, count: int) -> list[int]:
     """The first `count` re-roll rules for one user+pair (the single-pair flow's list form)."""
     return rule_sequence_from_seed(_pair_base(user_id, song1_id, song2_id), count)
+
+
+def rule_for_available(user_id: str, song1_id: str, song2_id: str, position: int,
+                       allowed: tuple[int, ...]) -> int:
+    """The re-roll rule for one user+pair, chosen from ONLY the beat's `allowed` styles so the effective
+    rule never repeats back-to-back. `allowed == RULES` => identical to `rule_for` (cache-stable); a
+    guest-verse beat passes its two-style set, yielding a strict alternation."""
+    if position < 0:
+        raise ValueError("position must be >= 0")
+    return sequence_over(_pair_base(user_id, song1_id, song2_id), position + 1, allowed)[position]
 
 
 # ================================ flow 2: the SET =============================================
@@ -201,3 +239,30 @@ def set_rule_sequence(user_id: str, set_index: int, length: int) -> list[int]:
     if set_index < 0:
         raise ValueError("set_index must be >= 0")
     return rule_sequence_from_seed(_resolved_set_base(user_id, set_index), length)
+
+
+def set_rules_for(user_id: str, set_index: int,
+                  allowed_per_position: list[tuple[int, ...]]) -> list[int]:
+    """A never-repeat rule sequence for a set where each position `i` may only use
+    `allowed_per_position[i]` (a guest-verse beat restricts that position to {simple, echo}). Starts
+    from the full three-rule shuffler and, where a position's rule isn't allowed or would repeat the
+    previous mix's rule, deterministically picks an allowed alternative that differs — so no two
+    consecutive mixes in the set share a style. When every position allows all three rules, this is
+    byte-identical to `set_rule_sequence` (the raw shuffle is already no-repeat), so sets without a
+    guest-verse beat are cache-stable."""
+    if set_index < 0:
+        raise ValueError("set_index must be >= 0")
+    base = _resolved_set_base(user_id, set_index)
+    raw = rule_sequence_from_seed(base, len(allowed_per_position))
+    out: list[int] = []
+    prev: int | None = None
+    for i, allowed in enumerate(allowed_per_position):
+        allowed = tuple(allowed)
+        r = raw[i] if raw[i] in allowed else allowed[_seed_int(f"{base}{_SEP}{i}{_SEP}pick") % len(allowed)]
+        if r == prev:  # would repeat the previous mix's style — swap to a different allowed rule
+            alts = tuple(x for x in allowed if x != prev)
+            if alts:
+                r = alts[_seed_int(f"{base}{_SEP}{i}{_SEP}norepeat") % len(alts)]
+        out.append(r)
+        prev = r
+    return out

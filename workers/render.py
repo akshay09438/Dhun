@@ -35,6 +35,9 @@ _TARGET_PEAK = 10 ** (-1.0 / 20)  # -1 dBFS headroom
 _CEILING = 0.999  # brickwall safety — must stay below the validator's clip ceiling
 _FADE_MS = 8.0  # edge fade that kills entry/exit clicks
 _XFADE_MS = 8.0  # equal-power crossfade at each bar join in a beat-locked (warped) vocal
+_BEAT_VOCAL_FADE_MS = 1500.0  # the BEAT song's own vocal eases out over this at a standalone hand-off
+#                               (a graceful musical fade, longer than a Song-2 line's tail) so it never
+#                               chops; where it overlaps the incoming vocal the crossfade already trails it.
 # atempo handles 0.5–2.0 in a single pass; clamp a bar's ratio only to keep the FILTER
 # valid. The MUSICAL safe band (~0.92–1.08, no warble) is enforced upstream by the
 # planner's warp_map and the referee's R7 — so a real bar is never near these limits, and
@@ -285,6 +288,24 @@ def _edge_fade(y: np.ndarray) -> np.ndarray:
         ramp = np.linspace(0.0, 1.0, k, dtype=np.float32)[:, None]
         y[:k] *= ramp
         y[-k:] *= ramp[::-1]
+    return y
+
+
+def _exit_fade(y: np.ndarray, ms: float) -> np.ndarray:
+    """A MUSICAL fade-out over the vocal's last `ms` so a sung line eases out instead of cutting
+    (the 8 ms `_edge_fade` only kills a click). LENGTH-PRESERVING: it tapers existing samples on a
+    copy and never changes len(y) — so a placement's end position and the referee's R1/length math
+    are untouched, and it can never create a two-voices overlap. Capped at half the clip so a short
+    line can't be swallowed whole. A raised-cosine ramp (1 -> 0) keeps the taper click-free. ms<=0 or
+    empty input -> unchanged (the pre-fade path; keeps the golden baseline byte-identical)."""
+    if ms <= 0 or y.size == 0:
+        return y
+    k = min(int(SR * ms / 1000.0), len(y) // 2)
+    if k <= 0:
+        return y
+    y = y.copy()
+    ramp = (np.cos(np.linspace(0.0, np.pi, k, dtype=np.float32)) * 0.5 + 0.5)  # 1 -> 0, smooth
+    y[-k:] *= ramp[:, None]
     return y
 
 
@@ -1025,6 +1046,14 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
                     bad = chain_guards.check_vocal_chain_output(before_pool, voc)
                     if bad is not None:
                         raise RenderError(bad)
+            # Musical exit-fade (2026-08-09): ease this line's TAIL out instead of the abrupt cut the
+            # 8 ms edge fade leaves. Applied LAST, on the fully-processed vocal (incl. any echo/reverb
+            # tail), and LENGTH-PRESERVING — it only tapers existing samples, so it can't move this
+            # placement's end, overlap the next voice, or clip. 0.0 (the default / golden fixture) => the
+            # pre-fade vocal, byte-identical. Where the next entry is close, the fading tail rides UNDER it.
+            exit_ms = float(getattr(p, "exit_fade_ms", 0.0) or 0.0)
+            if exit_ms > 0.0:
+                voc = _exit_fade(voc, exit_ms)
             prepared.append((p, voc))
 
         # Stage 9 — sidechain-duck the BED under the placed vocals (only when the planner emitted
@@ -1062,6 +1091,12 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
         # next Song-2 entry by up to the bounded R1 hand-off (the referee permits that overlap).
         s1_vocals = song1_stems.get("vocals")
         s2_anchors = [max(0, int(p.anchor * SR)) for p, _ in prepared]  # where each Song-2 vocal ENTERS
+        # The vocal exit-fade also eases a STANDALONE Song-1 answer's tail out — the beat's own lyric
+        # ending (incl. a vocal-rich beat's guest-verse hand-off): "even if it plays, it plays under the
+        # upcoming vocal". Reuse the same fade length the Song-2 placements carry (one global feature).
+        # 0.0 (feature off, or the golden fixture) => the elif never fires => this branch is byte-identical.
+        s1_exit_ms = next((float(getattr(p, "exit_fade_ms", 0.0) or 0.0)
+                           for p in all_placements if float(getattr(p, "exit_fade_ms", 0.0) or 0.0) > 0.0), 0.0)
         for s, e in getattr(plan, "s1_vocal_regions", []):
             if s1_vocals is None:
                 break
@@ -1079,6 +1114,8 @@ def render_mix(plan, song1_stems: Mapping[str, Path], song2_vocal: Path,
                 start = min(over) - a0
                 ramp = np.linspace(1.0, 0.0, len(take) - start, dtype=np.float32)
                 take[start:] *= ramp[:, None]
+            elif s1_exit_ms > 0.0:  # standalone answer: ease the BEAT vocal out with a graceful (long) fade,
+                take = _exit_fade(take, max(s1_exit_ms, _BEAT_VOCAL_FADE_MS))  # so its line never chops mid-word
             bed = _hold(bed, a0 + len(take))
             bed[a0:a0 + len(take)] += take
 
