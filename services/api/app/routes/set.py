@@ -95,10 +95,13 @@ def _resolve_pairs(req: "SetRequest") -> list[tuple[str, str, int]]:
     """The (song1, song2, rule) triples for a set. With user_id + set_index the rule of the mix at each
     position is auto-assigned by the shared shuffler; otherwise each pair's explicit rule is used."""
     if req.user_id is not None and req.set_index is not None:
-        return [(p.song1_id, p.song2_id,
-                 beat_guest_verse.no_chop_rule(
-                     p.song1_id, rule_shuffle.rule_for_set(req.user_id, req.set_index, i)))
-                for i, p in enumerate(req.sets)]
+        # Each position picks from ONLY that beat's usable styles, and the sequence is made no-repeat
+        # across positions — so two consecutive mixes in the set never share a style, even when a
+        # guest-verse beat (which can't chop) sits next to an echo mix. Supersedes the post-hoc
+        # no_chop_rule remap, which could leave two echoes adjacent.
+        allowed = [beat_guest_verse.available_rules(p.song1_id) for p in req.sets]
+        rules = rule_shuffle.set_rules_for(req.user_id, req.set_index, allowed)
+        return [(p.song1_id, p.song2_id, rules[i]) for i, p in enumerate(req.sets)]
     return [(p.song1_id, p.song2_id, beat_guest_verse.no_chop_rule(p.song1_id, p.rule))
             for p in req.sets]
 

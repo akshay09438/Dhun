@@ -247,8 +247,13 @@ def _resolve_rule_take(req: "MixRequest") -> tuple[int, int]:
     comes from — the cache-id formula (mix_id_for) is untouched, so existing cached mixes stay valid."""
     if req.user_id is not None and req.generation is not None:
         gen = max(0, req.generation)
-        rule = rule_shuffle.rule_for(req.user_id, req.song1_id, req.song2_id, gen)
-        return beat_guest_verse.no_chop_rule(req.song1_id, rule), gen + 1
+        # Pick from ONLY the beat's usable styles up front, so the effective rule never repeats
+        # back-to-back (a guest-verse beat has {simple, echo} → strict alternation). This SUPERSEDES the
+        # old rule_for + no_chop_rule remap, which collapsed chop→echo AFTER the shuffle and produced two
+        # echoes in a row. A normal beat's set is {1,3,4}, so its rule is byte-identical to before.
+        rule = rule_shuffle.rule_for_available(
+            req.user_id, req.song1_id, req.song2_id, gen, beat_guest_verse.available_rules(req.song1_id))
+        return rule, gen + 1
     return beat_guest_verse.no_chop_rule(req.song1_id, req.rule), req.take
 
 

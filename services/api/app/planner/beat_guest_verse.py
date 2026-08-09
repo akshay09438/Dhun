@@ -25,6 +25,8 @@ beat's vocal down at the hand-off. That fade is a render-engine change, tracked 
 """
 from __future__ import annotations
 
+from app.planner import rule_shuffle
+
 GUEST_VERSE: dict[str, tuple[float, float]] = {
     # Lean On (Major Lazer & DJ Snake) — the 0:29-0:45 LYRIC line (not the 0:49 hummed hook). Grid is
     # shaky (regularity 0.33) but the window is ear-verified, so it's trusted anyway.
@@ -58,3 +60,13 @@ def no_chop_rule(song1_id: str, rule: int) -> int:
     if rule == _CHOP_RULE and guest_verse_for(song1_id) is not None:
         return _GUEST_VERSE_FALLBACK_RULE
     return rule
+
+
+def available_rules(song1_id: str) -> tuple[int, ...]:
+    """The mixing rules ACTUALLY usable for this beat. A guest-verse beat can't be chopped (rule 3 would
+    drop its guest vocal), so only {simple(1), echo(4)} remain; every other beat gets the full {1,3,4}.
+    The shuffler picks from this set up front, so the effective rule the user hears never repeats
+    back-to-back (the old post-hoc chop->echo remap collapsed 3 into 4 and produced two echoes in a row)."""
+    if guest_verse_for(song1_id) is not None:
+        return (1, _GUEST_VERSE_FALLBACK_RULE)  # (1, 4) — simple + echo, in ascending rule order
+    return rule_shuffle.RULES
