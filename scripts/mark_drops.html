@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Prompt-DJ — Drop & Hook Marker</title>
+    <title>Prompt-DJ — Song Marker (drop · best part · vocal)</title>
     <style>
       :root {
         --bg: #f6f6f7;
@@ -13,9 +13,11 @@
         --line: #e4e4e8;
         --violet: #6d3bf5;
         --violet-soft: #efeaff;
-        --drop: #e0562d;
-        --hook: #137a4b;
+        --drop: #e0562d; /* drop */
+        --hook: #137a4b; /* best part */
         --hook-soft: #e2f4ea;
+        --vin: #1f7ae0; /* vocal-in point */
+        --vwin: #b8299b; /* vocal window */
       }
       @media (prefers-color-scheme: dark) {
         :root {
@@ -29,6 +31,8 @@
           --drop: #ff7a52;
           --hook: #4fd39a;
           --hook-soft: #193029;
+          --vin: #5aa8ff;
+          --vwin: #f06fd6;
         }
       }
       * {
@@ -43,9 +47,9 @@
         line-height: 1.5;
       }
       .wrap {
-        max-width: 860px;
+        max-width: 900px;
         margin: 0 auto;
-        padding: 24px 18px 80px;
+        padding: 24px 18px 90px;
       }
       h1 {
         font-size: 22px;
@@ -100,6 +104,16 @@
         color: #fff;
         border-color: var(--hook);
       }
+      .vin-btn {
+        background: var(--vin);
+        color: #fff;
+        border-color: var(--vin);
+      }
+      .vwin-btn {
+        background: var(--vwin);
+        color: #fff;
+        border-color: var(--vwin);
+      }
       .row {
         display: flex;
         gap: 10px;
@@ -143,7 +157,7 @@
       }
       .timeline {
         position: relative;
-        height: 56px;
+        height: 62px;
         background: var(--bg);
         border: 1px solid var(--line);
         border-radius: 8px;
@@ -175,6 +189,12 @@
         border-radius: 50%;
         background: var(--drop);
       }
+      .vtick {
+        background: var(--vin);
+      }
+      .vtick::after {
+        background: var(--vin);
+      }
       .hookspan {
         position: absolute;
         top: 0;
@@ -182,6 +202,14 @@
         background: color-mix(in srgb, var(--hook) 30%, transparent);
         border-left: 2px solid var(--hook);
         border-right: 2px solid var(--hook);
+      }
+      .vwinspan {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        background: color-mix(in srgb, var(--vwin) 26%, transparent);
+        border-left: 2px solid var(--vwin);
+        border-right: 2px solid var(--vwin);
       }
       .time {
         font-variant-numeric: tabular-nums;
@@ -206,6 +234,12 @@
       }
       .marks .hk b {
         color: var(--hook);
+      }
+      .marks .vi b {
+        color: var(--vin);
+      }
+      .marks .vw b {
+        color: var(--vwin);
       }
       .x {
         cursor: pointer;
@@ -238,16 +272,37 @@
       a.dl {
         text-decoration: none;
       }
+      .legend {
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+        font-size: 12px;
+        margin-top: 6px;
+      }
+      .legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+      }
     </style>
   </head>
   <body>
     <div class="wrap">
-      <h1>🎧 Drop &amp; Hook Marker</h1>
+      <h1>🎧 Song Marker</h1>
       <p class="sub">
-        Play each song, tap a key at every real
-        <b style="color: var(--drop)">drop</b>, and mark the one
-        <b style="color: var(--hook)">hook</b> (the memorable line). Then export
-        one CSV. Nothing leaves your computer.
+        Play each song and mark four things: every real
+        <b style="color: var(--drop)">drop</b>, the
+        <b style="color: var(--hook)">best part</b> (the memorable stretch),
+        where the <b style="color: var(--vin)">vocal comes in</b>, and the
+        <b style="color: var(--vwin)">vocal window</b> (the main sung section).
+        Works on your raw song files too. Export one CSV. Nothing leaves your
+        computer.
       </p>
 
       <div class="card">
@@ -268,8 +323,9 @@
           </div>
         </div>
         <p class="hint" id="loadHint" style="margin: 10px 0 0">
-          Point it at <code>services/api/data</code> (the folder with the song
-          files). It only lists the actual songs, not stems or mixes.
+          Point it at your song folder — it lists every audio file (your raw
+          downloads, or the app's own song files). Stems and finished mixes are
+          skipped.
         </p>
         <input
           type="file"
@@ -309,21 +365,41 @@
         <div class="timeline" id="timeline">
           <div class="playhead" id="playhead" style="left: 0"></div>
         </div>
-        <div class="row" style="margin: 6px 0 4px">
+        <div class="legend">
+          <span><i class="dot" style="background: var(--drop)"></i> drop</span>
+          <span
+            ><i class="dot" style="background: var(--hook)"></i> best part</span
+          >
+          <span
+            ><i class="dot" style="background: var(--vin)"></i> vocal-in</span
+          >
+          <span
+            ><i class="dot" style="background: var(--vwin)"></i> vocal
+            window</span
+          >
+        </div>
+        <div class="row" style="margin: 10px 0 4px">
           <button class="drop-btn big" id="dropBtn">
-            ● Mark DROP <span class="hint" style="color: #fff">(D)</span>
+            ● Drop <span class="hint" style="color: #fff">(D)</span>
           </button>
           <button class="hook-btn big" id="hookBtn">
-            ◆ Hook start <span class="hint" style="color: #fff">(H)</span>
+            ◆ Best part <span class="hint" style="color: #fff">(H)</span>
+          </button>
+          <button class="vin-btn big" id="vinBtn">
+            ▲ Vocal-in <span class="hint" style="color: #fff">(V)</span>
+          </button>
+          <button class="vwin-btn big" id="vwinBtn">
+            ▬ Vocal window <span class="hint" style="color: #fff">(B)</span>
           </button>
           <button id="undoBtn">
             ↶ Undo drop <span class="hint">(U)</span>
           </button>
         </div>
         <p class="hint" style="margin: 6px 0 10px">
-          <kbd>Space</kbd> play/pause · <kbd>D</kbd> mark a drop ·
-          <kbd>H</kbd> hook start then hook end · <kbd>U</kbd> undo last drop ·
-          <kbd>←</kbd><kbd>→</kbd> jump 5s · <kbd>N</kbd> next song
+          <kbd>Space</kbd> play/pause · <kbd>D</kbd> drop ·
+          <kbd>H</kbd> best-part start then end · <kbd>V</kbd> vocal-in ·
+          <kbd>B</kbd> vocal-window start then end · <kbd>U</kbd> undo last drop
+          · <kbd>←</kbd><kbd>→</kbd> jump 5s · <kbd>N</kbd> next song
         </p>
         <div class="marks" id="marks"></div>
         <div
@@ -340,44 +416,68 @@
 
     <audio id="audio"></audio>
     <script>
-      // ---- known catalog names (song_id -> friendly name). Unknown songs show a short hash. ----
+      // ---- known catalog names (song_id -> friendly name). Raw files just use their filename. ----
       const NAMES = {
-        "2c17fc64b6928f0499a306402b676bc62e3118588e42494c8ec7063a7a948267": "Anchor Point (Ahmed Spins) [beat]",
-        "bbab7b9f875f071f8e3b53aa73e64c02b3f39730d0a1feec48af6b54de501430": "Der Lagi Lekin (ZNMD) [vocals]",
-        "c0c6ab91a06e24367e84874da81d4abc285779f50e8f1aeacf70a655cabceb0b": "Don't Start Now (Dua Lipa) [vocals]",
-        "c4b28366d0bd8a5dd0447d1dece9e204ae45f648ee066e0fc9bc04a068ba8b34": "Dooriyan [vocals]",
-        "f61ea8edc6c56a0a1da0de64d26768618e6007262fbca7738d8571ccfa92c7fa": "Faded [beat]",
-        "ac59f8c4af7e89e916dc825690ade5dbc2b9c6f221c5a7ef863eb9863f3826e1": "Father Ocean (Ben Böhmer Remix) [beat]",
-        "4e24629370d87c887e2c0d711e740d4aa0c28206e6de6b499ee436cd5e72d97f": "How Deep Is Your Love [vocals]",
-        "b8696c4dec8a4d50c2ee493360a868d46ffcc915a43b0fdfdbe30241d9962bef": "I Adore You [beat]",
-        "2471e18e1eb820114c0782501babac43b6e5b52c06254da4c1fe0d9e8369c406": "Innerbloom (RÜFÜS DU SOL) [beat]",
-        "cb3e96493087255ef535db47d04388f51d2de27e20c6cb13dd626092778aae43": "Jugni Ji [vocals]",
-        "457d170c17dea1fc8644c479788efff6c1bfc5b5c4b3fa5897e43a6c0e5ce751": "Khuda Jaane [vocals]",
-        "ed2c86b75c81961842d7ea6509d0d962efd1798c49e45bed01395db0d49bcc46": "Lean On [beat]",
-        "b07a768b3409725988f2d08e2445b46f787e86a3da1233d987999f5ecb2d77c3": "Mera Yaar [vocals]",
-        "4fc82b59807fcbd3071bca7f612e2311f044f0e203f8e82895d7682d67629480": "Merrygo beat [beat]",
-        "84e4ea36d2f3cb34f7e1beb4ce1bace077083994e700b7cc73347e2f5b5438f3": "Nadan Parinde [vocals]",
-        "7f0b66c94d2be61f18a64485dba0a33b5f4387ccce2ff1b5d23aa7da469076eb": "Rapture (Black Coffee) [beat]",
-        "84ff0d8b12455dc66e971874b64ae3b816d622f7fc947cfba12cca77fe6eea88": "Tere Bin [vocals]",
-        "6ad6903592cd668502c5f4546618aec807c6eadb974fa6437fef7180fbffddc2": "Tere Bina [vocals]",
-        "fedc95c90aff7c957f398f302a6a3ed4c7dbf48d7a6667c8294e0b4030355e20": "Tujhe Bhula Diya (Anjaana Anjaani) [vocals]",
-        "5c3ce60868f97c5657d32cc14a028b349fab07bfdf984c40f401790fd1c82375": "Uff Teri Ada [vocals]",
-        "e6722353c4251a3f9af0a76ab620b22f61fa6e385846ae67073debafa6acf1ad": "Wake Me Up [beat]",
-        "0bcbcd12d965a7d03f314424670768ed9074c18f6f2af961fb05d77c803f3d7b": "Wari Jawa [vocals]",
-        "ae132f3a444f5121d75097a44110a0323365e6dc4a8d0736a924c00b2ac210c1": "With You (AP Dhillon) [vocals]",
+        "2c17fc64b6928f0499a306402b676bc62e3118588e42494c8ec7063a7a948267":
+          "Anchor Point (Ahmed Spins) [beat]",
+        bbab7b9f875f071f8e3b53aa73e64c02b3f39730d0a1feec48af6b54de501430:
+          "Der Lagi Lekin (ZNMD) [vocals]",
+        c0c6ab91a06e24367e84874da81d4abc285779f50e8f1aeacf70a655cabceb0b:
+          "Don't Start Now (Dua Lipa) [vocals]",
+        c4b28366d0bd8a5dd0447d1dece9e204ae45f648ee066e0fc9bc04a068ba8b34:
+          "Dooriyan [vocals]",
+        f61ea8edc6c56a0a1da0de64d26768618e6007262fbca7738d8571ccfa92c7fa:
+          "Faded [beat]",
+        ac59f8c4af7e89e916dc825690ade5dbc2b9c6f221c5a7ef863eb9863f3826e1:
+          "Father Ocean (Ben Böhmer Remix) [beat]",
+        "4e24629370d87c887e2c0d711e740d4aa0c28206e6de6b499ee436cd5e72d97f":
+          "How Deep Is Your Love [vocals]",
+        b8696c4dec8a4d50c2ee493360a868d46ffcc915a43b0fdfdbe30241d9962bef:
+          "I Adore You [beat]",
+        "2471e18e1eb820114c0782501babac43b6e5b52c06254da4c1fe0d9e8369c406":
+          "Innerbloom (RÜFÜS DU SOL) [beat]",
+        cb3e96493087255ef535db47d04388f51d2de27e20c6cb13dd626092778aae43:
+          "Jugni Ji [vocals]",
+        "457d170c17dea1fc8644c479788efff6c1bfc5b5c4b3fa5897e43a6c0e5ce751":
+          "Khuda Jaane [vocals]",
+        ed2c86b75c81961842d7ea6509d0d962efd1798c49e45bed01395db0d49bcc46:
+          "Lean On [beat]",
+        b07a768b3409725988f2d08e2445b46f787e86a3da1233d987999f5ecb2d77c3:
+          "Mera Yaar [vocals]",
+        "4fc82b59807fcbd3071bca7f612e2311f044f0e203f8e82895d7682d67629480":
+          "Merrygo beat [beat]",
+        "84e4ea36d2f3cb34f7e1beb4ce1bace077083994e700b7cc73347e2f5b5438f3":
+          "Nadan Parinde [vocals]",
+        "7f0b66c94d2be61f18a64485dba0a33b5f4387ccce2ff1b5d23aa7da469076eb":
+          "Rapture (Black Coffee) [beat]",
+        "84ff0d8b12455dc66e971874b64ae3b816d622f7fc947cfba12cca77fe6eea88":
+          "Tere Bin [vocals]",
+        "6ad6903592cd668502c5f4546618aec807c6eadb974fa6437fef7180fbffddc2":
+          "Tere Bina [vocals]",
+        fedc95c90aff7c957f398f302a6a3ed4c7dbf48d7a6667c8294e0b4030355e20:
+          "Tujhe Bhula Diya (Anjaana Anjaani) [vocals]",
+        "5c3ce60868f97c5657d32cc14a028b349fab07bfdf984c40f401790fd1c82375":
+          "Uff Teri Ada [vocals]",
+        e6722353c4251a3f9af0a76ab620b22f61fa6e385846ae67073debafa6acf1ad:
+          "Wake Me Up [beat]",
+        "0bcbcd12d965a7d03f314424670768ed9074c18f6f2af961fb05d77c803f3d7b":
+          "Wari Jawa [vocals]",
+        ae132f3a444f5121d75097a44110a0323365e6dc4a8d0736a924c00b2ac210c1:
+          "With You (AP Dhillon) [vocals]",
       };
-      const SONG_RE = /^([0-9a-f]{64})\.wav$/; // the bare song WAVs only — not .mix.wav, not stems
+      const HASH_WAV = /^([0-9a-f]{64})\.wav$/; // the app's ingested song files
+      const AUDIO_EXT = /\.(wav|mp3|flac|m4a|ogg|aac|wma|aiff?|opus)$/i;
+      const SKIP = /\.(mix|bestparts)\.|(^|[._-])(vocals|drums|bass|other)\./i; // stems / rendered mixes
       const $ = (s) => document.querySelector(s);
       const audio = $("#audio");
 
-      let songs = []; // {id, name, file, url}
-      let idx = -1; // current song index
-      // marks[id] = { drops:[sec,...], hook:[start,end]|null, hookPending:number|null }
+      let songs = []; // {key, name, file, url}
+      let idx = -1;
+      // marks[key] = { drops:[], hook:[a,b]|null, hookPending, vins:[], vwin:[a,b]|null, vwinPending }
       let marks = JSON.parse(localStorage.getItem("pdj_marks") || "{}");
 
-      function save() {
+      const save = () =>
         localStorage.setItem("pdj_marks", JSON.stringify(marks));
-      }
       function fmt(t) {
         if (!isFinite(t)) t = 0;
         const m = Math.floor(t / 60),
@@ -389,37 +489,54 @@
           s = Math.floor(t % 60);
         return m + ":" + String(s).padStart(2, "0");
       }
-      function nameFor(id) {
-        return NAMES[id] || "song " + id.slice(0, 8) + "…";
+      function prettyName(fn) {
+        return (fn || "").replace(AUDIO_EXT, "").replace(/[_]+/g, " ").trim();
       }
-      function ensure(id) {
-        if (!marks[id])
-          marks[id] = { drops: [], hook: null, hookPending: null };
-        return marks[id];
+      function ensure(key) {
+        if (!marks[key])
+          marks[key] = {
+            drops: [],
+            hook: null,
+            hookPending: null,
+            vins: [],
+            vwin: null,
+            vwinPending: null,
+          };
+        const mk = marks[key]; // migrate older saved shapes
+        if (!mk.vins) mk.vins = [];
+        if (mk.vwin === undefined) mk.vwin = null;
+        if (mk.vwinPending === undefined) mk.vwinPending = null;
+        return mk;
+      }
+      function hasMarks(mk) {
+        return (
+          mk &&
+          (mk.drops.length || mk.hook || (mk.vins && mk.vins.length) || mk.vwin)
+        );
       }
       function markedCount() {
-        return songs.filter(
-          (s) => marks[s.id] && (marks[s.id].drops.length || marks[s.id].hook),
-        ).length;
+        return songs.filter((s) => hasMarks(marks[s.key])).length;
       }
 
       function addSongs(fileList) {
-        const seen = new Set(songs.map((s) => s.id));
+        const seen = new Set(songs.map((s) => s.key));
         for (const f of fileList) {
-          const m = (f.name || "").match(SONG_RE);
-          if (!m) continue;
-          const id = m[1];
-          if (seen.has(id)) continue;
-          seen.add(id);
+          const fn = f.name || "";
+          if (!AUDIO_EXT.test(fn) || SKIP.test(fn)) continue; // audio only, no stems/mixes
+          const hm = fn.match(HASH_WAV);
+          const key = hm ? hm[1] : fn; // ingested -> hash; raw -> filename
+          if (seen.has(key)) continue;
+          seen.add(key);
           songs.push({
-            id,
-            name: nameFor(id),
+            key,
+            name: hm
+              ? NAMES[key] || "song " + key.slice(0, 8) + "…"
+              : prettyName(fn),
             file: f,
             url: URL.createObjectURL(f),
           });
         }
-        // known catalog songs first, then the rest, stable
-        songs.sort((a, b) => (NAMES[b.id] ? 1 : 0) - (NAMES[a.id] ? 1 : 0));
+        songs.sort((a, b) => a.name.localeCompare(b.name));
         renderList();
         $("#listCard").hidden = songs.length === 0;
         $("#exportCsv").disabled = songs.length === 0;
@@ -432,11 +549,15 @@
         const el = $("#songlist");
         el.innerHTML = "";
         songs.forEach((s, i) => {
-          const mk = marks[s.id] || { drops: [], hook: null };
-          const done = mk.drops.length || mk.hook;
+          const mk = marks[s.key];
+          const bits = [];
+          if (mk && mk.drops.length) bits.push(mk.drops.length + " drop");
+          if (mk && mk.hook) bits.push("best");
+          if (mk && mk.vins && mk.vins.length) bits.push("voc-in");
+          if (mk && mk.vwin) bits.push("voc-win");
           const d = document.createElement("div");
           d.className = "song" + (i === idx ? " active" : "");
-          d.innerHTML = `<span>${s.name}</span><span class="tag">${done ? `<span class="done">✓ ${mk.drops.length} drop(s)${mk.hook ? " + hook" : ""}</span>` : "unmarked"}</span>`;
+          d.innerHTML = `<span>${s.name}</span><span class="tag">${bits.length ? `<span class="done">✓ ${bits.join(" + ")}</span>` : "unmarked"}</span>`;
           d.onclick = () => load(i);
           el.appendChild(d);
         });
@@ -448,7 +569,7 @@
         if (i < 0 || i >= songs.length) return;
         idx = i;
         const s = songs[i];
-        ensure(s.id);
+        ensure(s.key);
         audio.src = s.url;
         audio.load();
         $("#playerCard").hidden = false;
@@ -457,12 +578,22 @@
         renderList();
         renderMarks();
         drawTimeline();
+        updateHookBtn();
+        updateVwinBtn();
+      }
+
+      function chip(cls, html, onRemove) {
+        const span = document.createElement("span");
+        span.className = "m " + cls;
+        span.innerHTML = html + ` <button class="x" title="remove">✕</button>`;
+        span.querySelector(".x").onclick = onRemove;
+        return span;
       }
 
       function renderMarks() {
         const s = songs[idx];
         if (!s) return;
-        const mk = ensure(s.id);
+        const mk = ensure(s.key);
         const el = $("#marks");
         el.innerHTML = "";
         mk.drops
@@ -470,50 +601,88 @@
           .sort((a, b) => a - b)
           .forEach((t) => {
             const real = mk.drops.indexOf(t);
-            const span = document.createElement("span");
-            span.className = "m";
-            span.innerHTML = `<b>▸ drop</b> ${fmt(t)} <button class="x" title="remove">✕</button>`;
-            span.querySelector(".x").onclick = () => {
-              mk.drops.splice(real, 1);
-              save();
-              renderMarks();
-              drawTimeline();
-              renderList();
-            };
-            el.appendChild(span);
+            el.appendChild(
+              chip("", `<b>▸ drop</b> ${fmt(t)}`, () => {
+                mk.drops.splice(real, 1);
+                save();
+                renderMarks();
+                drawTimeline();
+                renderList();
+              }),
+            );
           });
         if (mk.hook) {
-          const span = document.createElement("span");
-          span.className = "m hk";
-          span.innerHTML = `<b>◆ hook</b> ${fmt(mk.hook[0])} → ${fmt(mk.hook[1])} <button class="x" title="remove">✕</button>`;
-          span.querySelector(".x").onclick = () => {
-            mk.hook = null;
-            mk.hookPending = null;
-            save();
-            renderMarks();
-            drawTimeline();
-            updateHookBtn();
-            renderList();
-          };
-          el.appendChild(span);
+          el.appendChild(
+            chip(
+              "hk",
+              `<b>◆ best part</b> ${fmt(mk.hook[0])} → ${fmt(mk.hook[1])}`,
+              () => {
+                mk.hook = null;
+                mk.hookPending = null;
+                save();
+                renderMarks();
+                drawTimeline();
+                updateHookBtn();
+                renderList();
+              },
+            ),
+          );
         } else if (mk.hookPending != null) {
           const span = document.createElement("span");
           span.className = "m hk";
-          span.innerHTML = `<b>◆ hook start</b> ${fmt(mk.hookPending)} <span class="hint">— press H again at the end</span>`;
+          span.innerHTML = `<b>◆ best-part start</b> ${fmt(mk.hookPending)} <span class="hint">— press H again at the end</span>`;
           el.appendChild(span);
         }
-        if (!mk.drops.length && !mk.hook && mk.hookPending == null)
+        mk.vins
+          .slice()
+          .sort((a, b) => a - b)
+          .forEach((t) => {
+            const real = mk.vins.indexOf(t);
+            el.appendChild(
+              chip("vi", `<b>▲ vocal-in</b> ${fmt(t)}`, () => {
+                mk.vins.splice(real, 1);
+                save();
+                renderMarks();
+                drawTimeline();
+                renderList();
+              }),
+            );
+          });
+        if (mk.vwin) {
+          el.appendChild(
+            chip(
+              "vw",
+              `<b>▬ vocal window</b> ${fmt(mk.vwin[0])} → ${fmt(mk.vwin[1])}`,
+              () => {
+                mk.vwin = null;
+                mk.vwinPending = null;
+                save();
+                renderMarks();
+                drawTimeline();
+                updateVwinBtn();
+                renderList();
+              },
+            ),
+          );
+        } else if (mk.vwinPending != null) {
+          const span = document.createElement("span");
+          span.className = "m vw";
+          span.innerHTML = `<b>▬ vocal-window start</b> ${fmt(mk.vwinPending)} <span class="hint">— press B again at the end</span>`;
+          el.appendChild(span);
+        }
+        if (!hasMarks(mk) && mk.hookPending == null && mk.vwinPending == null)
           el.innerHTML =
-            '<span class="hint">No marks yet. Play, then tap D at each drop.</span>';
+            '<span class="hint">No marks yet. Play, then tap D at each drop, H for the best part, V/B for vocals.</span>';
       }
 
       function drawTimeline() {
         const tl = $("#timeline");
         const dur = audio.duration || 0;
-        [...tl.querySelectorAll(".tick,.hookspan")].forEach((n) => n.remove());
+        [...tl.querySelectorAll(".tick,.vtick,.hookspan,.vwinspan")].forEach(
+          (n) => n.remove(),
+        );
         if (!dur) return;
-        const s = songs[idx];
-        const mk = ensure(s.id);
+        const mk = ensure(songs[idx].key);
         if (mk.hook) {
           const h = document.createElement("div");
           h.className = "hookspan";
@@ -521,84 +690,138 @@
           h.style.width = (100 * (mk.hook[1] - mk.hook[0])) / dur + "%";
           tl.appendChild(h);
         }
+        if (mk.vwin) {
+          const w = document.createElement("div");
+          w.className = "vwinspan";
+          w.style.left = (100 * mk.vwin[0]) / dur + "%";
+          w.style.width = (100 * (mk.vwin[1] - mk.vwin[0])) / dur + "%";
+          tl.appendChild(w);
+        }
         mk.drops.forEach((t) => {
           const d = document.createElement("div");
           d.className = "tick";
           d.style.left = (100 * t) / dur + "%";
           tl.appendChild(d);
         });
+        mk.vins.forEach((t) => {
+          const d = document.createElement("div");
+          d.className = "tick vtick";
+          d.style.left = (100 * t) / dur + "%";
+          tl.appendChild(d);
+        });
       }
 
       // ---- marking actions ----
-      function markDrop() {
-        const s = songs[idx];
-        if (!s) return;
-        const mk = ensure(s.id);
-        mk.drops.push(+audio.currentTime.toFixed(2));
+      const now = () => +audio.currentTime.toFixed(2);
+      function refresh() {
         save();
         renderMarks();
         drawTimeline();
         renderList();
+      }
+      function markDrop() {
+        if (!songs[idx]) return;
+        ensure(songs[idx].key).drops.push(now());
+        refresh();
       }
       function undoDrop() {
-        const s = songs[idx];
-        if (!s) return;
-        const mk = ensure(s.id);
-        mk.drops.pop();
-        save();
-        renderMarks();
-        drawTimeline();
-        renderList();
+        if (!songs[idx]) return;
+        ensure(songs[idx].key).drops.pop();
+        refresh();
       }
+      function markVin() {
+        if (!songs[idx]) return;
+        ensure(songs[idx].key).vins.push(now());
+        refresh();
+      }
+
       function updateHookBtn() {
-        const s = songs[idx];
-        const mk = s ? ensure(s.id) : null;
+        const mk = songs[idx] ? ensure(songs[idx].key) : null;
         $("#hookBtn").innerHTML =
           mk && mk.hookPending != null
-            ? '◆ Hook END <span class="hint" style="color:#fff">(H)</span>'
-            : '◆ Hook start <span class="hint" style="color:#fff">(H)</span>';
+            ? '◆ Best-part END <span class="hint" style="color:#fff">(H)</span>'
+            : '◆ Best part <span class="hint" style="color:#fff">(H)</span>';
       }
       function markHook() {
         const s = songs[idx];
         if (!s) return;
-        const mk = ensure(s.id);
-        const t = +audio.currentTime.toFixed(2);
-        if (mk.hookPending == null && !mk.hook) {
-          mk.hookPending = t;
-        } else if (mk.hookPending != null) {
-          const a = Math.min(mk.hookPending, t),
-            b = Math.max(mk.hookPending, t);
-          mk.hook = [a, b];
+        const mk = ensure(s.key);
+        const t = now();
+        if (mk.hookPending == null && !mk.hook) mk.hookPending = t;
+        else if (mk.hookPending != null) {
+          mk.hook = [Math.min(mk.hookPending, t), Math.max(mk.hookPending, t)];
           mk.hookPending = null;
         } else {
           mk.hookPending = t;
           mk.hook = null;
-        } // re-mark: start a fresh hook
+        }
         save();
         renderMarks();
         drawTimeline();
         updateHookBtn();
+        renderList();
+      }
+
+      function updateVwinBtn() {
+        const mk = songs[idx] ? ensure(songs[idx].key) : null;
+        $("#vwinBtn").innerHTML =
+          mk && mk.vwinPending != null
+            ? '▬ Vocal-window END <span class="hint" style="color:#fff">(B)</span>'
+            : '▬ Vocal window <span class="hint" style="color:#fff">(B)</span>';
+      }
+      function markVwin() {
+        const s = songs[idx];
+        if (!s) return;
+        const mk = ensure(s.key);
+        const t = now();
+        if (mk.vwinPending == null && !mk.vwin) mk.vwinPending = t;
+        else if (mk.vwinPending != null) {
+          mk.vwin = [Math.min(mk.vwinPending, t), Math.max(mk.vwinPending, t)];
+          mk.vwinPending = null;
+        } else {
+          mk.vwinPending = t;
+          mk.vwin = null;
+        }
+        save();
+        renderMarks();
+        drawTimeline();
+        updateVwinBtn();
+        renderList();
       }
 
       // ---- CSV ----
       function toCsv() {
-        const rows = [["song_id", "song_name", "kind", "t_start", "t_end"]];
+        const rows = [["song_key", "song_name", "kind", "t_start", "t_end"]];
         for (const s of songs) {
-          const mk = marks[s.id];
+          const mk = marks[s.key];
           if (!mk) continue;
           mk.drops
             .slice()
             .sort((a, b) => a - b)
             .forEach((t) =>
-              rows.push([s.id, s.name, "drop", t.toFixed(2), ""]),
+              rows.push([s.key, s.name, "drop", t.toFixed(2), ""]),
             );
           if (mk.hook)
             rows.push([
-              s.id,
+              s.key,
               s.name,
               "hook",
               mk.hook[0].toFixed(2),
               mk.hook[1].toFixed(2),
+            ]);
+          (mk.vins || [])
+            .slice()
+            .sort((a, b) => a - b)
+            .forEach((t) =>
+              rows.push([s.key, s.name, "vocal_in", t.toFixed(2), ""]),
+            );
+          if (mk.vwin)
+            rows.push([
+              s.key,
+              s.name,
+              "vocal_window",
+              mk.vwin[0].toFixed(2),
+              mk.vwin[1].toFixed(2),
             ]);
         }
         return rows
@@ -617,7 +840,7 @@
         const blob = new Blob([toCsv()], { type: "text/csv" });
         const a = $("#exportLink");
         a.href = URL.createObjectURL(blob);
-        a.download = "drops_hooks_marks.csv";
+        a.download = "song_marks.csv";
       }
       function importCsv(text) {
         const lines = text.split(/\r?\n/).filter((x) => x.trim());
@@ -629,12 +852,22 @@
             .map((x) =>
               x.replace(/,$/, "").replace(/^"|"$/g, "").replace(/""/g, '"'),
             );
-          const [id, , kind, ts, te] = c;
-          if (!id) continue;
-          acc[id] = acc[id] || { drops: [], hook: null, hookPending: null };
-          if (kind === "drop") acc[id].drops.push(parseFloat(ts));
+          const [key, , kind, ts, te] = c;
+          if (!key) continue;
+          acc[key] = acc[key] || {
+            drops: [],
+            hook: null,
+            hookPending: null,
+            vins: [],
+            vwin: null,
+            vwinPending: null,
+          };
+          if (kind === "drop") acc[key].drops.push(parseFloat(ts));
           else if (kind === "hook")
-            acc[id].hook = [parseFloat(ts), parseFloat(te)];
+            acc[key].hook = [parseFloat(ts), parseFloat(te)];
+          else if (kind === "vocal_in") acc[key].vins.push(parseFloat(ts));
+          else if (kind === "vocal_window")
+            acc[key].vwin = [parseFloat(ts), parseFloat(te)];
         }
         marks = Object.assign(marks, acc);
         save();
@@ -643,6 +876,7 @@
           renderMarks();
           drawTimeline();
           updateHookBtn();
+          updateVwinBtn();
         }
       }
 
@@ -663,8 +897,7 @@
       $("#exportCsv").onclick = exportCsv;
 
       $("#playBtn").onclick = () => {
-        if (audio.paused) audio.play();
-        else audio.pause();
+        audio.paused ? audio.play() : audio.pause();
       };
       audio.onplay = () => ($("#playBtn").textContent = "⏸ Pause");
       audio.onpause = () => ($("#playBtn").textContent = "▶ Play");
@@ -684,6 +917,8 @@
       };
       $("#dropBtn").onclick = markDrop;
       $("#hookBtn").onclick = markHook;
+      $("#vinBtn").onclick = markVin;
+      $("#vwinBtn").onclick = markVwin;
       $("#undoBtn").onclick = undoDrop;
       $("#nextBtn").onclick = () => load(idx + 1);
       $("#prevBtn").onclick = () => load(idx - 1);
@@ -700,23 +935,28 @@
         } else if (k === "h") {
           e.preventDefault();
           markHook();
+        } else if (k === "v") {
+          e.preventDefault();
+          markVin();
+        } else if (k === "b") {
+          e.preventDefault();
+          markVwin();
         } else if (k === "u") {
           e.preventDefault();
           undoDrop();
         } else if (k === "n") {
           e.preventDefault();
           load(idx + 1);
-        } else if (e.key === "ArrowRight") {
+        } else if (e.key === "ArrowRight")
           audio.currentTime = Math.min(
             audio.duration || 0,
             audio.currentTime + 5,
           );
-        } else if (e.key === "ArrowLeft") {
+        else if (e.key === "ArrowLeft")
           audio.currentTime = Math.max(0, audio.currentTime - 5);
-        }
       });
       updateHookBtn();
-      // restore list hint if marks exist from a prior session
+      updateVwinBtn();
       if (Object.keys(marks).length)
         $("#loadHint").innerHTML +=
           " <b>(your previous marks were restored — load the same folder to continue.)</b>";
