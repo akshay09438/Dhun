@@ -50,6 +50,11 @@ class TrackAnalysis(BaseModel):
     energy_curve: list[float] = []  # 0..1 per bar
     vocal_regions: list[tuple[float, float]] = []  # [start,end] secs where vocals sing
     vocal_confidence: float | None = None
+    # Fine-grained breath/phrase boundaries (secs) — times where the singing pauses, from a ~30 ms
+    # envelope of the vocal stem (much finer than the bar-level vocal_regions). Used to end a vocal
+    # slice on a natural breath so a sung line never cuts mid-sentence. [] => unknown (older cached
+    # analysis or no stem) → the arranger falls back to its prior fixed-length behaviour.
+    vocal_pauses: list[float] = []
 
 
 class StemSet(BaseModel):

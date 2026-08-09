@@ -93,6 +93,48 @@ _RULE4_ENABLED = True
 _EXIT_FADE_ENABLED = True
 _EXIT_FADE_MS = 400.0  # fade length in ms; ear-tunable (a beat is ~500 ms at 120 BPM)
 
+# Phrase-safe slice ends (2026-08-09, founder fix "vocals cut mid-sentence"): extend each vocal slice's
+# END forward to the singer's next BREATH (a2.vocal_pauses) so a line finishes its sentence instead of
+# being chopped at the fixed MAX_VOCAL_SECS cap. Bounded so the extended vocal never runs into the next
+# line (stays one-voice-at-a-time, referee-safe) — Stage 1 is finish-into-the-beat-gap only. OFF, or no
+# vocal_pauses in the analysis (older cache) => unchanged.
+_FINISH_SENTENCES_ENABLED = True
+_SENTENCE_FINISH_MAX_S = 5.0     # never extend a slice more than this to finish a sentence
+_SENTENCE_FINISH_MARGIN_S = 2.0  # keep this much beat-only room before the next line (safety vs the warp/dedupe)
+
+
+def finish_sentences_enabled() -> bool:
+    """Whether phrase-safe slice ends are live. Folded into ENGINE_VERSION so flipping it re-renders
+    every mix; OFF (or an analysis without vocal_pauses) => the prior fixed-length slice behaviour."""
+    return _FINISH_SENTENCES_ENABLED
+
+
+def _finish_sentences(placements: list[Placement], a2: TrackAnalysis, stretch: float) -> list[Placement]:
+    """Extend each Song-2 vocal slice's END forward to the singer's next breath (a2.vocal_pauses) so a
+    sung line finishes its sentence instead of cutting mid-word at the MAX_VOCAL_SECS cap. Bounded two
+    ways: never past _SENTENCE_FINISH_MAX_S of extension, and never so far the extended vocal would run
+    into the next line (rendered room before the next anchor, minus a margin, converted back to Song-2
+    source time via the stretch) — so it can't create a two-voices overlap. Only ever LENGTHENS a slice;
+    no vocal_pauses (older cached analysis) or the flag off => returns the placements unchanged."""
+    if not _FINISH_SENTENCES_ENABLED:
+        return placements
+    pauses = sorted(getattr(a2, "vocal_pauses", []) or [])
+    if not pauses or stretch <= 0:
+        return placements
+    ordered = sorted(placements, key=lambda pl: pl.anchor)
+    for idx, p in enumerate(ordered):
+        s0, e0 = p.vocal_src
+        next_breath = next((t for t in pauses if t > e0 + 1e-3), None)
+        if next_breath is None:
+            continue
+        target = min(next_breath, e0 + _SENTENCE_FINISH_MAX_S)
+        if idx + 1 < len(ordered):  # don't run into the next line
+            room_rendered = ordered[idx + 1].anchor - _SENTENCE_FINISH_MARGIN_S - p.anchor
+            target = min(target, s0 + max(0.0, room_rendered) * stretch)  # rendered_secs = source_len / stretch
+        if target > e0 + 1e-3:
+            p.vocal_src = (s0, round(target, 3))
+    return placements
+
 
 def rule4_enabled() -> bool:
     """Whether Rule 4 (gap-sized echo + continuous reverb bed) is live. Folded into the mix/set cache id
@@ -707,13 +749,17 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
     source = "ai" if placements else "rules"
     if not placements:
         placements = _default_arrangement(opts, take)
+    # Phrase-safe slice ends: extend each slice to the singer's next breath (finish the sentence) BEFORE
+    # the per-bar warp, so the beat-lock covers the finished line. Bounded so it never overlaps the next.
+    placements = _finish_sentences(placements, a2, opts["vocal_stretch"])
     placements = _attach_warp(placements, a1g, a2, opts["vocal_stretch"], forced=forced)  # per-bar beat-lock
     placements = _dedupe_nonoverlapping(placements, opts["vocal_stretch"])
     # The arc guard: if the plan (AI's or a thin fallback) clusters instead of spanning the
     # song, rebuild it as a deterministic energy arc so the vocal always reaches the whole
     # track with a strong finish — the founder's acceptance test, guaranteed by construction.
     if not _spans_song(placements, opts.get("track_end", 0.0)):
-        rebuilt = _attach_warp(_default_arrangement(opts, take), a1g, a2, opts["vocal_stretch"], forced=forced)
+        rebuilt = _finish_sentences(_default_arrangement(opts, take), a2, opts["vocal_stretch"])
+        rebuilt = _attach_warp(rebuilt, a1g, a2, opts["vocal_stretch"], forced=forced)
         placements = _dedupe_nonoverlapping(rebuilt, opts["vocal_stretch"])
         source = "rules"
     placements, s1_regions = _apply_flourishes(a1g, placements, opts["vocal_stretch"],

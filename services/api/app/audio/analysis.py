@@ -40,7 +40,7 @@ _MODEL = "sakemin/all-in-one-music-structure-analyzer"
 #     from a legacy combined analysis.json — either way zero cloud calls).
 # Bump this ONLY when the local analyzer changes; a bump then re-derives the local half for every
 # song for free. (Cloud-half changes would need a model/version change, which is a separate concern.)
-LOCAL_ANALYSIS_VERSION = "la1"
+LOCAL_ANALYSIS_VERSION = "la2"  # la2: + fine-grained vocal_pauses (breath boundaries) for phrase-safe slice ends
 
 # Krumhansl–Kessler key profiles (perceptual weight of each pitch class).
 _MAJOR = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
@@ -228,6 +228,54 @@ def _vocal_regions(song_id: str, downbeats: list[float]) -> tuple[list[list[floa
     return regions, 0.8
 
 
+# A breath between sung phrases: this long of sustained quiet in the vocal, at or below this
+# fraction of the median SINGING level. Tuned so a within-word gap doesn't count but a real
+# phrase break does — the arranger ends a slice on one of these so a line never cuts mid-sentence.
+_PAUSE_HOP_S = 0.03          # 30 ms envelope frames
+_PAUSE_MIN_S = 0.18          # >= 180 ms of quiet = a real breath, not a consonant gap
+_PAUSE_FLOOR_FRAC = 0.18     # "quiet" = below 18% of the median singing level
+
+
+def _vocal_pauses(song_id: str) -> list[float]:
+    """Fine-grained breath/phrase boundaries (secs) — where the singing PAUSES — from a ~30 ms RMS
+    envelope of the split vocal stem (much finer than the bar-level vocal_regions). A pause is the
+    envelope staying below a floor (a fraction of the median singing level) for >= _PAUSE_MIN_S; the
+    time returned is where singing STOPS (a phrase END). Pure numpy on our box (no cloud). [] if there
+    is no stem or it can't be read — the arranger then keeps its prior fixed-length behaviour."""
+    vocal_mp3 = stem_path(song_id, "vocals")
+    if not vocal_mp3.exists():
+        return []
+    with tempfile.TemporaryDirectory() as td:
+        wav = Path(td) / "v.wav"
+        p = subprocess.run(["ffmpeg", "-y", "-i", str(vocal_mp3), "-ac", "1", str(wav)],
+                           capture_output=True, timeout=120)
+        if p.returncode != 0:
+            return []
+        mono, sr = _load_mono(wav)
+    hop = int(sr * _PAUSE_HOP_S)
+    if hop < 1 or len(mono) < hop * 4:
+        return []
+    n = len(mono) // hop
+    env = np.sqrt(np.mean(mono[:n * hop].reshape(n, hop) ** 2, axis=1) + 1e-12)
+    active = env[env > 0.05 * env.max()] if env.size else env
+    if active.size == 0:
+        return []
+    floor = _PAUSE_FLOOR_FRAC * float(np.median(active))
+    min_frames = max(1, int(round(_PAUSE_MIN_S / _PAUSE_HOP_S)))
+    pauses: list[float] = []
+    run = 0
+    for i, e in enumerate(env):
+        if e < floor:
+            run += 1
+        else:
+            if run >= min_frames:  # a sustained quiet run just ended — the phrase stopped where it began
+                pauses.append(round((i - run) * hop / sr, 3))
+            run = 0
+    if run >= min_frames:  # a trailing pause running to the end of the stem
+        pauses.append(round((n - run) * hop / sr, 3))
+    return pauses
+
+
 def _beat_regularity(beats: list[float]) -> float:
     """How steady the beat grid is (0..1) — a proxy for grid confidence."""
     if len(beats) < 8:
@@ -256,6 +304,7 @@ def analyze_track(song_id: str, wav_path: Path) -> dict:
     beats = [float(b) for b in structure.get("beats", [])]
     downbeats = [float(d) for d in structure.get("downbeats", [])]
     vocal_regions, vocal_conf = _vocal_regions(song_id, downbeats)
+    vocal_pauses = _vocal_pauses(song_id)
 
     result = {
         "song_id": song_id,
@@ -270,6 +319,7 @@ def analyze_track(song_id: str, wav_path: Path) -> dict:
         "energy_curve": _rms_per_bar(wav_path, downbeats),
         "vocal_regions": vocal_regions,
         "vocal_confidence": vocal_conf,
+        "vocal_pauses": vocal_pauses,
         "local_analysis_version": LOCAL_ANALYSIS_VERSION,
     }
     cache.write_text(json.dumps(result))
