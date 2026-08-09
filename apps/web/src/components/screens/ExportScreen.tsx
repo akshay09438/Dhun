@@ -23,8 +23,17 @@ export default function ExportScreen({
     const a = document.createElement("a");
     a.href = href;
     a.download = `${(mixName || "prompt-dj-mix").replace(/[^\w -]/g, "").trim() || "prompt-dj-mix"}.wav`;
+    // The link must be in the document for the click to trigger a save in every browser
+    // (a detached <a>.click() is ignored by some). And the object URL must stay valid
+    // until the browser has read the blob — revoking it in the same tick as the click
+    // cancels the download (the "saves nothing" bug), so defer the cleanup.
+    a.style.display = "none";
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(href);
+    setTimeout(() => {
+      URL.revokeObjectURL(href);
+      a.remove();
+    }, 0);
   }
 
   return (
