@@ -4,6 +4,43 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
+2026-08-10 (session close — **song-marker tool + cost correction + beat marks**) — **MARKER SIMPLIFIED TO DROP + BEST PART; 57/59 BEAT SONGS MARKED (committed to `scripts/song_marks.csv`); LAUNCH COST CORRECTED ~$4 → ~$26 (the All-In-One analysis call was missed). Branch `feat/song-marker-vocal-bestparts`, NOT merged. No app/engine code touched.**
+
+**What happened this session (operator tooling + data; no app-code change):**
+
+1. **Marker tool** (`scripts/mark_drops.html`) — extended to mark on RAW song files (any audio ext, real filenames, keyed by filename, not just ingested `{hash}.wav`), then **simplified per the founder to just Drop (D) + Best part (H)** (a vocal-in / vocal-window pass was built then removed on request). Exports `song_marks.csv` (kinds `drop`, `hook`); autosaves to localStorage; browser-verified clean.
+2. **Beat marks captured** — the founder marked **57 of 59 beat songs** (93 drops + 49 best parts), committed to `scripts/song_marks.csv`. **2 beat songs left** (need re-downloaded files). **English vocals (61) + Hindi (16) not yet marked** — founder does **English next session**.
+3. **COST CORRECTION** — the launch estimate wrongly treated structure analysis as free/local. Reality (code: `app/audio/analysis.py`): per song the app makes TWO Replicate calls — Demucs stems (~~$0.018) + the **All-In-One structure analyzer** (`sakemin/all-in-one-music-structure-analyzer`, A100, ~94 s, **~$0.11/song**). One-time catalog = **~~$0.13/song → ~$26 for 200 (~$26–37 for ~215)**, not ~$4. Fixed in `docs/reference/web-launch-cost-estimate.md`.
+
+### DO FIRST NEXT SESSION
+
+1. **Founder marks the English vocal songs (61).** Open the marker in the founder's OWN Chrome (the Claude Browser pane CANNOT reach local folders): serve it — `python -m http.server 8123 --directory scripts`, then open `localhost:8123/mark_drops.html` — or just double-click `scripts/mark_drops.html`. Point it at `200 songs/English vocal songs`, mark Drop (D) + Best part (H), **Export CSV** (saves to Downloads as `song_marks.csv`), then I commit the updated file.
+2. **Get new files for the 2 unmarked beat songs**, mark them, re-export.
+3. **Before ingesting the ~215 songs** (the one-time ~$26–37 Demucs + All-In-One step): resolve **disk** — only ~8 GB free on C:, and ~215 songs' stems need ~30–40 GB. Either free space, or point storage at the cloud (R2 — the launch storage) so stems never touch C:. THEN ingest and **reconcile the filename-keyed marks to song_ids** (ingestion hashes normalized audio; marks must be matched filename → song_id and folded into the planner mark maps `hooks.py`/`main_drops.py`).
+
+### In flight — honest state
+
+- **Nothing half-done in code.** Beat marks captured + committed. Working tree clean apart from the benign `ExportScreen.tsx`/`.test.tsx` CRLF flag (unchanged, not touched this session).
+- **NOT DONE (expected, founder-scheduled):** English + Hindi marking; the 2 pending beat songs; ingesting any of the ~136 new songs (raw MP3s only — no stems/analysis yet); wiring the new marks into the engine.
+- **Branch `feat/song-marker-vocal-bestparts` is NOT merged** — it carries the marker tool + the cost fix + `song_marks.csv` (+ this handoff). Merge when ready.
+
+### Verification evidence (this session)
+
+- **Marker tool:** loads with **no console errors** (verified twice — the 4-mark version and the simplified 2-mark version). Interactive when served over `localhost:8123`; a `file://` open in the Claude pane renders static (non-interactive) and can't reach local folders — use the founder's real Chrome.
+- **Beat marks CSV:** `Import-Csv scripts/song_marks.csv` → **142 rows (93 `drop` + 49 `hook`), 57 distinct songs.**
+- **Cost correction:** All-In-One price verified via the Replicate model page (`sakemin/all-in-one-music-structure-analyzer` — A100, ~94 s, ~$0.11/run) + aimodels.fyi.
+- **Engine/app suites:** NOT re-run — **no engine/app code changed** (the only files touched are `scripts/*` + docs). Grinder bot tests stand at 15 green from 2026-08-09.
+
+### Open escalations / RE-VERIFY next session (claims, not settled facts)
+
+- **No dangerous-surface file was touched this session.** Nothing dangerous to re-verify.
+- **The marks (`scripts/song_marks.csv`) are keyed by RAW FILENAME, not song_id** — they are NOT yet usable by the engine. Treat "the marks are wired in" as FALSE until reconciled at ingestion.
+- **Disk pressure is real** (~8 GB free on C:). Confirm free space (or cloud storage) before any large ingest — the founder's <2 GB stop rule applies.
+
+---
+
+## Previous session (2026-08-09 — Grinder Discord bot)
+
 2026-08-09 (session close, later — **Grinder Discord bot**) — **"GRINDER" DISCORD BOT (`/mix` + `/set`) + A WEB-LAUNCH COST ESTIMATE — MERGED to `main` via PR #16 (`c99fe44`), LIVE in the founder's server. Bot tests 15 green; no engine file touched.**
 
 **What shipped this session (a `/zuko:goodnight` batch + live follow-ups):**
