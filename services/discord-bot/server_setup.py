@@ -209,9 +209,13 @@ async def create_channels(guild: discord.Guild, report: Report) -> None:
         for ch in cat_spec.channels:
             # Look up by the SAME string we create with (see ChannelSpec.label), otherwise a second
             # run wouldn't recognise the channel and would duplicate it.
-            existing = _by_name(guild.channels, ch.label)
+            # Search the TEXT or VOICE view specifically. `guild.channels` also contains categories,
+            # so looking there made a channel named "welcome" match a leftover "WELCOME" category:
+            # /setup reported "#welcome already there" and then failed with "#welcome doesn't exist".
+            pool = guild.voice_channels if ch.voice else guild.text_channels
+            existing = _by_name(pool, ch.label)
             if existing is not None:
-                await _repair_read_only(guild, existing, ch, report)
+                await _adopt_existing(guild, existing, category, ch, report)
                 report.already(f"🔊 {ch.label}" if ch.voice else f"#{ch.label}")
                 continue
             try:
@@ -228,14 +232,26 @@ async def create_channels(guild: discord.Guild, report: Report) -> None:
                 report.error(f"#{ch.name}", e)
 
 
-async def _repair_read_only(guild: discord.Guild, channel, ch: ChannelSpec,
-                            report: Report) -> None:
-    """Make sure the bot can post in an EXISTING read-only channel.
+async def _adopt_existing(guild: discord.Guild, channel, category, ch: ChannelSpec,
+                          report: Report) -> None:
+    """Bring an EXISTING channel in line with the plan, rather than just stepping over it.
 
-    A channel created before the bot-allow fix denies `send_messages` to @everyone with no explicit
-    allow for Grinder, so the welcome post fails with "Missing Permissions" in a channel the bot
-    itself made. Skipping it on a re-run would leave that broken forever, so the idempotent path
-    repairs it rather than just stepping over it."""
+    Two repairs, both learned from real runs:
+
+    1. Move it into the planned category. When the layout was cut from ten channels to four,
+       #best-mixes and #feedback stayed under their old SHOWCASE and HANGOUT headers while the new
+       GRINDER category sat empty - the server looked untouched even though /setup "succeeded".
+
+    2. Re-allow the bot to post in a read-only channel. One created before the bot-allow fix denies
+       `send_messages` to @everyone with no explicit allow for Grinder, so the welcome post fails
+       with "Missing Permissions" in a channel the bot itself made."""
+    current = getattr(channel, "category", None)
+    if category is not None and current is not category:
+        try:
+            await channel.edit(category=category, reason="Grinder /setup - adopt into the plan")
+        except Exception as e:  # noqa: BLE001
+            report.error(f"#{ch.label} move into {category.name}", e)
+
     if ch.voice or not ch.read_only:
         return
     try:
@@ -256,12 +272,15 @@ def extra_channels(guild: discord.Guild) -> list[str]:
     planned = {ch.label.lower() for cat in STRUCTURE for ch in cat.channels}
     planned |= {ch.name.lower() for cat in STRUCTURE for ch in cat.channels}
     out = []
-    for c in guild.channels:
-        if isinstance(c, discord.CategoryChannel):
-            continue
+    # Ask for text and voice explicitly rather than filtering categories out of guild.channels:
+    # that view includes categories, and relying on an isinstance check to exclude them is how the
+    # "welcome" channel ended up matching the "WELCOME" category.
+    for c in guild.text_channels:
         if c.name.lower() not in planned:
-            out.append(("🔊 " if getattr(c, "type", None) == discord.ChannelType.voice else "#")
-                       + c.name)
+            out.append(f"#{c.name}")
+    for c in guild.voice_channels:
+        if c.name.lower() not in planned:
+            out.append(f"🔊 {c.name}")
     return sorted(out)
 
 

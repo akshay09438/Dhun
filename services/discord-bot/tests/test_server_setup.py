@@ -37,6 +37,8 @@ class FakeChannel:
         self.topic = topic
         self.sent = []
         self.perms = {}
+        self.category = None
+        self.edits = []
         self._messages = list(messages)
 
     def history(self, limit=None):
@@ -53,6 +55,11 @@ class FakeChannel:
 
     def __post_init__(self):
         pass
+
+    async def edit(self, **kwargs):
+        self.edits.append(kwargs)
+        if "category" in kwargs:
+            self.category = kwargs["category"]
 
     async def set_permissions(self, target, **perms):
         self.perms[getattr(target, "name", str(target))] = perms
@@ -82,7 +89,7 @@ class FakeGuild:
         self.name = "Grinder"
         self.icon = icon
         self.features = list(features)
-        self.channels = list(channels)
+        self._channels = list(channels)
         self.categories = list(categories)
         self.roles = list(roles)
         self.emojis = list(emojis)
@@ -96,8 +103,18 @@ class FakeGuild:
             raise discord.Forbidden(_Resp(), "Missing Permissions")
 
     @property
+    def channels(self):
+        # Faithful to discord.py: this view includes CATEGORIES as well as text/voice channels,
+        # which is how a channel named "welcome" wrongly matched a category named "WELCOME".
+        return self._channels + self.categories
+
+    @property
     def text_channels(self):
-        return [c for c in self.channels if not c.voice]
+        return [c for c in self._channels if not c.voice]
+
+    @property
+    def voice_channels(self):
+        return [c for c in self._channels if c.voice]
 
     async def edit(self, **kwargs):
         self._maybe_fail("edit")
@@ -125,13 +142,15 @@ class FakeGuild:
             raise TypeError("overwrites parameter expects a dict.")
         c = FakeChannel(name, topic=kw.get("topic"))
         c.overwrites = ow
-        self.channels.append(c)
+        c.category = kw.get("category")
+        self._channels.append(c)
         return c
 
     async def create_voice_channel(self, name, **kw):
         self._maybe_fail(f"channel:{name}")
         c = FakeChannel(name, voice=True)
-        self.channels.append(c)
+        c.category = kw.get("category")
+        self._channels.append(c)
         return c
 
     async def create_role(self, name, **kw):
@@ -566,3 +585,50 @@ def test_the_report_tells_you_how_to_remove_a_leftover():
     field = next(f for f in e.fields if "Not in the plan" in f.name)
     assert "Delete Channel" in field.value, "say HOW, not just that they exist"
     assert "won't delete them for you" in field.value
+
+
+# --- bugs the second real /setup run exposed ------------------------------------------------
+
+@run_async
+async def test_a_channel_is_created_even_when_a_CATEGORY_shares_its_name():
+    """The bug: guild.channels includes CATEGORIES, so looking up a channel called "welcome" matched
+    the leftover "WELCOME" category. /setup reported "#welcome already there" and then failed with
+    "#welcome doesn't exist" when it tried to post the welcome into it."""
+    g = FakeGuild(categories=[FakeCategory("WELCOME")])
+    report = await server_setup.run(g)
+    assert any(c.name == "welcome" for c in g.text_channels), \
+        "#welcome was never created; it matched the WELCOME category"
+    assert not report.failed, report.failed
+
+
+@run_async
+async def test_the_welcome_post_lands_when_a_category_shares_the_channel_name():
+    g = FakeGuild(categories=[FakeCategory("WELCOME")])
+    await server_setup.run(g)
+    welcome = next(c for c in g.text_channels if c.name == "welcome")
+    assert welcome.sent, "the welcome post should have been written"
+
+
+@run_async
+async def test_an_existing_channel_is_moved_into_the_planned_category():
+    """After the layout changed, #best-mixes and #feedback were left under their old SHOWCASE and
+    HANGOUT headers while the new GRINDER category sat empty. Existing channels have to be adopted
+    into the plan, not just left where they were."""
+    old = FakeCategory("SHOWCASE")
+    stray = FakeChannel("best-mixes")
+    stray.category = old
+    g = FakeGuild(channels=[stray], categories=[old])
+    await server_setup.run(g)
+    moved = next(c for c in g.text_channels if c.name == "best-mixes")
+    assert moved.category is not None and moved.category.name == "GRINDER", \
+        f"still in {getattr(moved.category, 'name', None)}"
+
+
+@run_async
+async def test_a_channel_already_in_the_right_category_is_not_edited():
+    """Don't spend an API call re-setting what's already correct."""
+    g = FakeGuild()
+    await server_setup.run(g)
+    for c in g.text_channels:
+        moves = [e for e in c.edits if "category" in e]
+        assert not moves, f"#{c.name} was moved despite already being right"
