@@ -12,6 +12,11 @@ import dataclasses
 
 import httpx
 
+# Every request this client makes is tagged with where it came from, so the ops dashboard can
+# separate Discord activity from web activity. Attribution only — the engine records it and
+# never lets it reach a cache id or the audio.
+SOURCE = "discord"
+
 
 @dataclasses.dataclass
 class Song:
@@ -77,12 +82,18 @@ class PromptDJClient:
         ]
 
     async def start_mix(self, song1_id: str, song2_id: str, user_id: str,
-                        generation: int = 0, prompt: str = "") -> str:
+                        generation: int = 0, prompt: str = "",
+                        user_name: str | None = None) -> str:
         """Kick off (or hit the cache for) a mix; returns its id. Uses the same
-        auto-rule shuffler the web app uses (user_id + generation)."""
+        auto-rule shuffler the web app uses (user_id + generation).
+
+        `source`/`user_name` are ops attribution only — they let the dashboard tell a Discord
+        mix from a web one and show a real username instead of a bare account id. The engine
+        records them and nothing else, so they never change the mix or which cache slot it lands in."""
         payload = {
             "song1_id": song1_id, "song2_id": song2_id, "prompt": prompt,
             "user_id": user_id, "generation": generation,
+            "source": SOURCE, "user_name": user_name,
         }
         r = await self._client.post("/mix", json=payload)
         if r.status_code not in (200, 202):
@@ -136,12 +147,15 @@ class PromptDJClient:
             return None
 
     # ---- Sets (a continuous back-to-back set of 2–5 mixes) --------------------------------
-    async def start_set(self, pairs: list[tuple[str, str]], user_id: str, set_index: int = 0) -> str:
+    async def start_set(self, pairs: list[tuple[str, str]], user_id: str, set_index: int = 0,
+                        user_name: str | None = None) -> str:
         """Kick off (or hit the cache for) a set from ordered (beat, vocals) pairs; returns its id.
-        Uses the same auto-rule shuffler the web set builder uses (user_id + set_index)."""
+        Uses the same auto-rule shuffler the web set builder uses (user_id + set_index).
+        `source`/`user_name` are ops attribution only — see start_mix."""
         payload = {
             "sets": [{"song1_id": a, "song2_id": b} for a, b in pairs],
             "user_id": user_id, "set_index": set_index,
+            "source": SOURCE, "user_name": user_name,
         }
         r = await self._client.post("/set", json=payload)
         if r.status_code not in (200, 202):

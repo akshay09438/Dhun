@@ -245,6 +245,12 @@ class MixRequest(BaseModel):
     # (user, pair, generation) -> same rule -> same mix id, forever — so a regenerate hits cache.
     user_id: str | None = None
     generation: int | None = None
+    # OPS ATTRIBUTION ONLY (2026-08-10). Where this mix was made ('web' | 'discord') and a display
+    # name if the surface has one (Discord gives a username; the web app has no login yet). Like
+    # user_id these are RECORDED and nothing else — deliberately absent from mix_id_for, so adding
+    # them cannot change a cache id, re-render a cached mix, or alter a single sample of audio.
+    source: str | None = None
+    user_name: str | None = None
 
 
 def _resolve_rule_take(req: "MixRequest") -> tuple[int, int]:
@@ -409,7 +415,8 @@ def _render_rule3(plan: MixPlan, mix_id: str, song1_id: str, song2_id: str,
 
 def _record_mix_event(mix_id: str, song1_id: str, song2_id: str, take: int, rule: int,
                       user_id: str | None, via: str, status: str,
-                      anomalies: list, fail_reason: str | None, plan: MixPlan | None) -> None:
+                      anomalies: list, fail_reason: str | None, plan: MixPlan | None,
+                      source: str | None = None, user_name: str | None = None) -> None:
     """Record this mix's outcome to the ops event log (the dashboard's memory). NON-FATAL by
     construction: any failure here is logged and swallowed — recording must never break a mix."""
     try:
@@ -425,17 +432,20 @@ def _record_mix_event(mix_id: str, song1_id: str, song2_id: str, take: int, rule
             settings.data_dir, mix_id=mix_id, status=status, user_id=user_id, via=via,
             song1_id=song1_id, song2_id=song2_id,
             song1_name=names.get(song1_id), song2_name=names.get(song2_id),
-            rule=rule, take=take, anomalies=anoms, fail_reason=fail_reason, extra=extra)
+            rule=rule, take=take, anomalies=anoms, fail_reason=fail_reason, extra=extra,
+            source=source, user_name=user_name)
     except Exception:  # noqa: BLE001 — telemetry is best-effort; a mix must never fail on it
         log.exception("failed to record mix event for %s", mix_id)
 
 
 def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, rule: int = 1,
-             user_id: str | None = None, via: str = "single") -> None:
+             user_id: str | None = None, via: str = "single",
+             source: str | None = None, user_name: str | None = None) -> None:
     """Background worker: plan -> validate -> render (Rule 1/4 or Rule 3) -> validate the audio.
 
-    `user_id` (the anonymous per-browser device tag) and `via` ('single' | 'set') are recorded
-    with the outcome for the ops dashboard; they never affect the mix or its cache id."""
+    `user_id` (the per-browser device tag, or a real Discord account id), `via` ('single' | 'set'),
+    `source` ('web' | 'discord') and `user_name` (a display name where the surface has one) are
+    recorded with the outcome for the ops dashboard; none of them affect the mix or its cache id."""
     anomalies: list = []  # bound up-front so a failure before the scan still records cleanly
     try:
         maybe_sweep()  # free disk (evict old regenerable renders) before this render-heavy job
@@ -549,24 +559,24 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
             log.warning("could not clear the stale live bus for %s", mix_id)
         _jobs.pop(mix_id, None)  # readiness now inferred from the stored files
         _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "ok",
-                          anomalies, None, plan)
+                          anomalies, None, plan, source=source, user_name=user_name)
     except MixDeclined as e:
         _jobs[mix_id] = ("error", e.reason)
         _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "failed",
-                          anomalies, e.reason, None)
+                          anomalies, e.reason, None, source=source, user_name=user_name)
     except pitch.PitchError as e:
         _mix_wav(mix_id).unlink(missing_ok=True)
         reason = f"Couldn't key-match this pair cleanly, so it wasn't shipped: {e}"
         _jobs[mix_id] = ("error", reason)
         _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "failed",
-                          anomalies, reason, None)
+                          anomalies, reason, None, source=source, user_name=user_name)
     except validate.ValidationError as e:
         _mix_wav(mix_id).unlink(missing_ok=True)
         _bestparts_wav(mix_id).unlink(missing_ok=True)
         reason = f"The mix didn't pass the quality check: {e}"
         _jobs[mix_id] = ("error", reason)
         _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "failed",
-                          anomalies, reason, None)
+                          anomalies, reason, None, source=source, user_name=user_name)
     except Exception:  # noqa: BLE001 — never leak a raw trace to the user...
         log.exception("mix render failed for %s", mix_id)  # ...but do log it, so a systematic bug isn't invisible
         _mix_wav(mix_id).unlink(missing_ok=True)
@@ -574,7 +584,7 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         reason = "Couldn't build this mix. Try another pair or regenerate."
         _jobs[mix_id] = ("error", reason)
         _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "failed",
-                          anomalies, reason, None)
+                          anomalies, reason, None, source=source, user_name=user_name)
 
 
 @router.post("/mix/name")
@@ -616,6 +626,9 @@ def start_mix(req: MixRequest, response: Response) -> Mix:
         threading.Thread(
             target=_run_mix,
             args=(mix_id, req.song1_id, req.song2_id, req.prompt, take, rule, req.user_id),
+            # keyword-passed so the ops-only attribution can grow without disturbing the
+            # positional render arguments above
+            kwargs={"source": req.source, "user_name": req.user_name},
             daemon=True,
         ).start()
 
