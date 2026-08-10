@@ -282,10 +282,11 @@ def test_key_match_shifts_the_vocal_and_renders_the_shifted_stem(tmp_path, monke
     assert rendered.get("s2_voc") == str(shifted_path), rendered
 
 
-def test_key_match_pitch_error_declines_visibly_never_ships_unshifted(tmp_path, monkeypatch):
-    """LOUD FAILURE at the route: if pitch.shifted_vocal raises PitchError (no clean shift possible), the
-    job ends in a VISIBLE error state whose message names the key-match failure — and NO mix WAV is left
-    on disk, so the user never gets a silently un-shifted mix mislabelled as key-matched."""
+def test_key_match_pitch_error_ships_native_key_never_refuses(tmp_path, monkeypatch):
+    """NEVER-REFUSE (founder rule 2026-08-10, supersedes the old loud-decline): if pitch.shifted_vocal
+    raises PitchError (no clean shift possible), the mix STILL completes — with the vocal in its NATIVE
+    key — instead of declining. The un-shifted vocal is never mislabelled as key-matched: the fallback
+    is recorded as a visible 'key_shift_fallback' anomaly and the plan records shipped_key_shift == 0."""
     _use_tmp(monkeypatch, tmp_path)
     _setup_pair(tmp_path)
 
@@ -294,15 +295,17 @@ def test_key_match_pitch_error_declines_visibly_never_ships_unshifted(tmp_path, 
 
     monkeypatch.setattr(mix_route, "resolve_key_shift", lambda a1, a2: (2, "needs +2"))
     monkeypatch.setattr(pitch, "shifted_vocal", boom)
+    rendered: dict = {}
+    monkeypatch.setattr(mix_route, "render_mix", _spy_render_to(rendered))
 
     r = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2})
     mix_id = r.json()["mix_id"]
-    body = _poll(mix_id, "error")
-    assert body["status"] == "error"
-    assert "key-match" in body["message"].lower(), body["message"]
-    assert not mix_route._mix_wav(mix_id).exists(), "a declined key-match must leave no mix WAV on disk"
-    # a follow-up status read must still be error (never flips to a stray 'ready')
-    assert client.get(f"/mix/{mix_id}").json()["status"] == "error"
+    body = _poll(mix_id, "ready")
+    assert body["status"] == "ready", body
+    # the render was fed the ORIGINAL stem (native key), not a phantom shifted path
+    assert rendered.get("s2_voc", "").endswith(f"{SONG2}.vocals.mp3"), rendered
+    # and the shipped key is recorded as native, so the live Play bus reproduces it
+    assert json.loads(mix_route._plan_path(mix_id).read_text())["shipped_key_shift"] == 0
 
 
 def test_engine_version_tags_key_matching_when_enabled():

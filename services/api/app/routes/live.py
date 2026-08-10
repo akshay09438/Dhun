@@ -88,7 +88,8 @@ def _run_vocal_bus(mix_id: str) -> None:
     # can still infer the format from it (it writes by extension) -> {mix}.livearr.tmp.wav.
     tmp = final.with_name(final.stem + ".tmp" + final.suffix)
     try:
-        plan = MixPlan(**json.loads(_mixplan_path(mix_id).read_text()))
+        _raw_plan = json.loads(_mixplan_path(mix_id).read_text())
+        plan = MixPlan(**_raw_plan)
         # Match the Download's key: if this pair was key-matched, use the SAME shifted vocal (cached by
         # the mix render) so the live bus is NEVER a silently un-shifted "key-matched" vocal. Deterministic
         # per pair; a PitchError is caught below and surfaces as a visible "couldn't prepare" decline.
@@ -96,15 +97,28 @@ def _run_vocal_bus(mix_id: str) -> None:
         orig_s2_voc = stem_path(plan.song2_id, "vocals")
         s2_voc = orig_s2_voc
         if key_match_enabled():
-            a1 = TrackAnalysis(status="ready", **json.loads(analysis_path(plan.song1_id).read_text()))
-            a2 = TrackAnalysis(status="ready", **json.loads(analysis_path(plan.song2_id).read_text()))
-            shift, _why = resolve_key_shift(a1, a2)
+            # Use the shift the DOWNLOAD actually shipped (persisted on the plan). Re-deciding it here
+            # would desync Play from the Download whenever a transient shift failure sent one of them
+            # down the native-key fallback. Older plans lack the field (0) -> re-derive as before.
+            # A PERSISTED 0 means "the Download shipped the native key" and must be honoured — so key
+            # off the field's PRESENCE, not its value. Only a pre-m19k1 plan (no field) re-derives.
+            if "shipped_key_shift" in _raw_plan:
+                shift = int(_raw_plan["shipped_key_shift"] or 0)
+            else:
+                a1 = TrackAnalysis(status="ready", **json.loads(analysis_path(plan.song1_id).read_text()))
+                a2 = TrackAnalysis(status="ready", **json.loads(analysis_path(plan.song2_id).read_text()))
+                shift, _why = resolve_key_shift(a1, a2)
             if shift != 0:
-                s2_voc = pitch.shifted_vocal(plan.song2_id, orig_s2_voc, shift)
-                # K1 — the SAME independent referee the Download runs (mix.py). If a re-rendered shift
-                # (e.g. after the pitch cache was swept) lands stable-but-wrong, this catches it and the
-                # except-block below turns it into a visible decline — Play can never serve a wrong key.
-                validate.assert_key_shift(orig_s2_voc, s2_voc, shift)
+                # Mirror mix.py's NEVER-REFUSE fallback exactly (both are deterministic on the same
+                # files, so Play always matches the Download's key): a shift that can't be produced
+                # or verified falls back to the NATIVE-key vocal instead of failing the live bus.
+                try:
+                    s2_voc = pitch.shifted_vocal(plan.song2_id, orig_s2_voc, shift)
+                    validate.assert_key_shift(orig_s2_voc, s2_voc, shift)   # K1 — same referee as the Download
+                except (pitch.PitchError, validate.ValidationError) as e:
+                    log.warning("live %s key-shift %+d st could not be verified (%s) -> NATIVE key",
+                                mix_id, shift, e)
+                    s2_voc = orig_s2_voc
         song1_stems = {"vocals": stem_path(plan.song1_id, "vocals")}  # for the contrast answer
         render_vocal_bus(plan, song1_stems, s2_voc, tmp)
         # Publish atomically: the SERVED path only ever appears fully written, so a poll can

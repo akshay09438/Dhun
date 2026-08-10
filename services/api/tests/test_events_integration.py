@@ -33,13 +33,13 @@ def test_a_failed_mix_records_a_red_event(tmp_path, monkeypatch):
     _use_tmp(monkeypatch, tmp_path)
     _setup_pair(tmp_path)
 
-    # Force a clean key-match decline (loud failure) so the outcome is a recorded 'failed' event.
-    monkeypatch.setattr(mix_route, "resolve_key_shift", lambda a1, a2: (2, "needs +2"))
+    # Force a genuine render failure so the outcome is a recorded 'failed' event.
+    # (A key-shift failure no longer qualifies: under never-refuse it falls back to the NATIVE key
+    # and the mix still succeeds — see test_mix_route.test_key_match_pitch_error_ships_native_key.)
+    def boom(plan, stems, s2_voc, out):
+        raise RuntimeError("render exploded")
 
-    def boom(song_id, vocal_wav, semitones, formant=True):
-        raise pitch.PitchError("declining")
-
-    monkeypatch.setattr(pitch, "shifted_vocal", boom)
+    monkeypatch.setattr(mix_route, "render_mix", boom)
 
     r = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2})
     mix_id = r.json()["mix_id"]

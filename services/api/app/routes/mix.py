@@ -200,7 +200,9 @@ ENGINE_VERSION = (_ENGINE_VERSION_BASE
                   + ("+m15phrase" if finish_sentences_enabled() else "")   # phrase-safe slice ends (finish the sentence)
                   + ("+m16beat" if finish_beat_vocal_enabled() else "")   # beat vocal finishes its phrase + graceful fade
                   + "+m17marks6"   # wired 6 new songs' hand-marked hooks/drops (2026-08-10) -> re-render so they land
-                  + "+m18cap2")   # pitch cap hardened ±3 -> ±2 everywhere (2026-08-10) -> re-render any >2-shifted mix
+                  + "+m18cap2"   # pitch cap hardened ±3 -> ±2 everywhere (2026-08-10) -> re-render any >2-shifted mix
+                  + "+m19k1")   # K1 referee re-ruled (f0-first) + never-refuse native-key fallback -> fresh ids so
+#                                 previously-declined pairs (wrongly failed by the chroma misread) re-render
 #          slices so the held-out window is FULL of vocal, not holes (founder: "more parts").
 #         (NOT m6.9: that string was already burned by a reverted experiment, so its stale renders
 #          would have been served as cache hits. A version string must be unique PER BEHAVIOUR.)
@@ -495,8 +497,24 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
             (log.warning if _a.severity == "warn" else log.info)(anomaly.format_line(mix_id, _a))
 
         if shift != 0:
-            s2_voc = pitch.shifted_vocal(song2_id, orig_s2_voc, shift)        # PitchError -> loud decline
-            validate.assert_key_shift(orig_s2_voc, s2_voc, shift)            # K1 — independent correctness
+            # NEVER-REFUSE (founder rule 2026-08-10): if the shift can't be produced or verified,
+            # ship the vocal in its NATIVE key instead of declining — a mix ALWAYS comes out. The
+            # native key is the safest deliverable when the shift is unprovable (a blind/failed shift
+            # could land the wrong direction and sound worse). Logged + surfaced as an ops anomaly.
+            try:
+                s2_voc = pitch.shifted_vocal(song2_id, orig_s2_voc, shift)
+                validate.assert_key_shift(orig_s2_voc, s2_voc, shift)        # K1 — independent correctness
+            except (pitch.PitchError, validate.ValidationError) as e:
+                log.warning("mix %s key-shift %+d st could not be verified (%s) -> shipping NATIVE key",
+                            mix_id, shift, e)
+                anomalies.append(anomaly.Anomaly(
+                    code="key_shift_fallback",
+                    detail=f"the {shift:+d} st key shift could not be produced/verified: {e}",
+                    action="shipped the vocal in its NATIVE key (never-refuse); ear-check this pair's key",
+                    severity="warn"))
+                s2_voc = orig_s2_voc
+                shift = 0
+        plan.shipped_key_shift = int(shift)  # record what ACTUALLY shipped, so Play reproduces it exactly
 
         stems = {s: stem_path(song1_id, s) for s in _S1_STEMS}
         s1_voc = stem_path(song1_id, "vocals")  # Song 1's own vocal (contrast lead / the Rule-3 trade gaps)
