@@ -492,7 +492,9 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         # are visible on the backend instead of silent. Reporting only; never changes the mix.
         anomalies = anomaly.scan(grid_health=grid_health, tempo_forced=plan.tempo_forced,
                                  vocal_stretch=plan.vocal_stretch, key_why=why,
-                                 beat_vocal_coverage=instrumental_beats.vocal_coverage(a1))
+                                 beat_vocal_coverage=instrumental_beats.vocal_coverage(a1),
+                                 beat_bpm=float(getattr(a1, "bpm", 0.0) or 0.0),
+                                 vocal_bpm=float(getattr(a2, "bpm", 0.0) or 0.0))
         for _a in anomalies:
             (log.warning if _a.severity == "warn" else log.info)(anomaly.format_line(mix_id, _a))
 

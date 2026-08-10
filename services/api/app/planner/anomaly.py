@@ -27,9 +27,32 @@ class Anomaly:
 
 
 def scan(*, grid_health: dict[str, dict], tempo_forced: bool,
-         vocal_stretch: float, key_why: str, beat_vocal_coverage: float = 0.0) -> list[Anomaly]:
+         vocal_stretch: float, key_why: str, beat_vocal_coverage: float = 0.0,
+         beat_bpm: float = 0.0, vocal_bpm: float = 0.0) -> list[Anomaly]:
     """The anomalies for one mix, from facts the pipeline already has. Empty when nothing was off."""
     out: list[Anomaly] = []
+
+    # HALF-TIME PAIRING. best_stretch folds octaves, so a pair that is ~2x apart (e.g. Silence 143 x
+    # Panda 72) passes as "compatible" with almost NO stretch and locks perfectly on the beat — the
+    # maths is right, but one song's pulse is twice the other's, so the beat can feel like it is
+    # racing under a slow vocal (founder ear-report 2026-08-10). Report only: the mix is still made
+    # (never-refuse) and nothing about it changes; this flags WHY it may feel off.
+    if beat_bpm > 0 and vocal_bpm > 0:
+        r = beat_bpm / vocal_bpm
+        folded = min((abs(r - 1.0), "straight"), (abs(r / 2 - 1.0), "vocal_half"),
+                     (abs(r * 2 - 1.0), "vocal_double"))[1]
+        if folded != "straight":
+            faster, slower = ("Song 1's beat", "Song 2's vocal") if folded == "vocal_half" \
+                else ("Song 2's vocal", "Song 1's beat")
+            out.append(Anomaly(
+                "half_time_pair",
+                f"half-time pairing: {round(beat_bpm)} BPM beat vs {round(vocal_bpm)} BPM vocal "
+                f"(~2x apart) — matched by octave-fold, so it is exactly on-beat, but {faster} pulses "
+                f"twice as often as {slower}.",
+                "Expected to be technically correct; if it feels frantic, prefer a partner within "
+                "~15% of this song's tempo rather than a half/double-time one.",
+                "warn",
+            ))
 
     # The beat's OWN vocal reads as covering ~the whole track. A real beat rarely sings the whole song,
     # so this usually means the vocal separator mis-heard instrumental bleed/pads as singing (a false

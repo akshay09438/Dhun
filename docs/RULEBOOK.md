@@ -44,6 +44,10 @@ _Added 2026-08-10 (founder: "make it so no song can go beyond the rules… multi
 4. **Referee:** `validate.assert_key_shift` (K1) and P1 independently reject any finished render pitched beyond ±2.
 5. **Force-checks:** `tests/test_pitch_cap_hardrule.py` proves each layer; `scripts/sanity_check.py` proves every catalog pair stays within ±2 — a future edit that loosens any layer fails CI loudly.
 
+**A pair is NEVER refused, on key either.** If the shift cannot be produced or verified, the mix ships the vocal in its **native key** (with a visible ops warning) instead of declining — a mix always comes out. The referee measures the singer's actual pitch (`audio/f0.py`) and only falls back to chroma when a vocal is unmeasurable; the old chroma-only check wrongly declined correct shifts on rap/whisper vocals (2026-08-10).
+
+**Half-time pairings are flagged, not refused.** `best_stretch` folds octaves, so a ~2× pair (e.g. Silence 143 × Panda 72) locks perfectly on the beat with almost no stretch — technically right, but one song's pulse is twice the other's, which can feel frantic. The mix is still made; `anomaly.half_time_pair` records it (ops-visible) so a human can prefer a closer-tempo partner.
+
 **Tempo — the vocal is matched to the beat and stays beat-locked; a pair is never refused.** The beat is the master clock; the vocal is stretched (bar-by-bar re-locked) onto it. This behavior is intentionally unchanged (founder keeps the current BPM matching); the only un-mixable case remains a track with no usable beat grid.
 
 ---
