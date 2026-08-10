@@ -195,7 +195,8 @@ ENGINE_VERSION = (_ENGINE_VERSION_BASE
                   + "+m13vrb"                                        # vocal-rich beats: guest verse + R1 clamp + no-chop
                   + ("+m14fade" if exit_fade_enabled() else "")      # musical exit-fade on each vocal line's tail
                   + ("+m15phrase" if finish_sentences_enabled() else "")   # phrase-safe slice ends (finish the sentence)
-                  + ("+m16beat" if finish_beat_vocal_enabled() else ""))   # beat vocal finishes its phrase + graceful fade
+                  + ("+m16beat" if finish_beat_vocal_enabled() else "")   # beat vocal finishes its phrase + graceful fade
+                  + "+m17marks6")   # wired 6 new songs' hand-marked hooks/drops (2026-08-10) -> re-render so they land
 #          slices so the held-out window is FULL of vocal, not holes (founder: "more parts").
 #         (NOT m6.9: that string was already burned by a reverted experiment, so its stale renders
 #          would have been served as cache hits. A version string must be unique PER BEHAVIOUR.)
