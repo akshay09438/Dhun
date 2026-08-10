@@ -12,10 +12,17 @@ median shift in semitones. It is pure measurement — no audio is modified.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+
+from app.config import settings
+
+log = logging.getLogger("promptdj.f0")
 
 # Analysis window: the middle of the stem (densest singing), capped so a long song stays fast.
 _MAX_SECONDS = 150.0
@@ -28,6 +35,14 @@ _VOICED_CONF = 0.5             # normalized autocorr peak below this = unvoiced 
 _RMS_FLOOR = 0.25              # frame quieter than this x stem RMS = silence, skipped
 _OCTAVE_GUARD_ST = 6.0         # per-frame deltas beyond this are octave errors, discarded
 MIN_VOICED_FRAMES = 30         # fewer paired voiced frames than this => "can't measure"
+
+# Measuring costs 10-16 s per call (measured on real stems), and the referee re-ran it on EVERY
+# key-matched render even though both inputs are immutable + content-addressed. The result is cached
+# on disk, keyed by (both files' identity + this version), so only the FIRST verification of a pair
+# pays. Bump the version on ANY change to the measurement itself, exactly like pitch.HELPER_VERSION —
+# a stale answer from an older algorithm must never be served.
+MEASURE_VERSION = "f0v1"
+CACHE_SUFFIX = ".f0shift.json"
 
 
 
@@ -73,11 +88,66 @@ def _f0_frames(y: np.ndarray, sr: int) -> np.ndarray:
     return np.asarray(out)
 
 
+def cache_path(original: Path, shifted: Path) -> Path:
+    """Where the measurement for this exact pair of files is remembered.
+
+    Both inputs are already content-addressed (`{song_id}.vocals.mp3` and the pitch executor's
+    `{song_id}.{shift}{F|N}.{HELPER_VERSION}.pitchshift.wav`), so their NAMES identify their content;
+    sizes are folded in as a cheap guard for any caller passing non-catalog files. Keyed by
+    MEASURE_VERSION so improving the measurement invalidates every stored answer."""
+    def _stamp(p: Path) -> str:
+        try:
+            return f"{p.name}:{p.stat().st_size}"
+        except OSError:
+            return f"{p.name}:?"
+    raw = f"{MEASURE_VERSION}|{_stamp(Path(original))}|{_stamp(Path(shifted))}".encode()
+    return settings.data_dir / f"{hashlib.sha256(raw).hexdigest()}{CACHE_SUFFIX}"
+
+
+def _cache_read(p: Path) -> tuple[float, int] | None | str:
+    """The remembered answer: (semitones, frames), None for a remembered "unmeasurable", or the
+    sentinel "miss" when nothing is stored. A corrupt/unreadable entry reads as a miss."""
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        if d.get("unmeasurable") is True:
+            return None
+        return float(d["semitones"]), int(d["frames"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return "miss"
+
+
+def _cache_write(p: Path, result: tuple[float, int] | None) -> None:
+    """Remember an answer. NEVER fatal: a cache failure must not break a mix (same rule as events.py)."""
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        body = ({"unmeasurable": True} if result is None
+                else {"semitones": result[0], "frames": result[1]})
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(json.dumps(body), encoding="utf-8")
+        tmp.replace(p)  # atomic publish: a reader never sees a half-written entry
+    except OSError:
+        log.debug("could not cache the f0 measurement at %s", p, exc_info=True)
+
+
 def measured_shift_semitones(original: Path, shifted: Path) -> tuple[float, int] | None:
     """Median pitch shift (semitones) from `original` to `shifted`, measured on frames where BOTH
     are confidently voiced. Returns (semitones, n_frames), or None when there are too few voiced
     frames to measure (caller falls back to its other evidence). Never raises on unreadable
-    audio — unreadable == unmeasurable == None."""
+    audio — unreadable == unmeasurable == None.
+
+    Cached on disk per (file pair + MEASURE_VERSION): the inputs are immutable and content-addressed,
+    so a repeat verification of the same pair is free instead of costing 10-16 s again."""
+    cache = cache_path(original, shifted)
+    hit = _cache_read(cache)
+    if hit != "miss":
+        return hit  # (semitones, frames) or a remembered "unmeasurable" (None)
+    result = _measure(original, shifted)
+    _cache_write(cache, result)
+    return result
+
+
+def _measure(original: Path, shifted: Path) -> tuple[float, int] | None:
+    """The real measurement (uncached). See measured_shift_semitones for the contract."""
     try:
         yo, sr_o = _load_mono_mid(original)
         ys, sr_s = _load_mono_mid(shifted)
