@@ -1,10 +1,12 @@
-"""Grinder's visual identity — Rythm-style cards in the app's Electric Violet.
+"""Grinder's visual identity — Rythm-style cards in the Grinder brand.
 
 Pure builders (no network, no Discord state) so they're unit-testable. Every user-facing message
 routes through here, so the look is consistent and the colour lives in ONE place. Modelled on the
 Rythm music bot's now-playing card (title + progress bar + fields + requester), because Discord
 users already know that shape — but Grinder mixes two catalog songs; it never searches/plays
 arbitrary tracks.
+
+Colours come from `brand.py`, whose hex values are sampled from the Grinder artwork itself.
 """
 from __future__ import annotations
 
@@ -13,10 +15,33 @@ from pathlib import Path
 
 import discord
 
-# The app's "Electric Violet" accent (#6d3bf5) — identical to the web app + the marker tool.
-ACCENT = 0x6D3BF5
-FAIL = 0xB00020
+import brand
+
+# Re-exported so existing callers keep working; the value now comes from the artwork (a red-violet)
+# rather than the web app's original blue-violet #6D3BF5, which clashed beside the logo.
+ACCENT = brand.PRIMARY
+FAIL = brand.FAIL
 BOT_NAME = "Grinder"
+
+# The bot's own avatar, reused as the small round author icon on every card, so a Grinder message
+# is recognisable from the corner of the eye. Discord needs a URL for an embed icon, so this is
+# filled in at runtime (once the bot is logged in) by `set_avatar_url`.
+_avatar_url: str | None = None
+
+
+def set_avatar_url(url: str | None) -> None:
+    """Remember the bot's avatar URL so cards can show it as their author icon."""
+    global _avatar_url
+    _avatar_url = url
+
+
+def _author(e: discord.Embed, name: str) -> discord.Embed:
+    """Set an embed's author line, with the Grinder mark beside it when we know its URL."""
+    if _avatar_url:
+        e.set_author(name=name, icon_url=_avatar_url)
+    else:
+        e.set_author(name=name)
+    return e
 
 # progress-bar glyphs (Rythm-style slider)
 _FILL, _KNOB, _EMPTY = "━", "🔘", "─"
@@ -57,21 +82,21 @@ def cooking_embed(beat: str, vocals: str) -> discord.Embed:
                      f"🎤  **{vocals}**  ·  the vocals\n\n"
                      f"`▚▚▚▚▚▚▚▚▚▚`  blending on the beat…"),
         color=ACCENT)
-    e.set_author(name=f"{BOT_NAME} · mixing")
+    _author(e, f"{BOT_NAME} · mixing")
     e.set_footer(text="Quick if we've mixed this pair before")
     return e
 
 
 def now_playing_embed(*, name: str, beat: str, vocals: str, total_secs: float,
                       user: discord.abc.User | None, in_voice: bool = False) -> discord.Embed:
-    """The finished-mix card — Rythm 'Now playing' shape, in Electric Violet. The mixing STYLE
+    """The finished-mix card — Rythm 'Now playing' shape, in the Grinder purple. The mixing STYLE
     (which rule made it) and the TAKE number are deliberately NOT shown — they're internal-only
     (kept on the ops dashboard), never surfaced to users. Only song names + length are shown."""
     e = discord.Embed(
         title=f"🎛️  {name}",
         description=f"{bar(0, total_secs)}\n\n**{beat}** · beat   ✕   **{vocals}** · vocals",
         color=ACCENT)
-    e.set_author(name="Now playing in voice 🔊" if in_voice else "Now playing 🎧")
+    _author(e, "Now playing in voice 🔊" if in_voice else "Now playing 🎧")
     e.add_field(name="Length", value=mmss(total_secs), inline=True)
     e.set_footer(text=f"{BOT_NAME} · {_requester(user)} · 🔄 regenerate · 🔊 play in voice")
     return e
@@ -80,7 +105,7 @@ def now_playing_embed(*, name: str, beat: str, vocals: str, total_secs: float,
 def set_lineup_embed(lines: str, length_secs: float, kept: int,
                      user: discord.abc.User | None) -> discord.Embed:
     e = discord.Embed(title="🎚️  Your DJ set", description=lines or "—", color=ACCENT)
-    e.set_author(name="Now playing 🎧 · continuous set")
+    _author(e, "Now playing 🎧 · continuous set")
     e.add_field(name="Length", value=mmss(length_secs), inline=True)
     e.add_field(name="Mixes", value=str(kept), inline=True)
     e.set_footer(text=f"{BOT_NAME} · {_requester(user)} · joined on the beat")
@@ -92,14 +117,14 @@ def building_embed(lines: str, count: int) -> discord.Embed:
         title="Building your set…",
         description=f"{count} mixes, joined on the beat:\n{lines}\n\n`▚▚▚▚▚▚▚▚▚▚`  rendering…",
         color=ACCENT)
-    e.set_author(name=f"{BOT_NAME} · building set")
+    _author(e, f"{BOT_NAME} · building set")
     e.set_footer(text="Give it a minute or two the first time")
     return e
 
 
 def error_embed(msg: str) -> discord.Embed:
     e = discord.Embed(title="Couldn't make that", description=msg, color=FAIL)
-    e.set_author(name=f"{BOT_NAME} · hmm")
+    _author(e, f"{BOT_NAME} · hmm")
     return e
 
 
@@ -110,6 +135,8 @@ def help_embed() -> discord.Embed:
         description=("Make a **DJ mashup** from two songs in your library — one song's **beat**, "
                      "the other's **vocals** — then play it right here or out loud in a voice channel."),
         color=ACCENT)
+    # The wordmark disc, attached alongside as logo.png by the /help handler.
+    e.set_thumbnail(url="attachment://logo.png")
     e.add_field(
         name="🎛️  /mix",
         value=("Pick a **beat** and a **vocal** (start typing — it autocompletes) and Grinder posts "

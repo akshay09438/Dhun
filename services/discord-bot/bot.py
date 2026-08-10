@@ -20,7 +20,9 @@ from pathlib import Path
 import discord
 from discord import app_commands
 
+import brand
 import media
+import server_setup
 import voice_player
 from api_client import EngineError, PromptDJClient, Song
 from botconfig import load_config
@@ -33,7 +35,7 @@ log = logging.getLogger("promptdj.discord")
 
 CFG = load_config()
 BOT_NAME = "Grinder"       # the beta Discord bot's name (Prompt-DJ is the product)
-VIOLET = ui.ACCENT         # the app's "Electric Violet" accent (#6d3bf5) — single source of truth in ui.py
+VIOLET = ui.ACCENT         # the Grinder purple, sampled from the artwork — defined in brand.py
 MAX_TAKES = 5              # matches the web app's MAX_GENERATIONS_PER_SESSION
 
 
@@ -88,6 +90,28 @@ class PromptDJBot(discord.Client):
 
     async def on_ready(self) -> None:
         log.info("logged in as %s (id %s)", self.user, getattr(self.user, "id", "?"))
+        await self._apply_brand()
+
+    async def _apply_brand(self) -> None:
+        """Put the Grinder mark on the bot itself, and remember its URL for the cards.
+
+        Only uploads the avatar when the bot HAS no avatar yet: Discord rate-limits avatar changes
+        hard (a couple per stretch), and re-uploading identical bytes on every restart would burn
+        that budget for nothing. To force a re-upload after new artwork, clear the bot's avatar in
+        the Developer Portal and restart. Never fatal — a bot that can't set its picture must still
+        make mixes."""
+        user = self.user
+        if user is None:
+            return
+        try:
+            if user.avatar is None:
+                data = brand.image_bytes(brand.ICON)
+                if data is not None:
+                    await user.edit(avatar=data)
+                    log.info("brand: avatar set from %s", brand.ICON.name)
+            ui.set_avatar_url(str(user.display_avatar.url) if user.display_avatar else None)
+        except Exception:  # noqa: BLE001 — branding is cosmetic; never let it stop the bot
+            log.warning("brand: couldn't set the avatar (continuing)", exc_info=True)
 
 
 bot = PromptDJBot()
@@ -246,7 +270,47 @@ async def mix_cmd(interaction: discord.Interaction, beat: str, vocals: str) -> N
 
 @bot.tree.command(name="help", description="How Grinder works — a quick guide.")
 async def help_cmd(interaction: discord.Interaction) -> None:
-    await interaction.response.send_message(embed=ui.help_embed(), ephemeral=True)
+    # The wordmark rides along as an attachment; the embed references it as attachment://logo.png.
+    logo = brand.image_bytes(brand.LOGO)
+    files = [discord.File(brand.LOGO, filename="logo.png")] if logo else []
+    await interaction.response.send_message(embed=ui.help_embed(), files=files, ephemeral=True)
+
+
+@bot.tree.command(name="setup", description="Build out this server — channels, roles, emojis, branding.")
+@app_commands.checks.has_permissions(manage_guild=True)
+async def setup_cmd(interaction: discord.Interaction) -> None:
+    """Build the community inside a server the founder already created and owns.
+
+    Gated on Manage Server so a random member can't restructure the place. Deferred because a full
+    run makes a dozen API calls (categories, channels, roles, six emoji uploads) and will comfortably
+    exceed Discord's 3-second reply window."""
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            embed=ui.error_embed("Run this inside a server, not in a DM."), ephemeral=True)
+        return
+
+    await interaction.response.defer(thinking=True)
+    try:
+        report = await server_setup.run(interaction.guild)
+    except Exception as e:  # noqa: BLE001 — report the failure rather than a silent timeout
+        log.exception("setup failed outright")
+        await interaction.followup.send(
+            embed=ui.error_embed(f"Setup couldn't run: {e}"))
+        return
+    await interaction.followup.send(
+        embed=server_setup.report_embed(report, interaction.guild.name))
+
+
+@setup_cmd.error
+async def setup_error(interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
+    """Turn the permission check's failure into a plain sentence instead of Discord's raw error."""
+    if isinstance(error, app_commands.MissingPermissions):
+        msg = "You need the **Manage Server** permission to run setup."
+    else:
+        msg = f"Setup couldn't start: {error}"
+    send = (interaction.followup.send if interaction.response.is_done()
+            else interaction.response.send_message)
+    await send(embed=ui.error_embed(msg), ephemeral=True)
 
 
 @bot.tree.command(name="songs", description="List the songs you can mix.")
