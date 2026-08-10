@@ -177,6 +177,11 @@ export type MixDTO = {
  *  deterministically picks the rule (rule_shuffle) and uses the generation as the cache slot. */
 export type AutoRule = { userId: string; generation: number };
 
+/** Which surface a mix was made from, so the ops dashboard can separate web activity from the
+ *  Discord bot's. Attribution only — the backend records it and never lets it reach a cache id,
+ *  so tagging requests cannot change a mix or re-render a cached one. */
+const SOURCE = "web";
+
 /** Start making a mix of Song 1's beat + Song 2's vocal. Returns immediately.
  *  Pass `auto` for the shuffler-assigned rule (single mixes); `take`/`rule` are used only without it. */
 export async function startMix(
@@ -194,8 +199,16 @@ export async function startMix(
         prompt,
         user_id: auto.userId,
         generation: auto.generation,
+        source: SOURCE,
       }
-    : { song1_id: song1Id, song2_id: song2Id, prompt, take, rule };
+    : {
+        song1_id: song1Id,
+        song2_id: song2Id,
+        prompt,
+        take,
+        rule,
+        source: SOURCE,
+      };
   const res = await fetch(`${API_BASE}/mix`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -353,8 +366,9 @@ export async function startSet(
         })),
         user_id: auto.userId,
         set_index: auto.setIndex,
+        source: SOURCE,
       }
-    : { sets: pairs };
+    : { sets: pairs, source: SOURCE };
   const res = await fetch(`${API_BASE}/set`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

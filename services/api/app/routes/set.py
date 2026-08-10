@@ -89,6 +89,11 @@ class SetRequest(BaseModel):
     # -> same rules -> same set id, so a rebuild hits cache. Without them, each pair's explicit rule wins.
     user_id: str | None = None
     set_index: int | None = None
+    # OPS ATTRIBUTION ONLY (2026-08-10) — where the set was built ('web' | 'discord') and a display
+    # name if the surface has one. Recorded with the outcome and passed to each member mix; like
+    # user_id they are absent from set_id_for/mix_id_for, so they cannot change any cache id or audio.
+    source: str | None = None
+    user_name: str | None = None
 
 
 def _resolve_pairs(req: "SetRequest") -> list[tuple[str, str, int]]:
@@ -198,24 +203,28 @@ def _seam_positions(seq: list[dict]) -> tuple[list[float], float]:
 
 
 def _record_set_event(set_id: str, user_id: str | None, status: str,
-                      members: list["SetMember"], reason: str | None, duration: float | None) -> None:
+                      members: list["SetMember"], reason: str | None, duration: float | None,
+                      source: str | None = None, user_name: str | None = None) -> None:
     """Record this set's outcome to the ops event log. NON-FATAL: any failure is swallowed."""
     try:
         events.record_set(
             settings.data_dir, set_id=set_id, status=status, user_id=user_id,
             members=[m.model_dump() for m in members], fail_reason=reason,
-            extra={"duration": duration} if duration is not None else None)
+            extra={"duration": duration} if duration is not None else None,
+            source=source, user_name=user_name)
     except Exception:  # noqa: BLE001 — telemetry must never break a set
         log.exception("failed to record set event for %s", set_id)
 
 
-def _run_set(set_id: str, pairs: list[tuple[str, str, int]], user_id: str | None = None) -> None:
+def _run_set(set_id: str, pairs: list[tuple[str, str, int]], user_id: str | None = None,
+             source: str | None = None, user_name: str | None = None) -> None:
     """Background worker: reconcile tempo -> render each kept pair (reuse mix._run_mix) -> crop each to
     its ~180s best-parts highlight (workers.best_parts, post-render) -> join. Best-parts is the DEFAULT
     output. A crop that fails falls back to that mix's full render, so a set never fails on the crop.
 
-    `user_id` (the anonymous device tag) is recorded with the set outcome, and passed to each member's
-    mix so a mix made inside a set is attributed to the same device (via='set'). It never affects audio."""
+    `user_id` (the device tag or Discord account id) is recorded with the set outcome, and passed to
+    each member's mix so a mix made inside a set is attributed to the same person (via='set'), along
+    with `source` ('web' | 'discord') and `user_name`. None of them ever affects audio."""
     members: list[SetMember] = []  # bound before the try so an early failure still records cleanly
     try:
         maybe_sweep()  # free disk (evict old regenerable renders) before this render-heavy job
@@ -256,7 +265,8 @@ def _run_set(set_id: str, pairs: list[tuple[str, str, int]], user_id: str | None
             wav = mixroute._mix_wav(mid)
             if not (wav.exists() and mixroute._plan_path(mid).exists()):
                 # synchronous — reuses the shipped pipeline; attributed to this set's device, marked via='set'
-                mixroute._run_mix(mid, s1, s2, "", 1, rule, user_id=user_id, via="set")
+                mixroute._run_mix(mid, s1, s2, "", 1, rule, user_id=user_id, via="set",
+                                  source=source, user_name=user_name)
             plan_file = mixroute._plan_path(mid)
             if not plan_file.exists():  # the pipeline declined this pair
                 _status, reason = mixroute._jobs.get(mid, ("error", "This pair couldn't be mixed."))
@@ -288,7 +298,8 @@ def _run_set(set_id: str, pairs: list[tuple[str, str, int]], user_id: str | None
         if not rendered:
             reason = "None of these sets could be built — try different songs."
             _jobs[set_id] = ("error", reason)
-            _record_set_event(set_id, user_id, "failed", members, reason, None)
+            _record_set_event(set_id, user_id, "failed", members, reason, None,
+                              source=source, user_name=user_name)
             return
 
         # 3. Join the kept mixes with the shipped seam engine. Each member carries the tempo it plays
@@ -314,17 +325,20 @@ def _run_set(set_id: str, pairs: list[tuple[str, str, int]], user_id: str | None
         )
         _set_manifest(set_id).write_text(done.model_dump_json())
         _jobs.pop(set_id, None)
-        _record_set_event(set_id, user_id, "ok", members, None, round(total, 3))
+        _record_set_event(set_id, user_id, "ok", members, None, round(total, 3),
+                          source=source, user_name=user_name)
     except SetRenderError as e:
         reason = f"Couldn't join these mixes into a set: {e}"
         _jobs[set_id] = ("error", reason)
-        _record_set_event(set_id, user_id, "failed", members, reason, None)
+        _record_set_event(set_id, user_id, "failed", members, reason, None,
+                          source=source, user_name=user_name)
     except Exception:  # noqa: BLE001 — never leak a raw trace; log so a systematic bug isn't invisible
         log.exception("set build failed for %s", set_id)
         _set_wav(set_id).unlink(missing_ok=True)
         reason = "Couldn't build this set. Try different songs."
         _jobs[set_id] = ("error", reason)
-        _record_set_event(set_id, user_id, "failed", members, reason, None)
+        _record_set_event(set_id, user_id, "failed", members, reason, None,
+                          source=source, user_name=user_name)
 
 
 @router.post("/set")
@@ -351,7 +365,9 @@ def start_set(req: SetRequest, response: Response) -> SetJob:
 
     if _jobs.get(set_id, (None,))[0] != "processing":
         _jobs[set_id] = ("processing", None)
-        threading.Thread(target=_run_set, args=(set_id, pairs, req.user_id), daemon=True).start()
+        threading.Thread(target=_run_set, args=(set_id, pairs, req.user_id),
+                         kwargs={"source": req.source, "user_name": req.user_name},
+                         daemon=True).start()
 
     response.status_code = 202
     return SetJob(set_id=set_id, status="processing")

@@ -115,6 +115,9 @@ class MixContext:
         self.song2_id = song2_id
         self.generation = generation
         self.user_id = str(interaction.user.id)
+        # The name the operator would actually recognise in their own server (a nickname if the
+        # member set one, otherwise the account name). Sent for the ops dashboard only.
+        self.user_name = getattr(interaction.user, "display_name", None) or interaction.user.name
         self.name1 = _name_of(song1_id)
         self.name2 = _name_of(song2_id)
         self.message: discord.Message | None = None
@@ -132,7 +135,8 @@ class MixContext:
 
         try:
             mix_id = await bot.api.start_mix(self.song1_id, self.song2_id,
-                                             self.user_id, self.generation)
+                                             self.user_id, self.generation,
+                                             user_name=self.user_name)
         except EngineError as e:
             await self._fail(str(e))
             return
@@ -307,6 +311,7 @@ class SetContext:
         self.interaction = interaction
         self.pairs = pairs                       # list[(beat_id, vocals_id)]
         self.user_id = str(interaction.user.id)
+        self.user_name = getattr(interaction.user, "display_name", None) or interaction.user.name
         self.message: discord.Message | None = None
         self.audio_path: Path | None = None
 
@@ -327,7 +332,8 @@ class SetContext:
         building = self._building_embed()
         self.message = await self.interaction.followup.send(embed=building)
         try:
-            set_id = await bot.api.start_set(self.pairs, self.user_id, set_index=0)
+            set_id = await bot.api.start_set(self.pairs, self.user_id, set_index=0,
+                                             user_name=self.user_name)
         except EngineError as e:
             await self.message.edit(embed=_error_embed(str(e)))
             return

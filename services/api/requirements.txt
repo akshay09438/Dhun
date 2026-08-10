@@ -8,3 +8,7 @@ scipy==1.*
 soundfile==0.*
 pytest==8.*
 httpx==0.27.*
+# The IANA timezone database for zoneinfo. Windows ships no system tz database, so without this
+# PROMPTDJ_REPORT_TZ would be silently ignored on the founder's machine and every dashboard hour
+# would fall back to the OS zone — a setting that looks applied but isn't. Tiny + pure Python.
+tzdata==2025.*
