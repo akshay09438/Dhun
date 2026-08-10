@@ -38,7 +38,7 @@ class ChannelSpec:
     name: str
     topic: str = ""
     voice: bool = False
-    # True for channels only the bot and staff should post in (#read-me, #announcements). Everyone
+    # True for channels only the bot and staff should post in (#welcome). Everyone
     # can still READ them — this stops a welcome channel filling up with chatter.
     read_only: bool = False
     # A prettier name to create the channel WITH. Discord slugifies text-channel names (lowercase,
@@ -61,26 +61,18 @@ class CategorySpec:
 # The community, as a data structure. Change this list to change the server — it is deliberately
 # the only place the layout is described, so re-shaping the community is a one-place edit.
 STRUCTURE: tuple[CategorySpec, ...] = (
-    CategorySpec("WELCOME", (
-        ChannelSpec("read-me", "What Grinder is and how to make your first mix.", read_only=True),
-        ChannelSpec("announcements", "New songs, new features, session times.", read_only=True),
-    )),
+    # FOUR channels, one category, on purpose (founder call 2026-08-11, cut down from ten).
+    # A near-empty server with ten channels reads as abandoned, not organised - every room looks
+    # dead because the few people there are spread across all of them. Start narrow; split a
+    # channel only once conversation is genuinely spilling out of it.
     CategorySpec("GRINDER", (
-        ChannelSpec("make-a-mix", "Use /mix here. Pick a beat, pick a vocal, get a mashup."),
+        ChannelSpec("welcome", "What Grinder is and how to make your first mix.", read_only=True),
+        # Deliberately NOT read-only. This is the one music room: you run /mix here AND the good
+        # ones live here. Splitting "where you make them" from "where the best ones go" needs more
+        # people than this server has - until then it would just be two quiet channels.
+        ChannelSpec("best-mixes", "Use /mix here, and post the ones worth keeping."),
+        ChannelSpec("feedback", "Bugs, song requests, anything at all."),
         ChannelSpec("the-booth", voice=True, display="The Booth"),
-        ChannelSpec("now-playing", "What's playing in The Booth right now."),
-    )),
-    CategorySpec("SHOWCASE", (
-        # Read-only ON PURPOSE, and first in the category. This is the curated "best of" — the
-        # channel you point a newcomer at — so it only works if it stays curated. #i-made-this
-        # below is the open room where anyone posts; the good ones get carried up to here.
-        ChannelSpec("best-mixes", "The best of Grinder. Start here.", read_only=True),
-        ChannelSpec("i-made-this", "Post a mix you're proud of. React 🔥 to the ones you'd play."),
-        ChannelSpec("requests", "A song you wish was in the library? Name it here."),
-    )),
-    CategorySpec("HANGOUT", (
-        ChannelSpec("general", "Anything goes."),
-        ChannelSpec("feedback", "Something broken, confusing, or missing? Tell us here."),
     )),
 )
 
@@ -92,6 +84,7 @@ ROLES: tuple[tuple[str, int, str], ...] = (
 )
 
 VOICE_CHANNEL = "the-booth"
+WELCOME_CHANNEL = "welcome"
 
 
 @dataclasses.dataclass
@@ -100,6 +93,8 @@ class Report:
     created: list[str] = dataclasses.field(default_factory=list)
     skipped: list[str] = dataclasses.field(default_factory=list)
     failed: list[str] = dataclasses.field(default_factory=list)
+    # Channels on the server that aren't in the plan. Reported, never deleted - see extra_channels.
+    extra: list[str] = dataclasses.field(default_factory=list)
 
     def ok(self, label: str) -> None:
         self.created.append(label)
@@ -251,6 +246,25 @@ async def _repair_read_only(guild: discord.Guild, channel, ch: ChannelSpec,
         report.error(f"#{ch.label} bot-post permission", e)
 
 
+def extra_channels(guild: discord.Guild) -> list[str]:
+    """Channels on the server that AREN'T in the plan.
+
+    `/setup` only ever creates, never deletes, so shrinking STRUCTURE leaves the old channels
+    behind. Deleting them automatically is not on: a channel can hold conversation, and losing that
+    to a config change would be indefensible. So they get REPORTED, and the founder deletes the ones
+    they actually want gone - two clicks each, and no chance of losing something that mattered."""
+    planned = {ch.label.lower() for cat in STRUCTURE for ch in cat.channels}
+    planned |= {ch.name.lower() for cat in STRUCTURE for ch in cat.channels}
+    out = []
+    for c in guild.channels:
+        if isinstance(c, discord.CategoryChannel):
+            continue
+        if c.name.lower() not in planned:
+            out.append(("🔊 " if getattr(c, "type", None) == discord.ChannelType.voice else "#")
+                       + c.name)
+    return sorted(out)
+
+
 async def upload_emojis(guild: discord.Guild, report: Report) -> None:
     """Upload the six brand emojis. Skips any the server already has by that name."""
     have = {e.name.lower() for e in guild.emojis}
@@ -270,68 +284,59 @@ async def upload_emojis(guild: discord.Guild, report: Report) -> None:
 
 
 def welcome_embeds(guild: discord.Guild) -> list[discord.Embed]:
-    """The #read-me post: what this is, how to start, and what the reactions mean."""
+    """The #welcome post: what this is, how to start, and what each channel is for.
+
+    Two cards, not three. With four channels there isn't enough to say to justify a third, and a
+    long welcome is the fastest way to make a small server feel like homework."""
     intro = discord.Embed(
         title="Welcome to Grinder",
         description=(
             "Grinder makes a **DJ mashup** out of two songs: one song's **beat**, another song's "
-            "**vocals**. You don't need to know how to DJ, you just pick two songs."),
+            "**vocals**. You don't need to know how to DJ. You just pick two songs."),
         color=brand.PRIMARY)
     intro.set_image(url="attachment://logo.png")
 
-    how = discord.Embed(title="Making your first mix", color=brand.PRIMARY)
+    how = discord.Embed(title="Make your first mix", color=brand.PRIMARY)
     how.add_field(
-        name="1 · Go to #make-a-mix",
-        value="Type **`/mix`**. Start typing a song name and it'll autocomplete.",
+        name="1. Go to #best-mixes and type /mix",
+        value="Start typing a song name and it fills itself in.",
         inline=False)
     how.add_field(
-        name="2 · Pick a beat, then a vocal",
+        name="2. Pick a beat, then a vocal",
         value="The first song gives the rhythm. The second gives the singing.",
         inline=False)
     how.add_field(
-        name="3 · Listen, then push it further",
-        value=("**Another take** gives you a different version of the same pair. "
-               "**Play in voice** makes Grinder join your voice channel and play it out loud."),
+        name="3. Listen, then push it further",
+        value=("**Another take** gives you a different version of the same two songs. "
+               "**Play in voice** makes Grinder join 🔊 The Booth and play it out loud."),
         inline=False)
     how.add_field(
-        name="Other commands",
-        value="**`/set`** builds a continuous set of up to 5 mixes · "
-              "**`/songs`** lists the library · **`/help`** explains everything",
+        name="The rest of the commands",
+        value="**`/set`** joins up to 5 mixes into one continuous set · "
+              "**`/songs`** lists everything you can pick · **`/help`** explains it all",
         inline=False)
-
-    house = discord.Embed(title="How we use this place", color=brand.PINK)
-    house.add_field(
-        name="#best-mixes",
-        value="The good stuff, in one place. Read-only: mixes get carried up here from "
-              "#i-made-this once people react to them.",
+    how.add_field(
+        name="Where things go",
+        value=("**#best-mixes** make them here, and post the ones worth keeping. React 🔥 to the "
+               "good ones.\n"
+               "**#feedback** anything broken, confusing, or a song you wish was in the library.\n"
+               "**🔊 The Booth** where mixes get played out loud. Grab **@Session Crew** to be "
+               "pinged when a session starts."),
         inline=False)
-    house.add_field(
-        name="#i-made-this",
-        value="Post mixes you'd actually play. React 🔥 to the good ones. That's how they end up "
-              "in #best-mixes, and how we find out what's working.",
-        inline=False)
-    house.add_field(
-        name="#requests",
-        value="Want a song that isn't in the library? Say so here.",
-        inline=False)
-    house.add_field(
-        name="🔊 The Booth",
-        value="Where mixes get played out loud. Grab **@Session Crew** to be pinged when one starts.",
-        inline=False)
-    house.set_footer(text=f"{guild.name} · powered by Prompt-DJ")
-    return [intro, how, house]
+    how.set_footer(text=f"{guild.name} · powered by Prompt-DJ")
+    return [intro, how]
 
 
 async def post_welcome(guild: discord.Guild, report: Report) -> None:
-    """Post (once) into #read-me. Skipped if the channel already has messages, so re-running
+    """Post (once) into #welcome. Skipped if the channel already has messages, so re-running
     /setup never spams the channel."""
-    channel = _by_name(guild.text_channels, "read-me")
+    channel = _by_name(guild.text_channels, WELCOME_CHANNEL)
     if channel is None:
-        report.error("welcome post", RuntimeError("#read-me doesn't exist"))
+        report.error("welcome post", RuntimeError(f"#{WELCOME_CHANNEL} doesn't exist"))
         return
     try:
         async for _ in channel.history(limit=1):
-            report.already("welcome post (#read-me isn't empty)")
+            report.already(f"welcome post (#{WELCOME_CHANNEL} isn't empty)")
             return
     except Exception as e:  # noqa: BLE001 — can't read history => don't risk double-posting
         report.error("welcome post", e)
@@ -341,14 +346,14 @@ async def post_welcome(guild: discord.Guild, report: Report) -> None:
     files = [discord.File(brand.LOGO, filename="logo.png")] if logo else []
     try:
         await channel.send(embeds=welcome_embeds(guild), files=files)
-        report.ok("welcome post in #read-me")
+        report.ok(f"welcome post in #{WELCOME_CHANNEL}")
     except Exception as e:  # noqa: BLE001
         report.error("welcome post", e)
 
 
 async def run(guild: discord.Guild, *, refresh_branding: bool = False) -> Report:
     """Build the whole community. Order matters: channels before the welcome post (it needs
-    #read-me), and the icon first so the founder sees something change immediately.
+    #welcome), and the icon first so the founder sees something change immediately.
 
     `refresh_branding` re-applies the icon (and banner) over existing art — the way to push updated
     artwork onto a server that is already branded."""
@@ -359,6 +364,7 @@ async def run(guild: discord.Guild, *, refresh_branding: bool = False) -> Report
     await create_channels(guild, report)
     await upload_emojis(guild, report)
     await post_welcome(guild, report)
+    report.extra = extra_channels(guild)
     return report
 
 
@@ -384,6 +390,13 @@ def report_embed(report: Report, guild_name: str) -> discord.Embed:
         e.add_field(name=f"Created ({len(report.created)})", value=block(report.created), inline=False)
     if report.skipped:
         e.add_field(name=f"Already there ({len(report.skipped)})", value=block(report.skipped), inline=False)
+    if report.extra:
+        e.add_field(
+            name=f"Not in the plan ({len(report.extra)})",
+            value=block(report.extra) + "\n\nDelete any you don't want: right-click the channel, "
+                                        "Delete Channel. Grinder won't delete them for you, in case "
+                                        "there's conversation in one.",
+            inline=False)
     if report.failed:
         e.add_field(name=f"Failed ({len(report.failed)})", value=block(report.failed), inline=False)
         e.set_footer(text="Most failures are a missing permission. Re-running /setup is safe: "
