@@ -5,8 +5,31 @@ import wave
 import ui
 
 
-def test_accent_is_electric_violet():
-    assert ui.ACCENT == 0x6D3BF5  # exact web-app purple (#6d3bf5)
+def test_accent_is_the_brand_purple_sampled_from_the_artwork():
+    """Changed 2026-08-10: was the web app's #6D3BF5, a BLUE-violet. The Grinder artwork is a
+    RED-violet, so the old accent read as a second, clashing brand sitting beside the logo. The
+    colour now lives in brand.py and is sampled from Icon.png / Main logo.png."""
+    import brand
+    assert ui.ACCENT == brand.PRIMARY == 0xA824CC
+    assert ui.ACCENT != 0x6D3BF5
+
+
+def test_cards_carry_the_grinder_mark_once_the_avatar_url_is_known():
+    """Every card shows the G as its author icon — but only after login, since Discord needs a URL."""
+    ui.set_avatar_url(None)
+    assert ui.help_embed().author.icon_url is None
+    try:
+        ui.set_avatar_url("https://cdn.example/icon.png")
+        for e in (ui.cooking_embed("A", "B"),
+                  ui.now_playing_embed(name="N", beat="A", vocals="B", total_secs=10, user=None),
+                  ui.error_embed("nope")):
+            assert e.author.icon_url == "https://cdn.example/icon.png"
+    finally:
+        ui.set_avatar_url(None)   # module-level state — don't leak into other tests
+
+
+def test_help_card_shows_the_wordmark():
+    assert ui.help_embed().thumbnail.url == "attachment://logo.png"
 
 
 def test_mmss():
