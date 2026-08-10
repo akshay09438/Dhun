@@ -14,6 +14,7 @@ almost nothing.
 """
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -57,6 +58,37 @@ def image_bytes(path: Path) -> bytes | None:
         return None
     _cache[path] = data
     return data
+
+
+# Which avatar art was last uploaded, so a NEW export gets applied on the next start while an
+# unchanged one doesn't burn Discord's avatar rate limit. Per-installation state, not source.
+_APPLIED_MARKER = ASSETS / ".applied-avatar"
+
+
+def icon_fingerprint() -> str | None:
+    """A short hash of the avatar art, or None if it's missing."""
+    data = image_bytes(ICON)
+    return hashlib.sha256(data).hexdigest()[:16] if data else None
+
+
+def avatar_needs_upload() -> bool:
+    """True when the shipped avatar art differs from whatever was last uploaded. Comparing against
+    Discord's copy is not viable — it re-encodes uploads, so the bytes never match — hence a local
+    marker of what we last sent."""
+    fp = icon_fingerprint()
+    if fp is None:
+        return False
+    try:
+        return _APPLIED_MARKER.read_text(encoding="utf-8").strip() != fp
+    except OSError:
+        return True          # no marker yet -> never uploaded from this checkout
+
+
+def mark_avatar_applied() -> None:
+    try:
+        _APPLIED_MARKER.write_text(icon_fingerprint() or "", encoding="utf-8")
+    except OSError:
+        pass                 # cosmetic bookkeeping; never worth failing a startup over
 
 
 def emoji_files() -> list[tuple[str, Path]]:

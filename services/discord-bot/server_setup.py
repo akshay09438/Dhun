@@ -120,6 +120,32 @@ def _by_name(items, name: str):
     return discord.utils.find(lambda c: c.name.lower() == lowered, items)
 
 
+def _overwrites_for(guild: discord.Guild, ch: ChannelSpec):
+    """The permission overwrites a channel is created with.
+
+    Two things learned the hard way on the first real run:
+
+    1. For an ordinary channel there are NO overwrites, and discord.py wants `MISSING` for that,
+       not `None` — passing None raises "overwrites parameter expects a dict" and the channel is
+       never created. (Every read-only channel succeeded and every normal one failed, which is
+       what pointed at this.)
+
+    2. A read-only channel must still explicitly ALLOW the bot to post. Channel-level overwrites
+       beat server-level role permissions, so denying `send_messages` to @everyone also silences
+       Grinder — which is how the welcome post failed with "Missing Permissions" in the very
+       channel it had just created."""
+    if not ch.read_only:
+        return discord.utils.MISSING
+    return {
+        # everyone: read and react, but don't post
+        guild.default_role: discord.PermissionOverwrite(
+            send_messages=False, add_reactions=True),
+        # the bot: must be able to post here, or it can't write the welcome
+        guild.me: discord.PermissionOverwrite(
+            send_messages=True, embed_links=True, attach_files=True),
+    }
+
+
 async def apply_icon(guild: discord.Guild, report: Report) -> None:
     """Set the server icon to the G mark. Skipped if the server already has any icon — replacing
     art the founder chose themselves would be presumptuous."""
@@ -187,6 +213,7 @@ async def create_channels(guild: discord.Guild, report: Report) -> None:
             # run wouldn't recognise the channel and would duplicate it.
             existing = _by_name(guild.channels, ch.label)
             if existing is not None:
+                await _repair_read_only(guild, existing, ch, report)
                 report.already(f"🔊 {ch.label}" if ch.voice else f"#{ch.label}")
                 continue
             try:
@@ -195,19 +222,30 @@ async def create_channels(guild: discord.Guild, report: Report) -> None:
                         ch.label, category=category, reason="Grinder /setup")
                     report.ok(f"🔊 {ch.label}")
                 else:
-                    overwrites = None
-                    if ch.read_only:
-                        # Everyone can read, only staff/bot can post.
-                        overwrites = {
-                            guild.default_role: discord.PermissionOverwrite(
-                                send_messages=False, add_reactions=True),
-                        }
                     await guild.create_text_channel(
                         ch.name, category=category, topic=ch.topic or None,
-                        overwrites=overwrites, reason="Grinder /setup")
+                        overwrites=_overwrites_for(guild, ch), reason="Grinder /setup")
                     report.ok(f"#{ch.name}")
             except Exception as e:  # noqa: BLE001
                 report.error(f"#{ch.name}", e)
+
+
+async def _repair_read_only(guild: discord.Guild, channel, ch: ChannelSpec,
+                            report: Report) -> None:
+    """Make sure the bot can post in an EXISTING read-only channel.
+
+    A channel created before the bot-allow fix denies `send_messages` to @everyone with no explicit
+    allow for Grinder, so the welcome post fails with "Missing Permissions" in a channel the bot
+    itself made. Skipping it on a re-run would leave that broken forever, so the idempotent path
+    repairs it rather than just stepping over it."""
+    if ch.voice or not ch.read_only:
+        return
+    try:
+        await channel.set_permissions(
+            guild.me, send_messages=True, embed_links=True, attach_files=True,
+            reason="Grinder /setup - let the bot post in its own read-only channel")
+    except Exception as e:  # noqa: BLE001 — report it; the welcome step will fail loudly anyway
+        report.error(f"#{ch.label} bot-post permission", e)
 
 
 async def upload_emojis(guild: discord.Guild, report: Report) -> None:

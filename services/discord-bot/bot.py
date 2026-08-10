@@ -130,20 +130,24 @@ class PromptDJBot(discord.Client):
     async def _apply_brand(self) -> None:
         """Put the Grinder mark on the bot itself, and remember its URL for the cards.
 
-        Only uploads the avatar when the bot HAS no avatar yet: Discord rate-limits avatar changes
-        hard (a couple per stretch), and re-uploading identical bytes on every restart would burn
-        that budget for nothing. To force a re-upload after new artwork, clear the bot's avatar in
-        the Developer Portal and restart. Never fatal — a bot that can't set its picture must still
-        make mixes."""
+        Uploads when the bot has no avatar OR when the shipped artwork has CHANGED since the last
+        upload (tracked by a local fingerprint — Discord re-encodes uploads, so comparing bytes
+        against its copy never works). That way new art applies itself on the next start, while an
+        unchanged one doesn't burn Discord's avatar rate limit, which is strict. Never fatal — a bot
+        that can't set its picture must still make mixes."""
         user = self.user
         if user is None:
             return
         try:
-            if user.avatar is None:
+            if user.avatar is None or brand.avatar_needs_upload():
                 data = brand.image_bytes(brand.ICON)
                 if data is not None:
                     await user.edit(avatar=data)
-                    log.info("brand: avatar set from %s", brand.ICON.name)
+                    brand.mark_avatar_applied()
+                    log.info("brand: avatar uploaded from %s (%s)",
+                             brand.ICON.name, brand.icon_fingerprint())
+            else:
+                log.info("brand: avatar already up to date")
             ui.set_avatar_url(str(user.display_avatar.url) if user.display_avatar else None)
         except Exception:  # noqa: BLE001 — branding is cosmetic; never let it stop the bot
             log.warning("brand: couldn't set the avatar (continuing)", exc_info=True)

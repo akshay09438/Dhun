@@ -25,9 +25,13 @@ OUT = Path(__file__).resolve().parent.parent / "assets"
 
 # (source name, output name, size) — each size is what Discord actually renders, not more.
 IMAGES: tuple[tuple[str, str, tuple[int, int]], ...] = (
-    # The "G" on the vinyl grooves: the bot's avatar AND the server icon. Discord shows an avatar
-    # at 128px at most, so 512 is already generous and keeps the file tiny.
-    ("Icon.png", "icon.png", (512, 512)),
+    # The bot's avatar AND the server icon. Discord shows an avatar at 128px at most, so 512 is
+    # already generous and keeps the file tiny.
+    # FOUNDER'S CHOICE (2026-08-11): the split-disc "Avatar biggest size.png", not the "G" mark.
+    # Flagged twice that the disc reads as sliced into two offset halves with no G — if that is
+    # deliberate (a cut record) it is a design decision, not a defect, and it is the founder's call.
+    # `Icon.png` (the G) stays in the source folder if it is ever wanted back.
+    ("Avatar biggest size.png", "icon.png", (512, 512)),
     # The GRINDER wordmark disc: the picture on the welcome post and /help. Discord renders an
     # embed image about 400px wide, so 640 is already more than it can show — and the grain in the
     # source art compresses badly, so every extra pixel costs real bytes for no visible gain.

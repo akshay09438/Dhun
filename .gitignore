@@ -37,3 +37,6 @@ Thumbs.db
 # Local editor/tooling settings (keep launch.json shared)
 .claude/settings.local.json
 services/api/_candidate_preload.py
+
+# Which avatar art the bot last uploaded (per-installation state, not source)
+services/discord-bot/assets/.applied-avatar

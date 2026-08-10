@@ -36,6 +36,7 @@ class FakeChannel:
         self.voice = voice
         self.topic = topic
         self.sent = []
+        self.perms = {}
         self._messages = list(messages)
 
     def history(self, limit=None):
@@ -49,6 +50,12 @@ class FakeChannel:
                 return gen()
 
         return _Iter()
+
+    def __post_init__(self):
+        pass
+
+    async def set_permissions(self, target, **perms):
+        self.perms[getattr(target, "name", str(target))] = perms
 
     async def send(self, *args, **kwargs):
         self.sent.append(kwargs)
@@ -80,6 +87,7 @@ class FakeGuild:
         self.roles = list(roles)
         self.emojis = list(emojis)
         self.default_role = FakeRole("@everyone")
+        self.me = FakeRole("Grinder")          # the bot's own member, for permission overwrites
         self.edits = []
         self.fail_on = set(fail_on)   # names of operations that should raise
 
@@ -109,7 +117,14 @@ class FakeGuild:
 
     async def create_text_channel(self, name, **kw):
         self._maybe_fail(f"channel:{name}")
+        # Faithful to discord.py: it rejects overwrites=None with exactly this TypeError. The fake
+        # used to accept None happily, which is why the first real /setup run failed on 5 channels
+        # while every test passed.
+        ow = kw.get("overwrites", discord.utils.MISSING)
+        if ow is None:
+            raise TypeError("overwrites parameter expects a dict.")
         c = FakeChannel(name, topic=kw.get("topic"))
+        c.overwrites = ow
         self.channels.append(c)
         return c
 
@@ -413,3 +428,49 @@ async def test_a_refused_guild_is_retried_next_time_rather_than_marked_done():
     tree.refuse.clear()                     # permission fixed, e.g. re-invited properly
     await s.sync_to_guilds([FakeGuildRef(1)])
     assert tree.synced == [1]
+
+
+# --- the two bugs the first real /setup run exposed ---------------------------------------
+
+@run_async
+async def test_an_ordinary_channel_is_created_without_None_overwrites():
+    """The bug: overwrites=None raises "overwrites parameter expects a dict" in discord.py, so all
+    five non-read-only channels silently failed to be created on the first real run."""
+    g = FakeGuild()
+    report = await server_setup.run(g)
+    assert not report.failed, report.failed
+    for name in ("make-a-mix", "now-playing", "i-made-this", "requests", "feedback"):
+        ch = next((c for c in g.channels if c.name == name), None)
+        assert ch is not None, f"#{name} was not created"
+        assert ch.overwrites is discord.utils.MISSING, f"#{name} should have no overwrites"
+
+
+@run_async
+async def test_a_read_only_channel_still_lets_the_bot_post():
+    """The second bug: denying send_messages to @everyone also silenced the bot, so the welcome
+    post failed with Missing Permissions in the channel the bot had just made."""
+    g = FakeGuild()
+    await server_setup.run(g)
+    read_me = next(c for c in g.channels if c.name == "read-me")
+    ow = read_me.overwrites
+    assert ow is not discord.utils.MISSING
+    assert ow[g.default_role].send_messages is False, "@everyone should not be able to post"
+    assert ow[g.me].send_messages is True, "the bot MUST be able to post its own welcome"
+
+
+@run_async
+async def test_a_rerun_repairs_a_read_only_channel_the_bot_cannot_post_in():
+    """A channel from before the fix denies the bot. Skipping it on a re-run would leave the server
+    permanently broken, so the idempotent path repairs permissions instead of stepping over it."""
+    g = FakeGuild(channels=[FakeChannel("read-me")])   # exists, no bot allow
+    await server_setup.run(g)
+    read_me = next(c for c in g.channels if c.name == "read-me")
+    assert read_me.perms.get("Grinder", {}).get("send_messages") is True
+
+
+@run_async
+async def test_an_ordinary_existing_channel_has_its_permissions_left_alone():
+    g = FakeGuild(channels=[FakeChannel("general")])
+    await server_setup.run(g)
+    general = next(c for c in g.channels if c.name == "general")
+    assert general.perms == {}, "a normal channel's permissions must not be touched"
