@@ -61,7 +61,7 @@ def best_rotation(orig: np.ndarray, shifted: np.ndarray) -> tuple[int, float, li
 _PC_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
 
-def rank_shifts(beat_chroma: np.ndarray, voc_chroma: np.ndarray, cap: int = 3) -> list[tuple[int, float]]:
+def rank_shifts(beat_chroma: np.ndarray, voc_chroma: np.ndarray, cap: int = 2) -> list[tuple[int, float]]:
     """Score every semitone shift s in [-cap, cap] by cosine similarity of the vocal chroma rotated UP
     by s against the beat chroma (AutoMashUpper H). Best-first, ties toward smaller |s|. Pure numpy —
     unit-testable with no audio."""
@@ -77,7 +77,7 @@ def rank_shifts(beat_chroma: np.ndarray, voc_chroma: np.ndarray, cap: int = 3) -
     return scored
 
 
-def best_shift(beat_chroma: np.ndarray, voc_chroma: np.ndarray, cap: int = 3) -> tuple[int, float, float]:
+def best_shift(beat_chroma: np.ndarray, voc_chroma: np.ndarray, cap: int = 2) -> tuple[int, float, float]:
     """The winning shift as (shift, score, baseline_score); baseline is the no-shift (s=0) cosine, so
     the caller can see how much the shift improved harmonic fit. Pure."""
     ranked = rank_shifts(beat_chroma, voc_chroma, cap)
@@ -108,7 +108,7 @@ def _decoded_chroma(paths: list[Path], t0: float | None = None, t1: float | None
     return chroma(y, SR)
 
 
-def empirical_shift(beat_harmony_paths: list[Path], vocal_path: Path, cap: int = 3,
+def empirical_shift(beat_harmony_paths: list[Path], vocal_path: Path, cap: int = 2,
                     vocal_region: tuple[float, float] | None = None) -> tuple[int, float, float]:
     """Measure the best vocal pitch-shift for this pair from AUDIO. `beat_harmony_paths` = the beat
     song's harmonic stems (bass + other); `vocal_path` = the vocal stem; `vocal_region` limits the

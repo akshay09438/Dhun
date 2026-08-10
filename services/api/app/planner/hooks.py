@@ -68,6 +68,15 @@ HOOKS: dict[str, tuple[float, float]] = {
     "ed2c86b75c81961842d7ea6509d0d962efd1798c49e45bed01395db0d49bcc46": (49.03, 68.65),
     # Closer (The Chainsmokers ft. Halsey) — founder-marked hook 0:51-1:10 (2026-08-08).
     "3f260b5cadb5a20ca475f50553f4d8512ed2764ba9f4d7988f9c1e0111d25f4e": (51.0, 70.0),
+    # --- Four new vocal donors, founder-marked by ear (scripts/mark_drops.html), wired 2026-08-10. ---
+    # Bad Guy (Billie Eilish) — founder-marked hook 1:14–1:30.
+    "e276a2ef08ece15e1e8bd314404757301c787f0374ce4f3b79d8d15d33eb5bd3": (74.52, 89.85),
+    # Panda (Desiigner) — founder-marked hook 0:40–1:07.
+    "f4cdd8c9f40266c534aecc3ce1ba82bb7dfb5672a2cbcf0ff2c28d712ccbdf86": (40.29, 67.33),
+    # Woh Lamhe Woh Baatein — founder-marked hook 0:43–1:11.
+    "1db2ea58e0162e6945591b9b5e539ca499414a61911b237baef3718ee7fd2ff9": (43.37, 70.52),
+    # Hum Pyaar Karne Wale (Dhurandhar) — founder-marked hook 0:48–1:14.
+    "262ee1c3ac150081b643637b63c209ac29244c5ca764d8c2317b7e0106b016e3": (48.11, 74.37),
 }
 
 

@@ -41,7 +41,7 @@ from app.planner import name as name_planner
 from app.planner import beat_guest_verse
 from app.planner import rule_shuffle
 from app.planner import window
-from app.planner.keys import resolve_key_shift
+from app.planner.keys import CAP_SEMITONES, resolve_key_shift
 from app.planner.plan import (MixDeclined, build_mix_plan, effect_pool_enabled,
                               exit_fade_enabled, finish_beat_vocal_enabled,
                               finish_sentences_enabled, force_tempo_enabled, rule4_enabled)
@@ -58,7 +58,10 @@ log = logging.getLogger("promptdj.mix")
 
 _HEX_ID = re.compile(r"[0-9a-f]{64}")
 _S1_STEMS = ("drums", "bass", "other")
-KEY_SHIFT_CAP = 3  # ±3 semitones, formant-preserved: the empirical chroma matcher's ceiling (founder 2026-08-07)
+KEY_SHIFT_CAP = CAP_SEMITONES  # HARD PITCH RULE (single source of truth): the empirical chroma matcher may NEVER
+#                              exceed the label-rule cap keys.CAP_SEMITONES (±2, the CDJ-3000 / founder ceiling).
+#                              Was ±3 (2026-08-07) — that looser fallback let a flagged song ship a +3 st shift
+#                              (Silence×With You, 2026-08-10); tightened to ±2 so no path can over-shift. See RULEBOOK.md.
 
 # Bump when the fence rules, the render engine, or the planner prompt change, so a
 # cached mix from an older engine is never silently served after we improve it.
@@ -195,7 +198,9 @@ ENGINE_VERSION = (_ENGINE_VERSION_BASE
                   + "+m13vrb"                                        # vocal-rich beats: guest verse + R1 clamp + no-chop
                   + ("+m14fade" if exit_fade_enabled() else "")      # musical exit-fade on each vocal line's tail
                   + ("+m15phrase" if finish_sentences_enabled() else "")   # phrase-safe slice ends (finish the sentence)
-                  + ("+m16beat" if finish_beat_vocal_enabled() else ""))   # beat vocal finishes its phrase + graceful fade
+                  + ("+m16beat" if finish_beat_vocal_enabled() else "")   # beat vocal finishes its phrase + graceful fade
+                  + "+m17marks6"   # wired 6 new songs' hand-marked hooks/drops (2026-08-10) -> re-render so they land
+                  + "+m18cap2")   # pitch cap hardened ±3 -> ±2 everywhere (2026-08-10) -> re-render any >2-shifted mix
 #          slices so the held-out window is FULL of vocal, not holes (founder: "more parts").
 #         (NOT m6.9: that string was already burned by a reverted experiment, so its stale renders
 #          would have been served as cache hits. A version string must be unique PER BEHAVIOUR.)

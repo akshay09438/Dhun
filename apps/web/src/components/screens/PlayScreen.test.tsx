@@ -124,10 +124,10 @@ test("a dropped set shows its plain-language reason and is marked skipped", () =
   expect(screen.getByText(/skipped/i)).toBeTruthy();
 });
 
-test("'another take' shows for a single mix and hides for a set", () => {
+test("'regenerate' shows for a single mix and hides for a set", () => {
   renderPlay({ regenerable: true });
-  expect(screen.getByRole("button", { name: /another take/i })).toBeTruthy();
+  expect(screen.getByRole("button", { name: /regenerate/i })).toBeTruthy();
   cleanup();
   renderPlay({ members: TWO_SETS, regenerable: false });
-  expect(screen.queryByRole("button", { name: /another take/i })).toBeNull();
+  expect(screen.queryByRole("button", { name: /regenerate/i })).toBeNull();
 });

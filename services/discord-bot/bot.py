@@ -24,7 +24,8 @@ import media
 import voice_player
 from api_client import EngineError, PromptDJClient, Song
 from botconfig import load_config
-from helpers import match_songs, safe_filename, select_option_specs, style_label
+import ui
+from helpers import match_songs, safe_filename, select_option_specs
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -32,7 +33,7 @@ log = logging.getLogger("promptdj.discord")
 
 CFG = load_config()
 BOT_NAME = "Grinder"       # the beta Discord bot's name (Prompt-DJ is the product)
-VIOLET = 0x8A2BE2          # the app's "Electric Violet" accent
+VIOLET = ui.ACCENT         # the app's "Electric Violet" accent (#6d3bf5) — single source of truth in ui.py
 MAX_TAKES = 5              # matches the web app's MAX_GENERATIONS_PER_SESSION
 
 
@@ -100,7 +101,7 @@ def _name_of(song_id: str) -> str:
 
 
 def _error_embed(msg: str) -> discord.Embed:
-    return discord.Embed(title="😕 Couldn't make that mix", description=msg, color=0xB00020)
+    return ui.error_embed(msg)
 
 
 # --------------------------------------------------------------------------------------
@@ -120,12 +121,7 @@ class MixContext:
         self.audio_path: Path | None = None   # the WAV, kept for voice playback
 
     def _cooking_embed(self) -> discord.Embed:
-        return discord.Embed(
-            title="🎧 Cooking your mix…",
-            description=(f"**{self.name1}**  ·  the beat\n**{self.name2}**  ·  the vocals\n\n"
-                         f"Take {self.generation + 1} — this is quick if we've mixed this pair before, "
-                         f"or up to a minute the first time."),
-            color=VIOLET)
+        return ui.cooking_embed(self.name1, self.name2)
 
     async def run(self, *, first: bool) -> None:
         cooking = self._cooking_embed()
@@ -167,13 +163,9 @@ class MixContext:
             return
 
         name = await bot.api.mix_name(self.name1, self.name2) or f"{self.name1} × {self.name2}"
-        embed = discord.Embed(
-            title=f"🎛️ {name}",
-            description=f"**{self.name1}** · beat   ×   **{self.name2}** · vocals",
-            color=VIOLET)
-        embed.add_field(name="Mix style", value=style_label(res.rule, res.notes), inline=True)
-        embed.add_field(name="Take", value=f"{self.generation + 1} of {MAX_TAKES}", inline=True)
-        embed.set_footer(text=f"{BOT_NAME} · tap 🔄 for another take, 🔊 to play in voice")
+        embed = ui.now_playing_embed(
+            name=name, beat=self.name1, vocals=self.name2,
+            total_secs=ui.wav_duration(wav), user=self.interaction.user)
         clip = discord.File(str(mp3), filename=f"{safe_filename(name)}.mp3")
         if self.message is not None:
             await self.message.edit(embed=embed, attachments=[clip], view=MixView(self))
@@ -194,7 +186,7 @@ class MixView(discord.ui.View):
             if getattr(item, "custom_id", None) == "another_take" and ctx.generation + 1 >= MAX_TAKES:
                 item.disabled = True
 
-    @discord.ui.button(label="Another take", emoji="🔄",
+    @discord.ui.button(label="Regenerate", emoji="🔄",
                        style=discord.ButtonStyle.primary, custom_id="another_take")
     async def another(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.defer()
@@ -248,6 +240,11 @@ async def mix_cmd(interaction: discord.Interaction, beat: str, vocals: str) -> N
     await ctx.run(first=True)
 
 
+@bot.tree.command(name="help", description="How Grinder works — a quick guide.")
+async def help_cmd(interaction: discord.Interaction) -> None:
+    await interaction.response.send_message(embed=ui.help_embed(), ephemeral=True)
+
+
 @bot.tree.command(name="songs", description="List the songs you can mix.")
 async def songs_cmd(interaction: discord.Interaction) -> None:
     if not bot.songs:
@@ -277,10 +274,10 @@ def _member_line(m: dict) -> str:
     idx = m.get("index", "?")
     n1, n2 = _name_of(m.get("song1_id", "")), _name_of(m.get("song2_id", ""))
     if not m.get("kept", True):
-        return f"~~{idx}. {n1} × {n2}~~ — skipped ({m.get('reason', 'couldn’t be mixed')})"
+        return f"~~Set {idx}: {n1} × {n2}~~ — skipped ({m.get('reason', 'couldn’t be mixed')})"
     seam = m.get("seam_at")
     when = f" · joins at {_mmss(seam)}" if seam else ""
-    return f"{idx}. **{n1}** × **{n2}**{when}"
+    return f"**Set {idx}:** {n1} × {n2}{when}"
 
 
 class SetView(discord.ui.View):
@@ -316,11 +313,7 @@ class SetContext:
     def _building_embed(self) -> discord.Embed:
         lines = "\n".join(f"{i}. {_name_of(a)} × {_name_of(b)}"
                           for i, (a, b) in enumerate(self.pairs, 1))
-        return discord.Embed(
-            title="🎚️ Building your set…",
-            description=(f"{len(self.pairs)} mixes, joined on the beat:\n{lines}\n\n"
-                         f"This renders each mix, so give it a minute or two the first time."),
-            color=VIOLET)
+        return ui.building_embed(lines, len(self.pairs))
 
     async def _fit_mp3(self, wav: Path, mp3: Path) -> None:
         """Transcode at the highest bitrate that still fits Discord's upload limit, so even a
@@ -366,10 +359,7 @@ class SetContext:
         members = res.members or []
         kept = [m for m in members if m.get("kept", True)]
         lines = "\n".join(_member_line(m) for m in members) or "—"
-        embed = discord.Embed(title="🎚️ Your DJ set", description=lines, color=VIOLET)
-        embed.add_field(name="Length", value=_mmss(res.duration or 0), inline=True)
-        embed.add_field(name="Mixes", value=str(len(kept)), inline=True)
-        embed.set_footer(text=f"{BOT_NAME} · one continuous set, joined on the beat")
+        embed = ui.set_lineup_embed(lines, res.duration or 0, len(kept), self.interaction.user)
 
         size = mp3.stat().st_size if mp3.exists() else 0
         if 0 < size <= SET_SIZE_LIMIT_BYTES:

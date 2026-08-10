@@ -37,6 +37,11 @@ MAIN_DROPS: dict[str, list[float]] = {
     "ed2c86b75c81961842d7ea6509d0d962efd1798c49e45bed01395db0d49bcc46": [29.42, 48.97],
     # Closer (The Chainsmokers ft. Halsey) — founder-marked drops 0:31 and 1:11 (2026-08-08).
     "3f260b5cadb5a20ca475f50553f4d8512ed2764ba9f4d7988f9c1e0111d25f4e": [31.0, 71.0],
+    # --- Two new beats, founder-marked by ear (scripts/mark_drops.html), wired 2026-08-10. ---
+    # Hey Brother (Avicii) — founder-marked drop 0:35.
+    "40350cd8721eb38d2043d8c0b8c6210539f3b4440931f7a1745459a8bb37ec1c": [34.99],
+    # Silence — founder-marked drop 1:08.
+    "9bf2835f9efdc58f4e3a83b95e8f1d6180ed10de0f49d183fa3690e15dec99e1": [67.62],
 }
 
 
