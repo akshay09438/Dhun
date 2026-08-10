@@ -28,6 +28,7 @@ import numpy as np
 import soundfile as sf
 
 from app.audio.chroma import best_rotation, chroma
+from app.audio import f0
 from app.models import MixPlan, TrackAnalysis
 from app.planner.fence import (FORCE_STRETCH_HI, FORCE_STRETCH_LO, HOUSE_SLOW_MAX,
                                HOUSE_SPEED_MAX, LEAD_XFADE_SECS, SAFE_STRETCH_HI,
@@ -84,7 +85,10 @@ _ALL_MUTED_EPS = 0.05
 # be a plan check, by construction). These mirror the config's hard caps; a plan whose moves breach a
 # cap is rejected before it ever renders. With the chain disabled the plan carries no vocal/duck moves,
 # so none of these run and validation is exactly as before.
-_PITCH_MAX_SEMITONES = 3.0    # P1 (rubberband + formant=preserved; librosa would force 2.0 — not used)
+_PITCH_MAX_SEMITONES = 2.0    # P1 — THE hard pitch cap (== keys.CAP_SEMITONES; CDJ-3000/founder ceiling).
+#                               Tightened 3.0 -> 2.0 (2026-08-10): the referee must never be looser than the rule.
+_K1_F0_TOLERANCE_ST = 0.5     # K1 f0 ruler: |measured - claimed| beyond this = the shift did not land
+_K1_MEASURED_SLACK_ST = 0.25  # measurement noise allowance on the CAP check (executor noise ~0.1 st)
 _SATURATE_WET_CAP = 0.5      # P3
 _PRESENCE_GAIN_CAP = 6.0     # P3 (magnitude)
 _DUCK_DEPTH_CAP = 6.0        # P4
@@ -457,6 +461,27 @@ def assert_key_shift(original_vocal: Path, shifted_vocal: Path, semitones: int) 
     Raises ValidationError (=> the mix declines) if the shift did not land."""
     if int(semitones) == 0:
         return
+    if abs(float(semitones)) > _PITCH_MAX_SEMITONES + 1e-9:  # the +/-2 hard cap, BEFORE any audio read.
+        raise ValidationError([   # float-safe (int() would truncate 2.9 -> 2): no vocal ships beyond the rule.
+            f"key-shift referee (K1): shift {int(semitones):+d} st exceeds the +/-{_PITCH_MAX_SEMITONES:.0f} st "
+            "hard cap - declining"])
+    # PRIMARY ruler (2026-08-10): track the singer's actual f0 on frames where BOTH stems are voiced.
+    # Whole-stem chroma misreads speech-like vocals (rap/whisper: broadband noise dominates the
+    # fingerprint and does not move under a pitch shift), which wrongly declined provably-correct
+    # shifts (measured +1.91/-0.99/-1.00 st vs chroma readings 0/0/8). f0 reads the voice itself.
+    measured = f0.measured_shift_semitones(Path(original_vocal), Path(shifted_vocal))
+    if measured is not None:
+        semis, frames = measured
+        if abs(semis) > _PITCH_MAX_SEMITONES + _K1_MEASURED_SLACK_ST:
+            raise ValidationError([   # the CLAIM was legal but the AUDIO overshot the rule -> decline
+                f"key-shift referee (K1): the shipped vocal is pitched {semis:+.2f} st, beyond the "
+                f"+/-{_PITCH_MAX_SEMITONES:.0f} st hard cap (claimed {int(semitones):+d}); declining"])
+        if abs(semis - float(int(semitones))) <= _K1_F0_TOLERANCE_ST:
+            return  # the voice really moved by the claimed amount
+        raise ValidationError([
+            f"key-shift referee (K1): the shipped vocal's measured pitch shift is {semis:+.2f} st over "
+            f"{frames} voiced frames, not the claimed {int(semitones):+d} - the shift did not land; declining"])
+    # FALLBACK (unmeasurable vocal - too few voiced frames): the original chroma-rotation check.
     orig, sr = sf.read(str(original_vocal), dtype="float32", always_2d=True)
     shifted, _ = sf.read(str(shifted_vocal), dtype="float32", always_2d=True)
     rot, _margin, corrs = best_rotation(chroma(orig, sr), chroma(shifted, sr))

@@ -27,6 +27,9 @@ CACHE_SUFFIX = ".pitchshift.wav"  # filename ENDS with this — storage.py's end
 _LATENCY_S = 0.0146             # the helper's constant leading latency (measured); trimmed for alignment
 _MAX_ATTEMPTS = 3              # verify-retry bound: no two renders agree in this many → decline
 _RENDER_TIMEOUT_S = 180        # a hang IS the loud-failure case
+_PITCH_HARD_CAP = 2           # ±2 st — the ABSOLUTE pitch ceiling (== keys.CAP_SEMITONES). The decision layer
+#                              caps first; this is the EXECUTOR's own floor, so it can never render a bigger
+#                              shift than the rule whatever a caller passes. Hard pitch rule — see RULEBOOK.md.
 
 
 class PitchError(RuntimeError):
@@ -80,6 +83,9 @@ def shifted_vocal(song_id: str, vocal_wav: Path, semitones: int, formant: bool =
     verified render cannot be produced within the retry bound."""
     if int(semitones) == 0:
         return Path(vocal_wav)
+    if abs(int(semitones)) > _PITCH_HARD_CAP:  # defensive floor: the decision layer caps at ±2 first, so this
+        raise PitchError(                       # never fires in practice — but the executor will NOT over-shift.
+            f"pitch shift {int(semitones):+d} st exceeds the ±{_PITCH_HARD_CAP} st hard cap — declining")
     cache = cache_path(song_id, int(semitones), formant)
     if cache.exists():
         return cache  # airtight: same (content-id, shift, helper) always yields the same bytes

@@ -41,7 +41,7 @@ from app.planner import name as name_planner
 from app.planner import beat_guest_verse
 from app.planner import rule_shuffle
 from app.planner import window
-from app.planner.keys import resolve_key_shift
+from app.planner.keys import CAP_SEMITONES, resolve_key_shift
 from app.planner.plan import (MixDeclined, build_mix_plan, effect_pool_enabled,
                               exit_fade_enabled, finish_beat_vocal_enabled,
                               finish_sentences_enabled, force_tempo_enabled, rule4_enabled)
@@ -58,7 +58,10 @@ log = logging.getLogger("promptdj.mix")
 
 _HEX_ID = re.compile(r"[0-9a-f]{64}")
 _S1_STEMS = ("drums", "bass", "other")
-KEY_SHIFT_CAP = 3  # ±3 semitones, formant-preserved: the empirical chroma matcher's ceiling (founder 2026-08-07)
+KEY_SHIFT_CAP = CAP_SEMITONES  # HARD PITCH RULE (single source of truth): the empirical chroma matcher may NEVER
+#                              exceed the label-rule cap keys.CAP_SEMITONES (±2, the CDJ-3000 / founder ceiling).
+#                              Was ±3 (2026-08-07) — that looser fallback let a flagged song ship a +3 st shift
+#                              (Silence×With You, 2026-08-10); tightened to ±2 so no path can over-shift. See RULEBOOK.md.
 
 # Bump when the fence rules, the render engine, or the planner prompt change, so a
 # cached mix from an older engine is never silently served after we improve it.
@@ -195,7 +198,11 @@ ENGINE_VERSION = (_ENGINE_VERSION_BASE
                   + "+m13vrb"                                        # vocal-rich beats: guest verse + R1 clamp + no-chop
                   + ("+m14fade" if exit_fade_enabled() else "")      # musical exit-fade on each vocal line's tail
                   + ("+m15phrase" if finish_sentences_enabled() else "")   # phrase-safe slice ends (finish the sentence)
-                  + ("+m16beat" if finish_beat_vocal_enabled() else ""))   # beat vocal finishes its phrase + graceful fade
+                  + ("+m16beat" if finish_beat_vocal_enabled() else "")   # beat vocal finishes its phrase + graceful fade
+                  + "+m17marks6"   # wired 6 new songs' hand-marked hooks/drops (2026-08-10) -> re-render so they land
+                  + "+m18cap2"   # pitch cap hardened ±3 -> ±2 everywhere (2026-08-10) -> re-render any >2-shifted mix
+                  + "+m19k1")   # K1 referee re-ruled (f0-first) + never-refuse native-key fallback -> fresh ids so
+#                                 previously-declined pairs (wrongly failed by the chroma misread) re-render
 #          slices so the held-out window is FULL of vocal, not holes (founder: "more parts").
 #         (NOT m6.9: that string was already burned by a reverted experiment, so its stale renders
 #          would have been served as cache hits. A version string must be unique PER BEHAVIOUR.)
@@ -485,13 +492,31 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         # are visible on the backend instead of silent. Reporting only; never changes the mix.
         anomalies = anomaly.scan(grid_health=grid_health, tempo_forced=plan.tempo_forced,
                                  vocal_stretch=plan.vocal_stretch, key_why=why,
-                                 beat_vocal_coverage=instrumental_beats.vocal_coverage(a1))
+                                 beat_vocal_coverage=instrumental_beats.vocal_coverage(a1),
+                                 beat_bpm=float(getattr(a1, "bpm", 0.0) or 0.0),
+                                 vocal_bpm=float(getattr(a2, "bpm", 0.0) or 0.0))
         for _a in anomalies:
             (log.warning if _a.severity == "warn" else log.info)(anomaly.format_line(mix_id, _a))
 
         if shift != 0:
-            s2_voc = pitch.shifted_vocal(song2_id, orig_s2_voc, shift)        # PitchError -> loud decline
-            validate.assert_key_shift(orig_s2_voc, s2_voc, shift)            # K1 — independent correctness
+            # NEVER-REFUSE (founder rule 2026-08-10): if the shift can't be produced or verified,
+            # ship the vocal in its NATIVE key instead of declining — a mix ALWAYS comes out. The
+            # native key is the safest deliverable when the shift is unprovable (a blind/failed shift
+            # could land the wrong direction and sound worse). Logged + surfaced as an ops anomaly.
+            try:
+                s2_voc = pitch.shifted_vocal(song2_id, orig_s2_voc, shift)
+                validate.assert_key_shift(orig_s2_voc, s2_voc, shift)        # K1 — independent correctness
+            except (pitch.PitchError, validate.ValidationError) as e:
+                log.warning("mix %s key-shift %+d st could not be verified (%s) -> shipping NATIVE key",
+                            mix_id, shift, e)
+                anomalies.append(anomaly.Anomaly(
+                    code="key_shift_fallback",
+                    detail=f"the {shift:+d} st key shift could not be produced/verified: {e}",
+                    action="shipped the vocal in its NATIVE key (never-refuse); ear-check this pair's key",
+                    severity="warn"))
+                s2_voc = orig_s2_voc
+                shift = 0
+        plan.shipped_key_shift = int(shift)  # record what ACTUALLY shipped, so Play reproduces it exactly
 
         stems = {s: stem_path(song1_id, s) for s in _S1_STEMS}
         s1_voc = stem_path(song1_id, "vocals")  # Song 1's own vocal (contrast lead / the Rule-3 trade gaps)
@@ -515,6 +540,13 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         # full song). Built off the shared plan grid, so it works on any rule's rendered WAV.
         _build_bestparts(plan, mix_id)
         _plan_path(mix_id).write_text(plan.model_dump_json())  # persisting the plan, so 'ready' implies it exists
+        # A previously-rendered live bus for this mix_id may hold a DIFFERENT key (it is evictable and
+        # re-rendered independently). Drop it so Play can never serve a stale bus whose key disagrees
+        # with the Download we just wrote. (Adversarial review finding 2.)
+        try:
+            (settings.data_dir / f"{mix_id}.livearr.wav").unlink(missing_ok=True)
+        except OSError:  # a stale bus we cannot remove must never fail the mix
+            log.warning("could not clear the stale live bus for %s", mix_id)
         _jobs.pop(mix_id, None)  # readiness now inferred from the stored files
         _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "ok",
                           anomalies, None, plan)

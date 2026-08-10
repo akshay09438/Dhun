@@ -25,12 +25,30 @@ Before **any** rule runs, the engine reads both songs with its analyzer ("the se
 - **Track BPM.** Detect each song's tempo and every beat & downbeat, and check the grid is healthy (regular spacing that agrees with the tempo — a mis-read grid is flagged, `planner/beatgrid.py`). The beat song is the master clock.
 - **Stretch BPM (always match).** Time-stretch the vocal song onto the beat's grid, **bar by bar**, so the vocal locks to the beat and can never drift. When the pair is far apart, the vocal is stretched **fully** onto the beat (the beat keeps its native tempo and drive) and each bar is re-locked to a downbeat with a wider grip — so even a big stretch still lands on-beat. _Never declined for tempo._
 - **Track key.** Detect each song's musical key (Camelot) **with a confidence**.
-- **Change key (measured, not guessed).** Shift the vocal into a compatible key. When the key labels are trustworthy, use fuzzy keymixing (match the Camelot number, ignore the letter, smallest shift). When a label is **untrusted** (flagged / low-confidence — common on real uploads), **measure** the shift from the audio: chromagram of the beat's harmony vs the vocal, rotate the vocal across candidate shifts, pick the best harmonic fit (AutoMashUpper, `audio/chroma.py`). Cap ±3 semitones, **formant-preserved** so the voice never chipmunks. Zero shift when they already agree.
+- **Change key (measured, not guessed).** Shift the vocal into a compatible key. When the key labels are trustworthy, use fuzzy keymixing (match the Camelot number, ignore the letter, smallest shift). When a label is **untrusted** (flagged / low-confidence — common on real uploads), **measure** the shift from the audio: chromagram of the beat's harmony vs the vocal, rotate the vocal across candidate shifts, pick the best harmonic fit (AutoMashUpper, `audio/chroma.py`). **Hard cap ±2 semitones** (the industry / CDJ-3000 ceiling — enforced at every layer, see **Hard Rules** below; this replaced the earlier ±3 fallback that let a flagged song chipmunk, 2026-08-10), **formant-preserved** so the voice never chipmunks. Zero shift when they already agree.
 - **The only decline left.** A track with **no usable beat grid at all** (no clock to lock to) is the sole un-mixable case — a detection problem, not a tempo/key one. Everything else always produces a mix.
 
 _Research basis: AutoMashUpper (Davies et al., ISMIR 2013, `archives.ismir.net/ismir2013/paper/000077.pdf`) for the chroma match; fuzzy keymixing / CDJ-3000 Key Sync for the ±2–3 cap; Lee et al. (ISMIR 2015, `.../ismir2015/paper/000302.pdf`) vocal-over-instrumental asymmetry as a future refinement._
 
 > **Founder's rule:** BPM tracking + stretching and key tracking + changing are the **base of all rules**. Any pair going through any rule is matched first; only then does the rule build the mix.
+
+### Hard Rules (enforced — can never be broken)
+
+_Added 2026-08-10 (founder: "make it so no song can go beyond the rules… multiple checks, force checks"). These are limits the app may NEVER exceed, held by several independent layers so no single loosened line can reopen the gap._
+
+**Pitch — a vocal is NEVER shifted more than ±2 semitones.** One constant, `keys.CAP_SEMITONES = 2`, is the single source of truth, enforced independently at every layer a shift could slip through:
+
+1. **Decision (labels):** `keys.fuzzy_key_shift` only ever proposes a shift within ±2.
+2. **Decision (audio fallback):** `mix.KEY_SHIFT_CAP = keys.CAP_SEMITONES`, and the chroma matcher defaults to ±2 — so the audio-measured fallback can never exceed the label rule. _(This was the ±3 leak that made Silence × With You chipmunk at +3 st; closed 2026-08-10.)_
+3. **Executor:** `pitch.shifted_vocal` refuses to render any shift beyond ±2 — its own hard floor, whatever a caller passes.
+4. **Referee:** `validate.assert_key_shift` (K1) and P1 independently reject any finished render pitched beyond ±2.
+5. **Force-checks:** `tests/test_pitch_cap_hardrule.py` proves each layer; `scripts/sanity_check.py` proves every catalog pair stays within ±2 — a future edit that loosens any layer fails CI loudly.
+
+**A pair is NEVER refused, on key either.** If the shift cannot be produced or verified, the mix ships the vocal in its **native key** (with a visible ops warning) instead of declining — a mix always comes out. The referee measures the singer's actual pitch (`audio/f0.py`) and only falls back to chroma when a vocal is unmeasurable; the old chroma-only check wrongly declined correct shifts on rap/whisper vocals (2026-08-10).
+
+**Half-time pairings are flagged, not refused.** `best_stretch` folds octaves, so a ~2× pair (e.g. Silence 143 × Panda 72) locks perfectly on the beat with almost no stretch — technically right, but one song's pulse is twice the other's, which can feel frantic. The mix is still made; `anomaly.half_time_pair` records it (ops-visible) so a human can prefer a closer-tempo partner.
+
+**Tempo — the vocal is matched to the beat and stays beat-locked; a pair is never refused.** The beat is the master clock; the vocal is stretched (bar-by-bar re-locked) onto it. This behavior is intentionally unchanged (founder keeps the current BPM matching); the only un-mixable case remains a track with no usable beat grid.
 
 ---
 

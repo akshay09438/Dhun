@@ -10,7 +10,6 @@ import { studyAndBuildSet, studyAndMix, type StudyStage } from "./lib/study";
 import { getUserId, takeNextSetIndex } from "./lib/user";
 import {
   MAX_GENERATIONS_PER_SESSION,
-  ruleLabel,
   type PlayMember,
   type Screen,
   type SetPick,
@@ -185,9 +184,6 @@ export function App() {
           members={members}
           regenerable={!isSet && generation + 1 < MAX_GENERATIONS_PER_SESSION}
           regenerating={regenerating}
-          ruleName={isSet ? "" : ruleLabel(mix?.plan?.rule)}
-          takesUsed={isSet ? undefined : generation + 1}
-          maxTakes={isSet ? undefined : MAX_GENERATIONS_PER_SESSION}
           onRegenerate={handleRegenerate}
           onExport={() => setScreen("export")}
           onNextSong={startOver}

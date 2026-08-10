@@ -176,43 +176,41 @@ describe("App — the catalog flow", () => {
     expect(screen.queryByTestId("bus-vocals")).toBeNull();
   });
 
-  it("shows the auto-assigned mix style and 'take 1 of 5' on the first generation", async () => {
+  it("hides the mix style and take counter from users", async () => {
     mockBackend();
     render(<App />);
     await pickBothSongs();
     fireEvent.click(screen.getByRole("button", { name: /mix it/i }));
 
-    // READY_MIX is rule 4 → "Echo"; the first build is take 1 of 5.
-    const badge = await screen.findByTestId("rule-badge");
-    expect(badge.textContent).toMatch(/echo/i);
-    expect(screen.getByTestId("take-count").textContent).toMatch(
-      /take 1 of 5/i,
-    );
-    // No manual rule buttons anywhere anymore.
+    // Wait for the Play screen (regenerate appears for a single mix), then confirm the internal
+    // mix STYLE and the TAKE number are NOT shown to users anywhere.
+    await screen.findByRole("button", { name: /regenerate/i });
+    expect(screen.queryByTestId("rule-badge")).toBeNull();
+    expect(screen.queryByTestId("take-count")).toBeNull();
+    expect(screen.queryByText(/mix style/i)).toBeNull();
+    expect(screen.queryByText(/take \d+ of \d+/i)).toBeNull();
+    // No manual rule buttons anywhere either.
     expect(screen.queryByTestId("rule-1")).toBeNull();
     expect(screen.queryByTestId("rule-4")).toBeNull();
   });
 
-  it("caps 'another take' at 5 generations per sitting", async () => {
+  it("caps regeneration at 5 generations per sitting", async () => {
     mockBackend();
     render(<App />);
     await pickBothSongs();
     fireEvent.click(screen.getByRole("button", { name: /mix it/i }));
-    await screen.findByTestId("take-count");
 
-    // Generations 2..5 via "another take"; after the 5th the button is gone and the counter reads 5 of 5.
-    for (let expected = 2; expected <= 5; expected++) {
-      fireEvent.click(screen.getByRole("button", { name: /another take/i }));
-      await waitFor(() =>
-        expect(screen.getByTestId("take-count").textContent).toMatch(
-          new RegExp(`take ${expected} of 5`, "i"),
-        ),
-      );
+    // Regenerate up to the cap; after the 5th generation the button is gone. The cap still holds
+    // even though the take number is no longer shown to users.
+    for (let i = 2; i <= 5; i++) {
+      const btn = await screen.findByRole("button", { name: /regenerate/i });
+      fireEvent.click(btn);
+      await waitFor(() => {
+        const b = screen.queryByRole("button", { name: /regenerate/i });
+        expect(b === null || !(b as HTMLButtonElement).disabled).toBe(true);
+      });
     }
-    expect(screen.queryByRole("button", { name: /another take/i })).toBeNull();
-    expect(screen.getByTestId("take-count").textContent).toMatch(
-      /take 5 of 5/i,
-    );
+    expect(screen.queryByRole("button", { name: /regenerate/i })).toBeNull();
   });
 
   it("stacks two sets → builds a continuous set → Play shows both back-to-back", async () => {
@@ -230,9 +228,9 @@ describe("App — the catalog flow", () => {
     await waitFor(() => expect(screen.getByTestId("lineup-1")).toBeTruthy());
     expect(screen.getByTestId("lineup-2")).toBeTruthy();
     expect(screen.getByText(/back-to-back/i)).toBeTruthy();
-    // Each mix in the set shows its auto-assigned style (READY_SET is rule 3 then rule 1).
-    expect(screen.getByTestId("lineup-rule-1").textContent).toMatch(/chop/i);
-    expect(screen.getByTestId("lineup-rule-2").textContent).toMatch(/simple/i);
+    // The per-mix STYLE is internal-only now — the line-up shows song names + "Set N", not the rule.
+    expect(screen.queryByTestId("lineup-rule-1")).toBeNull();
+    expect(screen.queryByTestId("lineup-rule-2")).toBeNull();
   });
 
   it("shows only beats in Song 1 and only vocals in Song 2", async () => {
