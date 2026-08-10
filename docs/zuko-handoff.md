@@ -4,62 +4,44 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
-2026-08-10 (**overnight `/zuko:goodnight` — two tasks: HARD ±2 pitch rule + Grinder Rythm-style UI**) — **Branch `zuko/goodnight-2026-08-10`, NOT merged. Almost everything is done & tested; ONE 30-second morning tap remains (approve the referee-hardening).**
+2026-08-10 (**key-referee fix shipped + everything merged to `main` and pushed**) — **Nothing is in flight. `main` == GitHub `main` (PRs #20, #21 merged). Working tree clean. App + Discord bot running locally.**
 
 ---
 
-## ☀️ Read this first — your morning (2 minutes)
+## Where things stand
 
-Two tasks ran overnight. **All the safe work is done and tested. One safety-critical file is staged for your approval** — that's the only thing that needs you.
+**Everything from the last two days is merged, pushed, and green.** No staged approvals remain, no branch is unmerged, nothing is half-built.
 
-### The one tap: approve the referee hardening
+- **Catalog: 30 songs** (24 + Hey Brother, Silence, Bad Guy, Panda, Woh Lamhe Woh Baatein, Hum Pyaar Karne Wale) with their hand-marked drops/hooks wired into the planner.
+- **Song marks: 176 songs** captured in `scripts/song_marks.csv` (beat + English + Hindi). Not yet ingested — only the 6 above are in the app.
+- **Running locally:** backend `:8000`, web `:5173`, Grinder Discord bot (discord.py pinned <2.6 so voice works via PyNaCl).
 
-Open a normal (non-overnight) session and run **`/zuko:goodnight --review`** (or apply the queued card). There is **one** card:
+## What shipped (2026-08-10)
 
-- **`task1-referee-pitch-cap`** — hardens the quality-referee (`validate.py`) so it independently rejects any vocal pitched beyond ±2 semitones. Plain-language card + the exact diff are in `.zuko/goodnight/queue/`. Verdict: **safe** (it's a belt-and-suspenders backstop; the engine already can't produce >±2, so this just makes it impossible). The apply step re-runs the full test suite before folding it in.
+1. **±2 pitch hard-cap, defence in depth.** One constant (`keys.CAP_SEMITONES`) enforced at the decision layer, the audio-measured fallback (`mix.KEY_SHIFT_CAP`, was ±3 — the leak that made Silence × With You chipmunk at +3), the executor (`pitch.shifted_vocal`), and the referee. Force-checks: `tests/test_pitch_cap_hardrule.py` + a catalog-wide pitch sweep in `scripts/sanity_check.py`.
+2. **K1 referee re-ruled (the big one).** Three sets came back "skipped" on a key error. Diagnosis proved the **pitch engine correct** (measured +1.91 / −0.99 / −1.00 st for asked +2/−1/−1) and the **checker wrong**: whole-stem chroma misreads rap/whisper vocals. `validate.py` now measures the singer's actual pitch (`app/audio/f0.py`) first, falling back to chroma only when a vocal is unmeasurable. Founder-approved via confirm-and-apply, ear-trialled on Father Ocean × Bad Guy before applying.
+3. **Never-refuse now covers key.** If a shift can't be produced or verified, the mix ships the vocal in its **native key** with an ops warning (`key_shift_fallback`) instead of declining. Mirrored in `routes/live.py` so Play matches Download.
+4. **Half-time pairs flagged.** `anomaly.half_time_pair` reports a ~2× pair (Silence 143 × Panda 72 — octave-folded, exactly on-beat, but one pulse is twice the other). Report-only; the mix is still made.
+5. **f0 measurement cached.** Verification cost a measured 14–25 s per key-matched render; now ~20 ms on repeats (`MEASURE_VERSION` invalidates on any algorithm change).
+6. **Grinder Discord UI** — Rythm-style purple (`#6d3bf5`) now-playing cards, `/help`, voice enabled.
+7. **Style + take hidden from users** everywhere (web + Discord); still visible on the internal ops dashboard.
 
-**Even if you never tap it, the app is already protected** — the over-pitch was fixed in the non-dangerous files (already applied + tested). The tap just hardens the final backstop.
+## Verification evidence
 
----
+- **Full API suite: 670 passed, 0 failed.** Web: 66 passed, typecheck clean. Discord bot: 23 passed.
+- Catalog sweep: 216 pairs, 0 rule failures (includes the pitch-cap check).
+- Cache speed-up measured on real stems: 14.1→0.032 s, 21.4→0.020 s, 25.0→0.021 s, identical answers.
+- Previously-skipped pairs (Father Ocean × Bad Guy, Silence × Panda) now render on the real backend.
+- **Fixed a pre-existing flaky test** (`test_cache_sweep`): a just-written file's mtime can read ahead of `time.time()` on Windows (~13% of writes), so the grace-0 check skipped it. `_touch` now pins mtime 1 s in the past; 20/20 clean runs. Not a weakening — the age-grace test still passes explicit mtimes.
 
-## What got done
+## DO FIRST NEXT SESSION
 
-### Task 1 — Make the pitch rule unbreakable (your "no song goes beyond the rules")
+1. **Ear-check (founder only):** one rap/whisper pair and one high female vocal — the two cases verified mathematically but not by ear. Also the 5 "untrusted-key" songs (With You, Anchor Point, Dooriyan, Rapture, Wari Jawa) so their pairs use a real ±2 shift rather than the audio guess.
+2. **Ingest the remaining ~146 marked songs** when ready — one-time ~$26–37 (Demucs + All-In-One via Replicate). **Resolve disk/storage first** (~8–10 GB free on C:; ~215 songs' stems need 30–40 GB → point storage at R2 before ingesting).
+3. Optional: install the GitHub CLI (`gh`) so PRs can be opened/merged from the session instead of a manual click.
 
-**The bug you caught:** on Silence × With You the vocal was pushed **+3 semitones up** (chipmunky) — the audio-measured key fallback used a looser ±3 ceiling than the ±2 rule.
+## Open / parked (honest)
 
-**The fix (defense-in-depth — one rule, enforced at every layer so no single loosened line can reopen it):**
-
-- **Single source of truth:** `keys.CAP_SEMITONES = 2`. `mix.KEY_SHIFT_CAP` now equals it (was 3). The audio matcher (`chroma.py`) defaults dropped ±3→±2.
-- **Executor floor:** `pitch.shifted_vocal` refuses to render any shift >±2, whatever a caller passes.
-- **Referee backstop (STAGED for your tap):** `validate.py` P1 ±3→±2 + a new K1 size-check.
-- **Force-checks (your "multiple checks"):** `tests/test_pitch_cap_hardrule.py` proves each layer; `scripts/sanity_check.py` now sweeps the whole catalog (216 pairs) and confirms **0** exceed ±2.
-- **Docs:** `RULEBOOK.md` gained a "Hard Rules (enforced — can never be broken)" section.
-
-**Tempo/BPM: intentionally UNCHANGED** — you said "the BPM stretching is being done currently," so I kept it exactly as-is; the app still never refuses a pair. ⚠️ **Flag for your correction:** your tempo note was terse; I interpreted it as "keep tempo, fix pitch." If you actually wanted the tempo stretch also clamped, tell me and I'll do it (low-risk — it wasn't touched).
-
-**Verified:** full API suite **651 passed**. `ENGINE_VERSION +m18cap2` (any old >2-shifted mix re-renders).
-
-### Task 2 — Grinder Discord bot, Rythm-style + purple
-
-- New `services/discord-bot/ui.py`: the app's **exact purple `#6d3bf5`**, a Rythm-style **"Now playing" card** (title + slider progress bar + Style/Take/Length + "Requested by"), plus cooking/set/help/error cards — all in one place.
-- New **`/help`** command (a Rythm-style guide). Mix cards now show **length**.
-- **Kept** the pick-a-beat + pick-a-vocal flow — **no** search-any-song (your call). Commands work in any text channel; audio plays in voice.
-- Engine untouched (pure front-end). **22 bot tests pass** (15 + 7 new).
-- **To see it live:** it needs your token — run `services/discord-bot/Start-Grinder.bat`, then `/mix` or `/help` in your server. (I can't live-test Discord; the mock tests are green.)
-
----
-
-## In flight / honest state
-
-- **Branch `zuko/goodnight-2026-08-10` is NOT merged.** It also carries the earlier same-session work (the 6 new songs ingested + their marks wired + `+m17marks6`). Merge after you approve the one staged card.
-- **Nothing half-built.** The only deferred item is the staged `validate.py` card (by design — dangerous surfaces are never self-applied overnight).
-- **The catalog is now 30 songs** (24 + Hey Brother, Silence, Bad Guy, Panda, Woh Lamhe Woh Baatein, Hum Pyaar Karne Wale). Their hand-marks are wired.
-- **Still open (your ears, not code):** ear-check the 5 "untrusted-key" songs (With You, Anchor Point, Dooriyan, Rapture, Wari Jawa) so their pairs use a real ±2 shift instead of the audio guess. Same for the new songs' keys.
-- **The localhost app** was left running from earlier (backend `:8000`, web `:5173`) on the OLD code — **restart the backend** to pick up the pitch-cap change (`preview_start` / `.claude/launch.json` "backend").
-
-## Verification evidence (this session)
-
-- Task 1: `test_pitch_cap_hardrule.py` 4/4; `test_keys`/`test_pitch`/`test_chroma_match` 18/18; `test_mix_route` 19/19; **full API suite 651/651**; catalog sweep 216 pairs **0 rule failures**.
-- Task 2: `py_compile bot.py ui.py` OK; discord-bot suite **22/22**.
-- Staged card content compiles (`py_compile`) and no test assumes the old ±3.
+- **Half-time pairs are flagged, not de-prioritised** in set building — deliberate; revisit if odd pairings keep surfacing first.
+- **Tempo behaviour deliberately unchanged** (founder: keep the current BPM matching; never refuse a pair).
+- The `.zuko/goodnight/queue/` is empty — the referee card was applied and its provenance recorded in `.zuko/goodnight/applied.json`.
