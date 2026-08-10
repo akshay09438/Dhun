@@ -50,7 +50,7 @@ def _requester(user: discord.abc.User | None) -> str:
     return f"Requested by {getattr(user, 'display_name', None) or getattr(user, 'name', 'you')}"
 
 
-def cooking_embed(beat: str, vocals: str, take: int, max_takes: int) -> discord.Embed:
+def cooking_embed(beat: str, vocals: str) -> discord.Embed:
     e = discord.Embed(
         title="Cooking your mix…",
         description=(f"🎧  **{beat}**  ·  the beat\n"
@@ -58,23 +58,22 @@ def cooking_embed(beat: str, vocals: str, take: int, max_takes: int) -> discord.
                      f"`▚▚▚▚▚▚▚▚▚▚`  blending on the beat…"),
         color=ACCENT)
     e.set_author(name=f"{BOT_NAME} · mixing")
-    e.set_footer(text=f"Take {take} of {max_takes} · quick if we've mixed this pair before")
+    e.set_footer(text="Quick if we've mixed this pair before")
     return e
 
 
-def now_playing_embed(*, name: str, beat: str, vocals: str, style: str, take: int,
-                      max_takes: int, total_secs: float, user: discord.abc.User | None,
-                      in_voice: bool = False) -> discord.Embed:
-    """The finished-mix card — Rythm 'Now playing' shape, in Electric Violet."""
+def now_playing_embed(*, name: str, beat: str, vocals: str, total_secs: float,
+                      user: discord.abc.User | None, in_voice: bool = False) -> discord.Embed:
+    """The finished-mix card — Rythm 'Now playing' shape, in Electric Violet. The mixing STYLE
+    (which rule made it) and the TAKE number are deliberately NOT shown — they're internal-only
+    (kept on the ops dashboard), never surfaced to users. Only song names + length are shown."""
     e = discord.Embed(
         title=f"🎛️  {name}",
         description=f"{bar(0, total_secs)}\n\n**{beat}** · beat   ✕   **{vocals}** · vocals",
         color=ACCENT)
     e.set_author(name="Now playing in voice 🔊" if in_voice else "Now playing 🎧")
-    e.add_field(name="Style", value=style, inline=True)
-    e.add_field(name="Take", value=f"{take} / {max_takes}", inline=True)
     e.add_field(name="Length", value=mmss(total_secs), inline=True)
-    e.set_footer(text=f"{BOT_NAME} · {_requester(user)} · 🔄 another take · 🔊 play in voice")
+    e.set_footer(text=f"{BOT_NAME} · {_requester(user)} · 🔄 regenerate · 🔊 play in voice")
     return e
 
 

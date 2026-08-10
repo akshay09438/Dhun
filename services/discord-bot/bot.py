@@ -25,7 +25,7 @@ import voice_player
 from api_client import EngineError, PromptDJClient, Song
 from botconfig import load_config
 import ui
-from helpers import match_songs, safe_filename, select_option_specs, style_label
+from helpers import match_songs, safe_filename, select_option_specs
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -121,7 +121,7 @@ class MixContext:
         self.audio_path: Path | None = None   # the WAV, kept for voice playback
 
     def _cooking_embed(self) -> discord.Embed:
-        return ui.cooking_embed(self.name1, self.name2, self.generation + 1, MAX_TAKES)
+        return ui.cooking_embed(self.name1, self.name2)
 
     async def run(self, *, first: bool) -> None:
         cooking = self._cooking_embed()
@@ -165,8 +165,6 @@ class MixContext:
         name = await bot.api.mix_name(self.name1, self.name2) or f"{self.name1} × {self.name2}"
         embed = ui.now_playing_embed(
             name=name, beat=self.name1, vocals=self.name2,
-            style=style_label(res.rule, res.notes),
-            take=self.generation + 1, max_takes=MAX_TAKES,
             total_secs=ui.wav_duration(wav), user=self.interaction.user)
         clip = discord.File(str(mp3), filename=f"{safe_filename(name)}.mp3")
         if self.message is not None:
@@ -188,7 +186,7 @@ class MixView(discord.ui.View):
             if getattr(item, "custom_id", None) == "another_take" and ctx.generation + 1 >= MAX_TAKES:
                 item.disabled = True
 
-    @discord.ui.button(label="Another take", emoji="🔄",
+    @discord.ui.button(label="Regenerate", emoji="🔄",
                        style=discord.ButtonStyle.primary, custom_id="another_take")
     async def another(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.defer()
@@ -276,10 +274,10 @@ def _member_line(m: dict) -> str:
     idx = m.get("index", "?")
     n1, n2 = _name_of(m.get("song1_id", "")), _name_of(m.get("song2_id", ""))
     if not m.get("kept", True):
-        return f"~~{idx}. {n1} × {n2}~~ — skipped ({m.get('reason', 'couldn’t be mixed')})"
+        return f"~~Set {idx}: {n1} × {n2}~~ — skipped ({m.get('reason', 'couldn’t be mixed')})"
     seam = m.get("seam_at")
     when = f" · joins at {_mmss(seam)}" if seam else ""
-    return f"{idx}. **{n1}** × **{n2}**{when}"
+    return f"**Set {idx}:** {n1} × {n2}{when}"
 
 
 class SetView(discord.ui.View):

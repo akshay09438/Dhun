@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TrackPlayer } from "../../lib/trackAudio";
-import { ruleLabel, type PlayMember } from "../../types";
+import { type PlayMember } from "../../types";
 import styles from "./PlayScreen.module.css";
 
 function fmt(t: number): string {
@@ -29,9 +29,6 @@ export default function PlayScreen({
   members,
   regenerable,
   regenerating,
-  ruleName,
-  takesUsed,
-  maxTakes,
   onRegenerate,
   onExport,
   onNextSong,
@@ -41,9 +38,6 @@ export default function PlayScreen({
   members: PlayMember[];
   regenerable: boolean;
   regenerating: boolean;
-  ruleName?: string; // which rule made this take (Simple / Chop & repeat / Echo); "" for a set
-  takesUsed?: number; // 1-based count of generations made this sitting (single mixes only)
-  maxTakes?: number; // the per-session cap
   onRegenerate: () => void;
   onExport: () => void;
   onNextSong: () => void;
@@ -182,12 +176,6 @@ export default function PlayScreen({
                   {m.beat} × {m.vocal}
                 </div>
                 <div className={styles.qs}>
-                  {ruleLabel(m.rule) && (
-                    <span data-testid={`lineup-rule-${m.index}`}>
-                      {ruleLabel(m.rule)}
-                      {" · "}
-                    </span>
-                  )}
                   {i === nowIndex
                     ? "now playing"
                     : i > nowIndex
@@ -231,26 +219,6 @@ export default function PlayScreen({
           BEAT · {nowMember?.beat}&nbsp;&nbsp;/&nbsp;&nbsp;VOX ·{" "}
           {nowMember?.vocal}
         </div>
-        {ruleName && (
-          <div
-            data-testid="rule-badge"
-            title="The mix style for this take (assigned automatically)"
-            style={{
-              alignSelf: "flex-start",
-              marginTop: 4,
-              padding: "3px 10px",
-              borderRadius: 999,
-              border: "1px solid var(--accent, #7c4dff)",
-              color: "var(--accent, #7c4dff)",
-              fontSize: ".72rem",
-              letterSpacing: ".08em",
-              textTransform: "uppercase",
-            }}
-          >
-            Mix style · {ruleName}
-          </div>
-        )}
-
         <div className={styles.lanes}>
           {loading && (
             <div
@@ -332,15 +300,6 @@ export default function PlayScreen({
           <span className={styles.time}>
             {fmt(elapsed)} / {fmt(dur)}
           </span>
-          {takesUsed != null && maxTakes != null && (
-            <span
-              className={styles.time}
-              data-testid="take-count"
-              title="Takes made this sitting"
-            >
-              take {takesUsed} of {maxTakes}
-            </span>
-          )}
           {regenerable && (
             <button
               type="button"
@@ -348,7 +307,7 @@ export default function PlayScreen({
               disabled={regenerating}
               onClick={onRegenerate}
             >
-              {regenerating ? "arranging…" : "↻ another take"}
+              {regenerating ? "arranging…" : "↻ regenerate"}
             </button>
           )}
           <button

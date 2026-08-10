@@ -24,28 +24,39 @@ def test_bar_knob_moves_and_shows_times():
     assert ui.bar(0, 0) and ui.bar(5, None)               # never crashes on 0/None total
 
 
-def test_now_playing_embed_shape():
+def test_now_playing_hides_style_and_take():
+    # the mix STYLE (rule) and TAKE number are internal-only — never shown to users. Only
+    # song names + length appear on the card.
     e = ui.now_playing_embed(name="Ocean Bina", beat="Hey Brother", vocals="Bad Guy",
-                             style="Simple", take=1, max_takes=5, total_secs=210, user=None)
+                             total_secs=210, user=None)
     assert e.color.value == ui.ACCENT
     assert "Ocean Bina" in e.title
+    assert "Hey Brother" in e.description and "Bad Guy" in e.description
     names = [f.name for f in e.fields]
-    assert {"Style", "Take", "Length"}.issubset(set(names))
-    assert e.author.name.startswith("Now playing")
+    assert "Length" in names
+    assert "Style" not in names and "Take" not in names
+    blob = (e.title + e.description + " ".join(f"{f.name} {f.value}" for f in e.fields)
+            + (e.footer.text or "")).lower()
+    assert "take" not in blob and "style" not in blob   # not even in the copy
 
 
 def test_in_voice_author_line():
-    e = ui.now_playing_embed(name="X", beat="a", vocals="b", style="Echo", take=2,
-                             max_takes=5, total_secs=100, user=None, in_voice=True)
+    e = ui.now_playing_embed(name="X", beat="a", vocals="b", total_secs=100, user=None, in_voice=True)
     assert "voice" in e.author.name.lower()
+
+
+def test_cooking_hides_take():
+    e = ui.cooking_embed("A", "B")
+    blob = (e.title + e.description + (e.footer.text or "")).lower()
+    assert "take" not in blob
 
 
 def test_help_error_set_cooking_colors():
     assert ui.help_embed().color.value == ui.ACCENT
     assert ui.error_embed("nope").color.value == ui.FAIL
-    assert ui.set_lineup_embed("1. a x b", 300, 2, None).color.value == ui.ACCENT
-    assert ui.building_embed("1. a x b", 1).color.value == ui.ACCENT
-    assert ui.cooking_embed("A", "B", 1, 5).color.value == ui.ACCENT
+    assert ui.set_lineup_embed("Set 1: a x b", 300, 2, None).color.value == ui.ACCENT
+    assert ui.building_embed("Set 1: a x b", 1).color.value == ui.ACCENT
+    assert ui.cooking_embed("A", "B").color.value == ui.ACCENT
 
 
 def test_wav_duration(tmp_path):
