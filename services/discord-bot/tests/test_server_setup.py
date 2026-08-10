@@ -336,3 +336,80 @@ def test_welcome_embeds_tell_a_first_timer_what_to_do():
     )
     for expected in ("/mix", "/set", "/songs", "The Booth", "#i-made-this"):
         assert expected in text, f"the welcome post never mentions {expected}"
+
+
+# --- command sync: /setup has to EXIST in a server you just made -------------------------
+
+class FakeTree:
+    def __init__(self, refuse=()):
+        self.copied, self.synced = [], []
+        self.refuse = set(refuse)
+
+    def copy_global_to(self, *, guild):
+        self.copied.append(guild.id)
+
+    async def sync(self, *, guild=None):
+        gid = getattr(guild, "id", None)
+        if gid in self.refuse:
+            raise discord.Forbidden(_Resp(), "Missing Access")
+        self.synced.append(gid)
+
+
+class FakeGuildRef:
+    def __init__(self, gid, name="g"):
+        self.id = gid
+        self.name = name
+
+
+class SyncOnly:
+    """Just the sync behaviour, lifted off the bot so it can be tested without a gateway."""
+    def __init__(self, tree):
+        self.tree = tree
+        self._synced_guilds = set()
+
+    sync_to_guilds = None  # bound below
+
+
+def _make(tree):
+    import bot as botmod
+    s = SyncOnly(tree)
+    s.sync_to_guilds = botmod.PromptDJBot.sync_to_guilds.__get__(s, SyncOnly)
+    return s
+
+
+@run_async
+async def test_commands_are_synced_to_every_guild_the_bot_is_in():
+    """The gotcha this pins: commands used to sync only to DISCORD_GUILD_ID, so /setup didn't
+    exist in a server you'd just created — exactly where you need it."""
+    tree = FakeTree()
+    s = _make(tree)
+    await s.sync_to_guilds([FakeGuildRef(1), FakeGuildRef(2)])
+    assert tree.synced == [1, 2]
+
+
+@run_async
+async def test_a_reconnect_does_not_resync_the_same_guild():
+    """on_ready fires again on every reconnect; re-syncing each time would burn the rate limit."""
+    tree = FakeTree()
+    s = _make(tree)
+    await s.sync_to_guilds([FakeGuildRef(1)])
+    await s.sync_to_guilds([FakeGuildRef(1)])
+    assert tree.synced == [1]
+
+
+@run_async
+async def test_one_guild_refusing_does_not_block_the_others():
+    tree = FakeTree(refuse={1})
+    s = _make(tree)
+    await s.sync_to_guilds([FakeGuildRef(1), FakeGuildRef(2)])
+    assert tree.synced == [2]
+
+
+@run_async
+async def test_a_refused_guild_is_retried_next_time_rather_than_marked_done():
+    tree = FakeTree(refuse={1})
+    s = _make(tree)
+    await s.sync_to_guilds([FakeGuildRef(1)])
+    tree.refuse.clear()                     # permission fixed, e.g. re-invited properly
+    await s.sync_to_guilds([FakeGuildRef(1)])
+    assert tree.synced == [1]

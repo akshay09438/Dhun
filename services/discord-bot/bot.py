@@ -50,6 +50,8 @@ class PromptDJBot(discord.Client):
         self.songs: list[Song] = []
         self.beats: list[Song] = []
         self.vocals: list[Song] = []
+        # Guilds whose slash commands are already registered, so a reconnect doesn't re-sync them.
+        self._synced_guilds: set[int] = set()
 
     async def setup_hook(self) -> None:
         await self.refresh_catalog()
@@ -58,7 +60,9 @@ class PromptDJBot(discord.Client):
                 guild = discord.Object(id=CFG.guild_id)
                 self.tree.copy_global_to(guild=guild)
                 await self.tree.sync(guild=guild)   # appears INSTANTLY in that server
-                log.info("commands synced to guild %s", CFG.guild_id)
+                # Remember it, so on_ready doesn't immediately sync the same guild a second time.
+                self._synced_guilds.add(CFG.guild_id)
+                log.info("commands synced to configured guild %s", CFG.guild_id)
             else:
                 await self.tree.sync()              # global — can take up to ~1h to appear
                 log.info("commands synced globally (may take up to 1h to appear)")
@@ -91,6 +95,37 @@ class PromptDJBot(discord.Client):
     async def on_ready(self) -> None:
         log.info("logged in as %s (id %s)", self.user, getattr(self.user, "id", "?"))
         await self._apply_brand()
+        guilds = list(self.guilds)
+        # Say which servers Grinder is in. Silence here used to be ambiguous — "no guilds" and
+        # "already synced" looked identical in the log, which hid whether /setup would appear.
+        log.info("in %d server(s): %s", len(guilds),
+                 ", ".join(f"{g.name} ({g.id})" for g in guilds) or "none")
+        await self.sync_to_guilds(guilds)
+
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        """Sync commands the moment Grinder is invited somewhere new.
+
+        Without this, a brand-new server shows NO slash commands: `setup_hook` can only sync to the
+        one guild in DISCORD_GUILD_ID, and a global sync can take up to an hour to propagate. Since
+        the whole point of `/setup` is to run it in a server you just created, "wait an hour" would
+        make the command useless exactly when it's needed."""
+        log.info("joined guild %s (%s)", guild.name, guild.id)
+        await self.sync_to_guilds([guild])
+
+    async def sync_to_guilds(self, guilds) -> None:
+        """Copy the global commands into each guild so they appear instantly. `on_ready` fires again
+        on every reconnect, so already-synced guilds are remembered and skipped — re-syncing on each
+        reconnect would burn through Discord's command-update rate limit for no gain."""
+        for guild in guilds:
+            if guild.id in self._synced_guilds:
+                continue
+            try:
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
+                self._synced_guilds.add(guild.id)
+                log.info("commands synced to guild %s", guild.id)
+            except Exception as e:  # noqa: BLE001 — one guild refusing must not affect the others
+                log.warning("couldn't sync commands to guild %s: %s", guild.id, e)
 
     async def _apply_brand(self) -> None:
         """Put the Grinder mark on the bot itself, and remember its URL for the cards.
