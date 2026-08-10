@@ -298,7 +298,7 @@ def test_key_match_pitch_error_ships_native_key_never_refuses(tmp_path, monkeypa
     rendered: dict = {}
     monkeypatch.setattr(mix_route, "render_mix", _spy_render_to(rendered))
 
-    r = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2})
+    r = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2, "prompt": "native-fallback"})
     mix_id = r.json()["mix_id"]
     body = _poll(mix_id, "ready")
     assert body["status"] == "ready", body

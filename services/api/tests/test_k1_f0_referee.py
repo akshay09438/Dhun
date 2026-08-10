@@ -230,3 +230,36 @@ def test_mix_route_ships_native_key_when_referee_fails(tmp_path, monkeypatch):
         f"never the failed shifted one; render got {rendered.get('s2_voc')!r}")
     assert rendered.get("s2_voc") != str(shifted_path), (
         "the failed shifted vocal must not be rendered")
+
+
+def test_key_shift_fallback_is_recorded_as_a_visible_anomaly(tmp_path, monkeypatch):
+    """NEVER-REFUSE must never be SILENT: when a shift can't be verified and the mix falls back to the
+    NATIVE key, the operator must see WHY. Guards the `key_shift_fallback` anomaly (severity 'warn'),
+    which is the only signal separating 'shipped native on purpose' from 'silently shipped a clash'."""
+    import json
+
+    from app import events
+    from app.planner.validate import ValidationError
+    from tests.test_mix_route import _poll
+
+    _use_tmp(monkeypatch, tmp_path)
+    _setup_pair(tmp_path)
+    monkeypatch.setattr(mix_route, "resolve_key_shift", lambda a1, a2: (2, "needs +2"))
+    monkeypatch.setattr(pitch, "shifted_vocal", lambda *a, **k: tmp_path / "dummy_shift.wav")
+    monkeypatch.setattr(mix_route.validate, "assert_key_shift",
+                        lambda *a, **k: (_ for _ in ()).throw(ValidationError(["forced decline"])))
+    rendered: dict = {}
+    monkeypatch.setattr(mix_route, "render_mix", _spy_render_to(rendered))
+
+    mix_id = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2,
+                                   "prompt": "anomaly-visibility"}).json()["mix_id"]
+    assert _poll(mix_id, "ready")["status"] == "ready"
+
+    rows = events.query_events(tmp_path)["events"]
+    row = next(r for r in rows if r["ref_id"] == mix_id)
+    anoms = row["anomalies"] or []
+    if isinstance(anoms, str):  # the store may hand back raw JSON or a decoded list
+        anoms = json.loads(anoms or "[]")
+    codes = [a.get("code") for a in anoms]
+    assert "key_shift_fallback" in codes, f"the native-key fallback must be visible; got {codes}"
+    assert row["health"] == "amber", "a degraded (native-key) mix must not look clean-green"

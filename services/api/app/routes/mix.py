@@ -538,6 +538,13 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         # full song). Built off the shared plan grid, so it works on any rule's rendered WAV.
         _build_bestparts(plan, mix_id)
         _plan_path(mix_id).write_text(plan.model_dump_json())  # persisting the plan, so 'ready' implies it exists
+        # A previously-rendered live bus for this mix_id may hold a DIFFERENT key (it is evictable and
+        # re-rendered independently). Drop it so Play can never serve a stale bus whose key disagrees
+        # with the Download we just wrote. (Adversarial review finding 2.)
+        try:
+            (settings.data_dir / f"{mix_id}.livearr.wav").unlink(missing_ok=True)
+        except OSError:  # a stale bus we cannot remove must never fail the mix
+            log.warning("could not clear the stale live bus for %s", mix_id)
         _jobs.pop(mix_id, None)  # readiness now inferred from the stored files
         _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "ok",
                           anomalies, None, plan)

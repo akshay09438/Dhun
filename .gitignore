@@ -36,3 +36,4 @@ Thumbs.db
 
 # Local editor/tooling settings (keep launch.json shared)
 .claude/settings.local.json
+services/api/_candidate_preload.py
