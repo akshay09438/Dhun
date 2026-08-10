@@ -249,6 +249,10 @@ class MixPlan(BaseModel):
     s1_vocal_regions: list[tuple[float, float]] = []  # spans where Song 1's OWN vocal answers (contrast)
     stem_moves: list[StemMove] = []  # Step 3: auto-performed beat moves (bass pull, etc.); [] => today's flat bed
     rule: int = 1  # which mixing RULE made this: 1 = simple mix (default), 3 = chop & repeat, 4 = echo+reverb
+    shipped_key_shift: int = 0  # the key shift ACTUALLY shipped in the rendered mix (0 = native key).
+    #                             Persisted so the live Play bus reproduces the Download's key exactly
+    #                             instead of re-deciding it (a transient shift failure would otherwise
+    #                             desync Play from Download). Additive: old cached plans read 0.
     take: int = 1  # which regenerate iteration produced this (1-based)
     notes: str = ""  # DJ-language explanation of the move
     confidence: float = 0.0

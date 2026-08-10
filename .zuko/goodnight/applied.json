@@ -1,12 +1,12 @@
 {
   "applied": [
     {
-      "task": "auto-match-validate",
+      "task": "k1-f0-referee",
       "file": "services/api/app/planner/validate.py",
-      "hash": "b87bfc625317a6aa088c31c7599e88722cda109aafa3f78ca0749c35fe7807ee",
-      "verdict": "safe",
-      "ack": "go — approved after reading the morning report; understands it only changes how a far-apart mix sounds, is fully reversible, and carries no data risk",
-      "appliedAtMs": 1786093093070
+      "hash": "63598b75f5e6635988392c498089ba6a8a76200873b04fc053574bb6d1a7e938",
+      "verdict": "not-proven-safe",
+      "ack": "yes, do the official swap and flag half-time pairs",
+      "appliedAtMs": 1786377980005
     }
   ]
 }

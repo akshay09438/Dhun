@@ -60,8 +60,12 @@ def _use_tmp_data_dir(monkeypatch, tmp_path: Path) -> None:
 def _touch(path: Path, content: bytes = b"x", mtime: float | None = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
-    if mtime is not None:
-        os.utime(path, (mtime, mtime))
+    # Pin the mtime a second into the PAST by default. On Windows a just-written file's recorded
+    # mtime can read slightly AHEAD of time.time() (measured: ~13% of writes on this machine), which
+    # made `now - mtime < grace` true even at grace 0 — the sweep then skipped the file as "too
+    # fresh" and these tests failed intermittently in a full run. Callers that are testing the age
+    # grace itself still pass an explicit mtime, so behaviour under test is unchanged.
+    os.utime(path, ((mtime, mtime) if mtime is not None else (time.time() - 1.0,) * 2))
     return path
 
 
