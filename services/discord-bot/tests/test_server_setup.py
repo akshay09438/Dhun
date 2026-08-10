@@ -159,10 +159,26 @@ def test_the_name_a_channel_is_created_with_is_the_name_it_is_looked_up_by():
             assert c.label == (c.display or c.name)
 
 
-def test_welcome_and_announcements_are_read_only():
-    """A welcome channel that fills up with chatter stops being a welcome channel."""
+def test_the_channels_chatter_would_ruin_are_read_only():
+    """A welcome channel that fills with chatter stops being a welcome channel, and a curated
+    "best of" that anyone can post into stops being curated."""
     read_only = {c.name for cat in server_setup.STRUCTURE for c in cat.channels if c.read_only}
-    assert read_only == {"read-me", "announcements"}
+    assert read_only == {"read-me", "announcements", "best-mixes"}
+
+
+def test_best_mixes_sits_above_the_open_room_it_is_curated_from():
+    """#best-mixes is the channel you point a newcomer at, so it comes first; #i-made-this is the
+    open room the good ones get carried up from."""
+    showcase = next(c for c in server_setup.STRUCTURE if c.name == "SHOWCASE")
+    names = [c.name for c in showcase.channels]
+    assert names.index("best-mixes") < names.index("i-made-this")
+
+
+def test_feedback_exists_exactly_once():
+    """The founder asked for a Feedback room; it was already in HANGOUT. Guard against someone
+    "adding" a second one later and splitting the replies across two channels."""
+    names = [c.name for cat in server_setup.STRUCTURE for c in cat.channels]
+    assert names.count("feedback") == 1
 
 
 def test_every_text_channel_explains_itself():

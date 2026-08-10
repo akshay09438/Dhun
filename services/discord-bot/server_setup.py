@@ -71,6 +71,10 @@ STRUCTURE: tuple[CategorySpec, ...] = (
         ChannelSpec("now-playing", "What's playing in The Booth right now."),
     )),
     CategorySpec("SHOWCASE", (
+        # Read-only ON PURPOSE, and first in the category. This is the curated "best of" — the
+        # channel you point a newcomer at — so it only works if it stays curated. #i-made-this
+        # below is the open room where anyone posts; the good ones get carried up to here.
+        ChannelSpec("best-mixes", "The best of Grinder. Start here.", read_only=True),
         ChannelSpec("i-made-this", "Post a mix you're proud of. React 🔥 to the ones you'd play."),
         ChannelSpec("requests", "A song you wish was in the library? Name it here."),
     )),
@@ -256,9 +260,14 @@ def welcome_embeds(guild: discord.Guild) -> list[discord.Embed]:
 
     house = discord.Embed(title="How we use this place", color=brand.PINK)
     house.add_field(
+        name="#best-mixes",
+        value="The good stuff, in one place. Read-only — mixes get carried up here from "
+              "#i-made-this once people react to them.",
+        inline=False)
+    house.add_field(
         name="#i-made-this",
-        value="Post mixes you'd actually play. React 🔥 to the good ones — that's how we find out "
-              "what's working.",
+        value="Post mixes you'd actually play. React 🔥 to the good ones — that's how they end up "
+              "in #best-mixes, and how we find out what's working.",
         inline=False)
     house.add_field(
         name="#requests",
