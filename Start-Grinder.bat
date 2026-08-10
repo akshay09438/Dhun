@@ -1,10 +1,10 @@
 @echo off
 REM ============================================================================
-REM  Start-Grinder  —  bring the Grinder Discord bot online.
+REM  Start-Grinder  -  bring the Grinder Discord bot online.
 REM
 REM  Keep this window open while you demo. Two things run:
-REM    1) "Prompt-DJ engine"  — the mixing brain on port 8000 (its own window)
-REM    2) this window          — the Grinder bot, connected to Discord
+REM    1) "Prompt-DJ engine"  - the mixing brain on port 8000 (its own window)
+REM    2) this window          - the Grinder bot, connected to Discord
 REM  Close this window to take Grinder offline.
 REM
 REM  First run only: this creates the bot's Python environment and installs its
@@ -22,10 +22,19 @@ if not exist "services\discord-bot\.env" (
 )
 
 echo.
-echo  [1/3] Starting the Prompt-DJ engine on port 8000...
-start "Prompt-DJ engine" "services\api\.venv\Scripts\python.exe" -m uvicorn app.main:app --app-dir "services\api" --port 8000
-echo  Waiting for the engine to warm up...
-timeout /t 5 >nul
+REM Reuse an engine that's already up instead of starting a second one on a busy port.
+>nul 2>nul powershell -NoProfile -Command "try { (New-Object Net.Sockets.TcpClient).Connect('127.0.0.1',8000); exit 0 } catch { exit 1 }"
+if errorlevel 1 (
+  echo  [1/3] Starting the Prompt-DJ engine on port 8000...
+  start "Prompt-DJ engine" "services\api\.venv\Scripts\python.exe" -m uvicorn app.main:app --app-dir "services\api" --port 8000
+  echo  Waiting for the engine to warm up...
+  REM NOT `timeout` here: timeout needs a console input handle, so it dies with a parse-looking
+  REM error ("... was unexpected at this time") when this file is run from PowerShell instead of
+  REM being double-clicked. `ping` waits just as well and never touches stdin.
+  ping -n 6 127.0.0.1 >nul
+) else (
+  echo  [1/3] Engine already running on port 8000 - reusing it.
+)
 
 cd services\discord-bot
 if not exist ".venv\Scripts\python.exe" (
@@ -44,7 +53,7 @@ echo.
 echo  [3/3] Connecting Grinder to Discord...
 echo  ----------------------------------------------------------------------
 echo   When you see "logged in as Grinder", go to your Discord server and
-echo   type  /mix  — pick a beat and a vocal, and the mix comes right back.
+echo   type  /mix  - pick a beat and a vocal, and the mix comes right back.
 echo   Keep this window open. Close it to take Grinder offline.
 echo  ----------------------------------------------------------------------
 echo.

@@ -5,7 +5,7 @@ A convenience-first front-end to the Prompt-DJ mix engine, modelled on how peopl
 the finished mix comes back in the channel as a playable clip with buttons (Another take /
 Play in voice). No web screen, no manual steps.
 
-It talks to the local engine over HTTP (see api_client) — it never touches audio or the mixing
+It talks to the local engine over HTTP (see api_client). It never touches audio or the mixing
 logic itself, so every bit of mix quality lives in one place (the engine).
 
 Setup + run: services/discord-bot/README.md.
@@ -50,6 +50,8 @@ class PromptDJBot(discord.Client):
         self.songs: list[Song] = []
         self.beats: list[Song] = []
         self.vocals: list[Song] = []
+        # Guilds whose slash commands are already registered, so a reconnect doesn't re-sync them.
+        self._synced_guilds: set[int] = set()
 
     async def setup_hook(self) -> None:
         await self.refresh_catalog()
@@ -58,7 +60,9 @@ class PromptDJBot(discord.Client):
                 guild = discord.Object(id=CFG.guild_id)
                 self.tree.copy_global_to(guild=guild)
                 await self.tree.sync(guild=guild)   # appears INSTANTLY in that server
-                log.info("commands synced to guild %s", CFG.guild_id)
+                # Remember it, so on_ready doesn't immediately sync the same guild a second time.
+                self._synced_guilds.add(CFG.guild_id)
+                log.info("commands synced to configured guild %s", CFG.guild_id)
             else:
                 await self.tree.sync()              # global — can take up to ~1h to appear
                 log.info("commands synced globally (may take up to 1h to appear)")
@@ -91,25 +95,65 @@ class PromptDJBot(discord.Client):
     async def on_ready(self) -> None:
         log.info("logged in as %s (id %s)", self.user, getattr(self.user, "id", "?"))
         await self._apply_brand()
+        guilds = list(self.guilds)
+        # Say which servers Grinder is in. Silence here used to be ambiguous — "no guilds" and
+        # "already synced" looked identical in the log, which hid whether /setup would appear.
+        log.info("in %d server(s): %s", len(guilds),
+                 ", ".join(f"{g.name} ({g.id})" for g in guilds) or "none")
+        await self.sync_to_guilds(guilds)
+
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        """Sync commands the moment Grinder is invited somewhere new.
+
+        Without this, a brand-new server shows NO slash commands: `setup_hook` can only sync to the
+        one guild in DISCORD_GUILD_ID, and a global sync can take up to an hour to propagate. Since
+        the whole point of `/setup` is to run it in a server you just created, "wait an hour" would
+        make the command useless exactly when it's needed."""
+        log.info("joined guild %s (%s)", guild.name, guild.id)
+        await self.sync_to_guilds([guild])
+
+    async def sync_to_guilds(self, guilds) -> None:
+        """Copy the global commands into each guild so they appear instantly. `on_ready` fires again
+        on every reconnect, so already-synced guilds are remembered and skipped — re-syncing on each
+        reconnect would burn through Discord's command-update rate limit for no gain."""
+        for guild in guilds:
+            if guild.id in self._synced_guilds:
+                continue
+            try:
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
+                self._synced_guilds.add(guild.id)
+                log.info("commands synced to guild %s", guild.id)
+            except Exception as e:  # noqa: BLE001 — one guild refusing must not affect the others
+                log.warning("couldn't sync commands to guild %s: %s", guild.id, e)
 
     async def _apply_brand(self) -> None:
         """Put the Grinder mark on the bot itself, and remember its URL for the cards.
 
-        Only uploads the avatar when the bot HAS no avatar yet: Discord rate-limits avatar changes
-        hard (a couple per stretch), and re-uploading identical bytes on every restart would burn
-        that budget for nothing. To force a re-upload after new artwork, clear the bot's avatar in
-        the Developer Portal and restart. Never fatal — a bot that can't set its picture must still
-        make mixes."""
+        Uploads when the bot has no avatar OR when the shipped artwork has CHANGED since the last
+        upload (tracked by a local fingerprint — Discord re-encodes uploads, so comparing bytes
+        against its copy never works). That way new art applies itself on the next start, while an
+        unchanged one doesn't burn Discord's avatar rate limit, which is strict. Never fatal — a bot
+        that can't set its picture must still make mixes."""
         user = self.user
         if user is None:
             return
         try:
-            if user.avatar is None:
+            if user.avatar is None or brand.avatar_needs_upload():
                 data = brand.image_bytes(brand.ICON)
                 if data is not None:
                     await user.edit(avatar=data)
-                    log.info("brand: avatar set from %s", brand.ICON.name)
-            ui.set_avatar_url(str(user.display_avatar.url) if user.display_avatar else None)
+                    brand.mark_avatar_applied()
+                    log.info("brand: avatar uploaded from %s (%s)",
+                             brand.ICON.name, brand.icon_fingerprint())
+            else:
+                log.info("brand: avatar already up to date")
+            url = str(user.display_avatar.url) if user.display_avatar else None
+            # Log it: this is the ONLY way to check from outside what picture Discord actually holds
+            # for the bot, and it distinguishes the bot's avatar from the separate Application icon
+            # shown in the slash-command picker (which the API cannot change).
+            log.info("brand: bot avatar url = %s", url)
+            ui.set_avatar_url(url)
         except Exception:  # noqa: BLE001 — branding is cosmetic; never let it stop the bot
             log.warning("brand: couldn't set the avatar (continuing)", exc_info=True)
 
@@ -226,7 +270,7 @@ class MixView(discord.ui.View):
     async def play_voice(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.defer(ephemeral=True)
         if self.ctx.audio_path is None:
-            await interaction.followup.send("Give it a second — the mix is still arriving.", ephemeral=True)
+            await interaction.followup.send("Give it a second, the mix is still arriving.", ephemeral=True)
             return
         msg = await voice_player.play_in_channel(interaction, self.ctx.audio_path)
         await interaction.followup.send(msg, ephemeral=True)
@@ -256,9 +300,9 @@ async def _vocal_ac(interaction: discord.Interaction, current: str):
             for s in match_songs(bot.vocals, current)]
 
 
-@bot.tree.command(name="mix", description="Make a DJ mix — Song 1's beat + Song 2's vocals.")
-@app_commands.describe(beat="Song 1 — its beat drives the mix",
-                       vocals="Song 2 — its vocals ride on top")
+@bot.tree.command(name="mix", description="Make a mashup: one song's beat, another song's vocals.")
+@app_commands.describe(beat="The song you want the beat from",
+                       vocals="The song you want the singing from")
 @app_commands.autocomplete(beat=_beat_ac, vocals=_vocal_ac)
 async def mix_cmd(interaction: discord.Interaction, beat: str, vocals: str) -> None:
     await interaction.response.defer(thinking=True)
@@ -268,7 +312,7 @@ async def mix_cmd(interaction: discord.Interaction, beat: str, vocals: str) -> N
     await ctx.run(first=True)
 
 
-@bot.tree.command(name="help", description="How Grinder works — a quick guide.")
+@bot.tree.command(name="help", description="What Grinder does and how to use it.")
 async def help_cmd(interaction: discord.Interaction) -> None:
     # The wordmark rides along as an attachment; the embed references it as attachment://logo.png.
     logo = brand.image_bytes(brand.LOGO)
@@ -276,9 +320,11 @@ async def help_cmd(interaction: discord.Interaction) -> None:
     await interaction.response.send_message(embed=ui.help_embed(), files=files, ephemeral=True)
 
 
-@bot.tree.command(name="setup", description="Build out this server — channels, roles, emojis, branding.")
+@bot.tree.command(name="setup", description="Set up this server: channels, roles, emojis and branding.")
+@app_commands.describe(
+    refresh_branding="Replace the server icon with Grinder's current artwork (default: leave it alone).")
 @app_commands.checks.has_permissions(manage_guild=True)
-async def setup_cmd(interaction: discord.Interaction) -> None:
+async def setup_cmd(interaction: discord.Interaction, refresh_branding: bool = False) -> None:
     """Build the community inside a server the founder already created and owns.
 
     Gated on Manage Server so a random member can't restructure the place. Deferred because a full
@@ -291,7 +337,7 @@ async def setup_cmd(interaction: discord.Interaction) -> None:
 
     await interaction.response.defer(thinking=True)
     try:
-        report = await server_setup.run(interaction.guild)
+        report = await server_setup.run(interaction.guild, refresh_branding=refresh_branding)
     except Exception as e:  # noqa: BLE001 — report the failure rather than a silent timeout
         log.exception("setup failed outright")
         await interaction.followup.send(
@@ -313,16 +359,16 @@ async def setup_error(interaction: discord.Interaction, error: app_commands.AppC
     await send(embed=ui.error_embed(msg), ephemeral=True)
 
 
-@bot.tree.command(name="songs", description="List the songs you can mix.")
+@bot.tree.command(name="songs", description="See every song you can pick.")
 async def songs_cmd(interaction: discord.Interaction) -> None:
     if not bot.songs:
         await bot.refresh_catalog()
-    beats = "\n".join(f"• {s.name}" for s in bot.beats) or "—"
-    vocals = "\n".join(f"• {s.name}" for s in bot.vocals) or "—"
-    embed = discord.Embed(title=f"🎵 {BOT_NAME} — song library", color=VIOLET)
+    beats = "\n".join(f"• {s.name}" for s in bot.beats) or "-"
+    vocals = "\n".join(f"• {s.name}" for s in bot.vocals) or "-"
+    embed = discord.Embed(title=f"🎵 {BOT_NAME} song library", color=VIOLET)
     embed.add_field(name="Beats (Song 1)", value=beats[:1024], inline=True)
     embed.add_field(name="Vocals (Song 2)", value=vocals[:1024], inline=True)
-    embed.set_footer(text="Use /mix and start typing a name — it autocompletes.")
+    embed.set_footer(text="Use /mix and start typing a name. It autocompletes.")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -342,7 +388,7 @@ def _member_line(m: dict) -> str:
     idx = m.get("index", "?")
     n1, n2 = _name_of(m.get("song1_id", "")), _name_of(m.get("song2_id", ""))
     if not m.get("kept", True):
-        return f"~~Set {idx}: {n1} × {n2}~~ — skipped ({m.get('reason', 'couldn’t be mixed')})"
+        return f"~~Set {idx}: {n1} × {n2}~~ skipped ({m.get('reason', 'couldn’t be mixed')})"
     seam = m.get("seam_at")
     when = f" · joins at {_mmss(seam)}" if seam else ""
     return f"**Set {idx}:** {n1} × {n2}{when}"
@@ -358,7 +404,7 @@ class SetView(discord.ui.View):
     async def play_voice(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.defer(ephemeral=True)
         if self.ctx.audio_path is None:
-            await interaction.followup.send("Give it a second — the set is still arriving.", ephemeral=True)
+            await interaction.followup.send("Give it a second, the set is still arriving.", ephemeral=True)
             return
         await interaction.followup.send(
             await voice_player.play_in_channel(interaction, self.ctx.audio_path), ephemeral=True)
@@ -428,7 +474,7 @@ class SetContext:
 
         members = res.members or []
         kept = [m for m in members if m.get("kept", True)]
-        lines = "\n".join(_member_line(m) for m in members) or "—"
+        lines = "\n".join(_member_line(m) for m in members) or "-"
         embed = ui.set_lineup_embed(lines, res.duration or 0, len(kept), self.interaction.user)
 
         size = mp3.stat().st_size if mp3.exists() else 0
@@ -438,7 +484,7 @@ class SetContext:
         else:
             embed.add_field(
                 name="Heads up",
-                value="This set is a bit long to attach here — tap 🔊 **Play in voice**, or build a shorter set.",
+                value="This set is a bit long to attach here. Tap 🔊 **Play in voice**, or build a shorter set.",
                 inline=False)
             await self.message.edit(embed=embed, view=SetView(self))
 
@@ -472,7 +518,7 @@ class SetBuilderView(discord.ui.View):
                 for lbl, val, dflt in select_option_specs(songs, selected_id)]
 
     def _refresh_selects(self) -> None:
-        """Rebuild both dropdowns so the picked song shows as selected — not the placeholder."""
+        """Rebuild both dropdowns so the picked song shows as selected, not the placeholder."""
         self.beat_select.options = self._opts(bot.beats, self.sel_beat)
         self.vocal_select.options = self._opts(bot.vocals, self.sel_vocal)
 
@@ -482,14 +528,14 @@ class SetBuilderView(discord.ui.View):
                   if self.pairs else "_No mixes yet._")
         picking = ""
         if self.sel_beat or self.sel_vocal:
-            b = _name_of(self.sel_beat) if self.sel_beat else "—"
-            v = _name_of(self.sel_vocal) if self.sel_vocal else "—"
+            b = _name_of(self.sel_beat) if self.sel_beat else "-"
+            v = _name_of(self.sel_vocal) if self.sel_vocal else "-"
             picking = f"\n\n**Selecting:** {b} × {v}  → tap ➕ Add mix"
         e = discord.Embed(
             title="🎚️ Build a DJ set",
             description=f"**Line-up ({len(self.pairs)}/{MAX_MIXES_PER_SET}):**\n{lineup}{picking}",
             color=VIOLET)
-        e.set_footer(text="Pick a beat + a vocal → ➕ Add mix. Repeat (2–5), then ✅ Build set.")
+        e.set_footer(text="Pick a beat and a vocal, then ➕ Add mix. Repeat up to 5, then ✅ Build set.")
         return e
 
     async def _on_beat(self, interaction: discord.Interaction) -> None:
@@ -534,13 +580,13 @@ class SetBuilderView(discord.ui.View):
         self.stop()
 
 
-@bot.tree.command(name="set", description="Build a continuous DJ set (2–5 mixes) — pick step by step.")
+@bot.tree.command(name="set", description="Join 2 to 5 mixes into one continuous set.")
 async def set_cmd(interaction: discord.Interaction) -> None:
     if not bot.songs:
         await bot.refresh_catalog()
     if not bot.beats or not bot.vocals:
         await interaction.response.send_message(
-            "The song library isn't loaded yet — make sure the engine is running, then try again.",
+            "The song library isn't loaded yet. Make sure the engine is running, then try again.",
             ephemeral=True)
         return
     view = SetBuilderView()

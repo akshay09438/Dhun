@@ -104,7 +104,7 @@ def now_playing_embed(*, name: str, beat: str, vocals: str, total_secs: float,
 
 def set_lineup_embed(lines: str, length_secs: float, kept: int,
                      user: discord.abc.User | None) -> discord.Embed:
-    e = discord.Embed(title="🎚️  Your DJ set", description=lines or "—", color=ACCENT)
+    e = discord.Embed(title="🎚️  Your DJ set", description=lines or "-", color=ACCENT)
     _author(e, "Now playing 🎧 · continuous set")
     e.add_field(name="Length", value=mmss(length_secs), inline=True)
     e.add_field(name="Mixes", value=str(kept), inline=True)
@@ -131,20 +131,20 @@ def error_embed(msg: str) -> discord.Embed:
 def help_embed() -> discord.Embed:
     """Rythm-style instructions so a first-timer knows exactly what to do."""
     e = discord.Embed(
-        title=f"🎧  {BOT_NAME} — how it works",
-        description=("Make a **DJ mashup** from two songs in your library — one song's **beat**, "
-                     "the other's **vocals** — then play it right here or out loud in a voice channel."),
+        title=f"🎧  {BOT_NAME}",
+        description=("Make a **DJ mashup** from two songs in your library: one song's **beat** and "
+                     "the other's **vocals**. Play it right here or out loud in a voice channel."),
         color=ACCENT)
     # The wordmark disc, attached alongside as logo.png by the /help handler.
     e.set_thumbnail(url="attachment://logo.png")
     e.add_field(
         name="🎛️  /mix",
-        value=("Pick a **beat** and a **vocal** (start typing — it autocompletes) and Grinder posts "
+        value=("Pick a **beat** and a **vocal** (start typing, it autocompletes) and Grinder posts "
                "the finished mix as a playable clip with buttons."),
         inline=False)
     e.add_field(
         name="🎚️  /set",
-        value=("Build a continuous **back-to-back set** of 2–5 mixes, step by step, joined on the beat."),
+        value=("Build a continuous **back-to-back set** of up to 5 mixes, joined on the beat."),
         inline=False)
     e.add_field(
         name="🎵  /songs",
@@ -152,7 +152,7 @@ def help_embed() -> discord.Embed:
         inline=False)
     e.add_field(
         name="🔊  Playing out loud",
-        value=("Join a voice channel, then tap **Play in voice** on any mix — Grinder joins and plays "
+        value=("Join a voice channel, then tap **Play in voice** on any mix. Grinder joins and plays "
                "it like a music bot. Tap **Leave voice** when you're done."),
         inline=False)
     e.set_footer(text=f"{BOT_NAME} · a Prompt-DJ demo · your two songs, mixed like a DJ")
