@@ -1,25 +1,25 @@
 {
-  "session": "2026-08-09-goodnight-grinder",
+  "session": "2026-08-10-goodnight-hardrules-and-discord-ui",
+  "invoked": "/zuko:goodnight",
   "bundle": [
-    "demo Discord bot 'Grinder' (throwaway, for a store-sector validation meeting)",
-    "web launch cost estimate (200 songs + stems, several user scales)"
+    "Task 1: make the key/pitch rules unbreakable (defense-in-depth, +/-2 semitone cap)",
+    "Task 2: Grinder Discord bot UI overhaul (Rythm-style look, purple identity)"
   ],
   "decisions": {
-    "discord_interaction_style": "both",
-    "discord_interaction_notes": "Midjourney-style: /mix with autocomplete over the local catalog -> finished mix posted in-channel as a playable MP3 clip + buttons (Another take, Play in voice, Leave voice). PLUS voice-channel playback like a rhythm bot. Convenience is the priority; throwaway demo, not production.",
-    "bot_name": "Grinder (beta) — Prompt-DJ is the product name.",
-    "cost_scale": "several_sizes",
-    "cost_scale_notes": "One-time 200-song ingestion (stems) cost; then monthly at 100 / 1,000 / 10,000 active users. USD + INR (~83/USD). Lines: stem sep (Replicate), planning (Claude), storage (R2/S3), compute, DB, bandwidth.",
-    "demo_catalog": "local_existing",
-    "demo_catalog_notes": "Use the ~24-song local catalog for the demo bot. The 200-song figure is only for the cost estimate.",
-    "go_live": "setup_together_now",
-    "go_live_notes": "Founder created the Discord application (Application ID 1535993733269684334) and the bot token during kickoff. The agent NEVER sees the token; it lives only in a founder-created gitignored .env. Invite link pre-built from the public Application ID. Morning: run Start-Grinder.bat, then /mix."
+    "task1_tempo_behavior": "LEAVE AS-IS. Founder: 'the BPM stretching is being done currently' -> keep current beat-locked tempo matching; never refuse a pair. Do NOT change tempo/decline behavior.",
+    "task1_pitch_cap": "HARD CAP +/-2 semitones, absolute, every layer (decision keys.CAP_SEMITONES, executor mix.KEY_SHIFT_CAP, referee validate.py K1, force-check sweep). The +/-3 empirical leak is the bug to kill.",
+    "task1_untrusted_key_policy": "Still measure the shift from audio for unverified keys, but CAP at +/-2 (never >2). Founder: 'closest possible rule, the song has to be made, can't refuse'.",
+    "task1_never_refuse": "The app must NEVER refuse to make a pair. Enforce rules as CLAMPS, not gates.",
+    "task1_interpretation_flag": "Founder's tempo answer was terse. Interpreted as: keep tempo as-is, fix pitch to +/-2. Low-risk (does not change tempo). Flag in morning report for correction.",
+    "task2_scope": "Copy Rythm's LOOK, messages, presentation, flow. Keep Grinder's catalog picker (beat + vocal). NO search-any-song (V1 non-goal).",
+    "task2_identity": "Purple 'Electric Violet' (#6d3bf5) matching the web app, across all embeds.",
+    "task2_channels": "Commands allowed in ANY text channel; audio playback only in voice channels.",
+    "task2_reference": "Rythm music bot screenshots: now-playing card (art + progress + control buttons), help/instructions embeds, queued/now-playing style messages."
   },
   "hard_constraints": [
-    "No dangerous surface touched: render.py, validate.py, songs.py, storage.py, config/settings, .env*, CI, test harness.",
-    "The bot reuses the engine via its local HTTP API; the engine is not modified.",
-    "The agent never creates any .env / .env.* file (secret + dangerous glob); env vars documented in the README, the founder creates the real .env via Set-Grinder-Token.bat.",
-    "Bot token never pasted into chat, never seen by the agent."
-  ],
-  "outcome": "Built + mock-tested (11 passed). NOT live-tested against Discord yet (needs the founder's token, a ~5-min morning step). Nothing merged; on branch feat/grinder-discord-bot."
+    "DANGEROUS surfaces (validate.py, render.py) are STAGED, never self-applied overnight (ZUKO_OVERNIGHT).",
+    "Task 1 primary fix (pitch cap) lands at non-dangerous layers (mix.py, keys.py, docs, tests, sanity sweep); the referee (validate.py) hardening is staged for the morning tap.",
+    "Task 2 (services/discord-bot/) is non-dangerous, additive; the engine is not modified.",
+    "Never weaken a test to pass; never change tempo behavior (founder said keep it)."
+  ]
 }

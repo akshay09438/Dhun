@@ -23,7 +23,8 @@ sys.path.insert(0, str(_REPO / "services" / "api"))
 from app.routes.library import get_library
 from app.routes.mix import _load_analysis, SHIPPED_CHAIN
 from app.planner.plan import build_mix_plan, MixDeclined
-from app.planner import validate, rule_shuffle, beat_guest_verse
+from app.planner import validate, rule_shuffle, beat_guest_verse, keys
+from app.planner.keys import resolve_key_shift
 
 _BREATH_TOL = 0.6   # a line end within this many secs of a breath "finished on a breath"
 _REACH = 5.0        # a breath farther than this was out of reach (a non-stop singer) — not a fault
@@ -43,6 +44,12 @@ def sweep_pairs(beats, vocals):
             if a1 is None or a2 is None:
                 hard.append(f"{b['original_name']} x {v['original_name']}: missing analysis")
                 continue
+            # HARD PITCH RULE: the label-path key shift must be within +/-2 (the audio fallback is
+            # separately capped at KEY_SHIFT_CAP == CAP_SEMITONES; proven in tests/test_pitch_cap_hardrule.py).
+            kshift, _kwhy = resolve_key_shift(a1, a2)
+            if abs(int(kshift)) > keys.CAP_SEMITONES:
+                hard.append(f"{b['original_name']} x {v['original_name']}: key shift {kshift:+d} st "
+                            f"exceeds +/-{keys.CAP_SEMITONES} (HARD PITCH RULE)")
             for rule in (1, 4):  # rule 3 is remapped for guest-verse beats; 1=dry, 4=echo cover the render path
                 try:
                     plan = build_mix_plan("sane", a1, a2, "", take=1, chain=SHIPPED_CHAIN, rule=rule)
