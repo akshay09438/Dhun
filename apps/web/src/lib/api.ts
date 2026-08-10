@@ -429,7 +429,9 @@ export type OpsEvent = {
   kind: string; // "mix" | "set"
   via: string; // "single" | "set" (a mix made inside a set)
   ref_id: string; // the mix_id / set_id (used to play it back)
-  user_id: string | null; // the anonymous device tag
+  user_id: string | null; // a per-browser device tag on the web; a real account id on Discord
+  source?: string | null; // "web" | "discord" | null (recorded before mixes were tagged)
+  user_name?: string | null; // a Discord display name where we have one
   song1_name: string | null;
   song2_name: string | null;
   rule: number | null;
@@ -450,6 +452,13 @@ export type OpsSummary = {
   today_total: number;
   today_failed: number;
   today_degraded: number;
+  mixes: number;
+  sets: number;
+  /** Activity by surface. Keys are "web" | "discord" | "unknown" (rows made before the column existed). */
+  by_source: Record<string, number>;
+  people_by_source: Record<string, number>;
+  /** Which clock the day/hour numbers are in — shown to the operator, never assumed. */
+  report_tz: string;
 };
 
 export type OpsDevice = {
@@ -459,7 +468,63 @@ export type OpsDevice = {
   degraded: number;
   first_at: string;
   last_at: string;
+  first_day: string;
+  last_day: string;
   active_days: number; // distinct days this device made anything (>=2 = it came back)
+  source: string; // "web" | "discord" | "unknown"
+  user_name: string | null; // a Discord display name; null on the web (no login yet)
+};
+
+/** One catalog song's usage — the MUSIC view. */
+export type OpsSong = {
+  song_id: string;
+  name: string;
+  as_beat: number;
+  as_vocal: number;
+  used: number;
+  failed: number;
+  degraded: number;
+  top_partner: string | null;
+};
+
+/** Activity over time — the WHEN view. Hours/weekdays are dense arrays (24 / 7). */
+export type OpsTime = {
+  by_hour: number[];
+  by_weekday: number[]; // index 0 = Sunday
+  by_day: { day: string; n: number; failed: number; degraded: number }[];
+  days: number;
+  report_tz: string;
+};
+
+/** What is actually breaking, most common first. */
+export type OpsHealthReasons = {
+  failures: { reason: string; n: number }[];
+  degradations: { code: string; n: number }[];
+};
+
+/** One person's page. `found` is false for an id with no activity (an empty state, not an error). */
+export type OpsPerson = {
+  user_id: string;
+  found: boolean;
+  total: number;
+  failed?: number;
+  degraded?: number;
+  sets?: number;
+  first_at?: string;
+  last_at?: string;
+  first_day?: string;
+  last_day?: string;
+  active_days?: number;
+  max_take?: number;
+  avg_take?: number;
+  source?: string;
+  user_name?: string | null;
+  by_hour?: number[];
+  by_weekday?: number[];
+  top_beats?: { name: string | null; n: number }[];
+  top_vocals?: { name: string | null; n: number }[];
+  sittings?: number;
+  report_tz?: string;
 };
 
 /** Device-level retention (directional — counts persistent browsers, not verified people, until login). */
@@ -527,6 +592,26 @@ export function getOpsDevices(): Promise<OpsDevice[]> {
 /** Device-level retention: how many devices are returning vs new. */
 export function getOpsRetention(): Promise<OpsRetention> {
   return getAdmin<OpsRetention>("/admin/retention");
+}
+
+/** The MUSIC view: per-song usage as beat vs vocal, with failure counts and top partner. */
+export function getOpsSongs(): Promise<OpsSong[]> {
+  return getAdmin<OpsSong[]>("/admin/songs");
+}
+
+/** The WHEN view: by hour, by weekday, and a bounded day-by-day line. */
+export function getOpsTime(days = 30): Promise<OpsTime> {
+  return getAdmin<OpsTime>(`/admin/time?days=${days}`);
+}
+
+/** Ranked failure reasons and degradation codes. */
+export function getOpsHealthReasons(): Promise<OpsHealthReasons> {
+  return getAdmin<OpsHealthReasons>("/admin/health-reasons");
+}
+
+/** One person's page. Ids can contain odd characters, so encode before it hits the URL. */
+export function getOpsPerson(userId: string): Promise<OpsPerson> {
+  return getAdmin<OpsPerson>(`/admin/person/${encodeURIComponent(userId)}`);
 }
 
 const VOCAL_BUS_POLL_MS = 1500;

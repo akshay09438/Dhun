@@ -352,3 +352,160 @@
   font-size: 13px;
   margin: 12px 0;
 }
+
+/* ============================================================================
+   PANELS (Music / When / Health / one Person)
+   Deliberately plain: every "bar" is a div sized by a percentage, and the exact
+   number always sits beside it as text. No chart library, no animation.
+   ============================================================================ */
+
+.h2 {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--w45);
+  margin: 26px 0 10px;
+}
+
+/* ---- horizontal bar rows (weekday, top songs, failure reasons) ---- */
+.barRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 2px;
+  border-bottom: 1px solid var(--b10);
+}
+.barRow:last-child {
+  border-bottom: none;
+}
+.barLabel {
+  flex: 0 0 34%;
+  font-size: 13px;
+  /* a long failure reason truncates rather than pushing the bar off the row */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.barTrack {
+  flex: 1 1 auto;
+  height: 8px;
+  background: var(--b10);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.barFill {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  min-width: 2px; /* a count of 1 must still be visible */
+}
+.barN {
+  flex: 0 0 44px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--w45);
+}
+
+/* ---- column charts (hour of day, last N days) ---- */
+.cols {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 116px;
+  padding: 8px 0 0;
+}
+.col {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  height: 100%;
+  min-width: 0;
+}
+.colBar {
+  display: block;
+  width: 100%;
+  min-height: 2px; /* a count of 1 must still be visible */
+  background: var(--violet);
+  border-radius: 2px 2px 0 0;
+}
+.colBar:hover {
+  background: var(--text);
+}
+.colTick {
+  font-family: var(--mono);
+  font-size: 8px;
+  color: var(--w45);
+  margin-top: 5px;
+  height: 10px;
+  white-space: nowrap;
+}
+
+/* ---- the songs table ---- */
+.tableWrap {
+  overflow-x: auto; /* a narrow window scrolls the table, never the page */
+  border: 1px solid var(--b12);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.table th {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--w45);
+  text-align: left;
+  font-weight: 400;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--b12);
+  white-space: nowrap;
+}
+.table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--b10);
+}
+.table tr:last-child td {
+  border-bottom: none;
+}
+.table .num {
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* ---- one person's page ---- */
+.personHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.personName {
+  font-family: var(--serif);
+  font-size: 26px;
+  line-height: 1.15;
+  margin: 2px 0 6px;
+  /* a Discord display name is arbitrary text — never let it break the layout */
+  overflow-wrap: anywhere;
+}
+.twoCol {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
+}
+@media (max-width: 720px) {
+  .twoCol {
+    grid-template-columns: 1fr;
+  }
+}

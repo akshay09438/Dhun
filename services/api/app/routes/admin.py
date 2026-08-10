@@ -71,3 +71,32 @@ def admin_retention() -> dict:
     """Device-level retention — returning vs new. Directional (counts persistent browsers, not
     verified people) until login; see events.retention for the exact meaning of each number."""
     return events.retention(settings.data_dir)
+
+
+@router.get("/songs")
+def admin_songs() -> list:
+    """The MUSIC view: per catalog song, how often it was picked as the beat vs the vocal, how many
+    of those mixes broke or came out degraded, and its most frequent partner."""
+    return events.song_stats(settings.data_dir)
+
+
+@router.get("/time")
+def admin_time(days: int = Query(30, ge=1, le=365)) -> dict:
+    """The WHEN view: activity by hour of day, by weekday, and a day-by-day line over a bounded
+    window. Hours are in the report timezone, which the payload names in `report_tz` so the page
+    can say whose clock it is showing."""
+    return events.time_stats(settings.data_dir, days=days)
+
+
+@router.get("/health-reasons")
+def admin_health_reasons() -> dict:
+    """What is actually breaking: failure reasons and degradation codes, most common first."""
+    return events.health_reasons(settings.data_dir)
+
+
+@router.get("/person/{user_id}")
+def admin_person(user_id: str) -> dict:
+    """One person's page — totals, the songs they reach for, when they use it, and how many separate
+    sittings they have had. Returns `found: false` (not a 404) for an id with no activity, so the
+    dashboard renders an empty state rather than an error."""
+    return events.person(settings.data_dir, user_id)

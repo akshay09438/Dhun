@@ -497,3 +497,247 @@ def retention(data_dir: Path) -> dict[str, Any]:
         "new_today": new_today,
         "returning_today": returning_today,
     }
+
+
+# ---------------------------------------------------------------------------
+# DASHBOARD ROLLUPS
+#
+# Everything below answers ONE operator question and returns plain numbers — the dashboard
+# draws them with bare divs, not a charting library. All of them aggregate IN SQL (a COUNT or
+# a GROUP BY over an indexed column), so none is an unbounded fetch: the only place rows are
+# read into memory is one person's own history, which is capped.
+# ---------------------------------------------------------------------------
+
+# How far apart two mixes can be and still count as the same sitting at the keyboard.
+_SITTING_GAP_MINUTES = 30
+# Hard ceiling on how many of one person's rows the sittings calculation will read.
+_PERSON_ROW_CAP = 2000
+
+
+def _all(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
+    return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+def song_stats(data_dir: Path) -> list[dict[str, Any]]:
+    """MUSIC-level rollup: for each catalog song, how often it was picked as the beat, how often
+    as the vocal, how often a mix using it broke or came out degraded, and who it is most often
+    paired with. This is what says "these two songs are all anyone uses" or "every mix with this
+    song is degraded" — the catalog-quality signal the mix feed alone cannot show.
+
+    Only 'mix' rows have a song pair (a 'set' row's members live in `extra`), so sets are skipped."""
+    try:
+        conn = _connect(data_dir)
+        try:
+            def _side(id_col: str, name_col: str) -> dict[str, dict[str, Any]]:
+                rows = _all(conn, f"""
+                    SELECT {id_col} AS sid,
+                           MAX({name_col}) AS name,
+                           COUNT(*) AS used,
+                           SUM(CASE WHEN health='red'   THEN 1 ELSE 0 END) AS failed,
+                           SUM(CASE WHEN health='amber' THEN 1 ELSE 0 END) AS degraded
+                    FROM events
+                    WHERE kind='mix' AND {id_col} IS NOT NULL
+                    GROUP BY {id_col}
+                """)
+                return {r["sid"]: r for r in rows}
+
+            beats, vocals = _side("song1_id", "song1_name"), _side("song2_id", "song2_name")
+
+            # Most frequent partner per song, both directions. Bounded by catalog size squared
+            # (a 30-song catalog is at most a few hundred rows), so this is cheap to read.
+            pairs = _all(conn, """
+                SELECT song1_id, song2_id, MAX(song1_name) AS n1, MAX(song2_name) AS n2,
+                       COUNT(*) AS n
+                FROM events
+                WHERE kind='mix' AND song1_id IS NOT NULL AND song2_id IS NOT NULL
+                GROUP BY song1_id, song2_id
+            """)
+            best: dict[str, tuple[int, str]] = {}
+            for p in pairs:
+                for sid, partner in ((p["song1_id"], p["n2"]), (p["song2_id"], p["n1"])):
+                    if partner and p["n"] > best.get(sid, (0, ""))[0]:
+                        best[sid] = (p["n"], partner)
+
+            out: list[dict[str, Any]] = []
+            for sid in set(beats) | set(vocals):
+                b, v = beats.get(sid), vocals.get(sid)
+                as_beat = (b or {}).get("used", 0)
+                as_vocal = (v or {}).get("used", 0)
+                out.append({
+                    "song_id": sid,
+                    "name": (b or {}).get("name") or (v or {}).get("name") or sid[:8],
+                    "as_beat": as_beat,
+                    "as_vocal": as_vocal,
+                    "used": as_beat + as_vocal,
+                    "failed": (b or {}).get("failed", 0) + (v or {}).get("failed", 0),
+                    "degraded": (b or {}).get("degraded", 0) + (v or {}).get("degraded", 0),
+                    "top_partner": best.get(sid, (0, None))[1],
+                })
+            out.sort(key=lambda r: (-r["used"], r["name"]))
+            return out
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 — a rollup failure must never 500 the dashboard
+        log.exception("events: song_stats failed")
+        return []
+
+
+def _bucketed(conn: sqlite3.Connection, where: str = "", params: tuple = ()) -> dict[str, Any]:
+    """The by-hour / by-weekday shape, shared by the WHEN view and one person's page."""
+    clause = f" AND {where}" if where else ""
+    by_hour = {int(r["h"]): r["n"] for r in conn.execute(
+        f"SELECT {_HOUR} AS h, COUNT(*) AS n FROM events WHERE {_HOUR} IS NOT NULL{clause} GROUP BY h",
+        params)}
+    by_dow = {int(r["d"]): r["n"] for r in conn.execute(
+        f"""SELECT CAST(strftime('%w', {_DAY}) AS INTEGER) AS d, COUNT(*) AS n
+            FROM events WHERE {_DAY} IS NOT NULL{clause} GROUP BY d""", params)}
+    return {
+        # Dense 0-23 / 0-6 arrays so the dashboard never has to fill gaps itself. strftime('%w')
+        # is 0=Sunday, which is the order the UI labels them in.
+        "by_hour": [by_hour.get(h, 0) for h in range(24)],
+        "by_weekday": [by_dow.get(d, 0) for d in range(7)],
+    }
+
+
+def time_stats(data_dir: Path, days: int = 30) -> dict[str, Any]:
+    """WHEN-level rollup: activity by hour of day, by weekday, and a day-by-day line for the last
+    `days` days. Bounded on purpose — a window is both cheaper and what an operator actually reads.
+
+    HONEST LIMIT, surfaced in the UI via `report_tz`: these hours are the OPERATOR's clock. A user
+    in another country making a mix at their 9pm lands here at whatever that instant is locally, so
+    this shows when the service is busy, not when a given person likes to make music."""
+    days = max(1, min(int(days), 365))
+    try:
+        conn = _connect(data_dir)
+        try:
+            out = _bucketed(conn)
+            # Only days that actually have activity; the UI fills the calendar gaps.
+            out["by_day"] = _all(conn, f"""
+                SELECT {_DAY} AS day, COUNT(*) AS n,
+                       SUM(CASE WHEN health='red'   THEN 1 ELSE 0 END) AS failed,
+                       SUM(CASE WHEN health='amber' THEN 1 ELSE 0 END) AS degraded
+                FROM events
+                WHERE {_DAY} IS NOT NULL
+                GROUP BY day ORDER BY day DESC LIMIT ?
+            """, (days,))
+            out["by_day"].reverse()          # oldest -> newest, the direction a line is read
+            out["days"] = days
+            out["report_tz"] = report_tz_label()
+            return out
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        log.exception("events: time_stats failed")
+        return {"by_hour": [0] * 24, "by_weekday": [0] * 7, "by_day": [], "days": days,
+                "report_tz": report_tz_label()}
+
+
+def health_reasons(data_dir: Path) -> dict[str, Any]:
+    """WHAT IS BREAKING: failure reasons and degradation codes, most common first. Turns a feed of
+    red and amber dots into a ranked list of things to actually go and fix."""
+    try:
+        conn = _connect(data_dir)
+        try:
+            failures = _all(conn, """
+                SELECT COALESCE(fail_reason, '(no reason recorded)') AS reason, COUNT(*) AS n
+                FROM events WHERE status <> 'ok' GROUP BY reason ORDER BY n DESC
+            """)
+            # Anomalies are a JSON array per row, so they are counted here rather than in SQL. Only
+            # amber rows carry them, which keeps this to a small slice of the log.
+            codes: dict[str, int] = {}
+            for r in conn.execute(
+                    "SELECT anomalies FROM events WHERE health='amber' AND anomalies IS NOT NULL"):
+                try:
+                    for a in json.loads(r["anomalies"] or "[]"):
+                        if isinstance(a, dict) and a.get("code"):
+                            codes[a["code"]] = codes.get(a["code"], 0) + 1
+                except (ValueError, TypeError):
+                    continue
+            return {
+                "failures": failures,
+                "degradations": [{"code": c, "n": n}
+                                 for c, n in sorted(codes.items(), key=lambda kv: -kv[1])],
+            }
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        log.exception("events: health_reasons failed")
+        return {"failures": [], "degradations": []}
+
+
+def person(data_dir: Path, user_id: str) -> dict[str, Any]:
+    """ONE person's page: their totals, the songs they reach for, when they use it, and how many
+    separate sittings they have had. This is the "go inside a user id" view — on Discord `user_id`
+    is a real account, so it is trustworthy; on the web it is a per-browser tag, so the same human
+    on a phone and a laptop reads as two people."""
+    try:
+        conn = _connect(data_dir)
+        try:
+            head = conn.execute(f"""
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN health='red'   THEN 1 ELSE 0 END) AS failed,
+                       SUM(CASE WHEN health='amber' THEN 1 ELSE 0 END) AS degraded,
+                       SUM(CASE WHEN kind='set'     THEN 1 ELSE 0 END) AS sets,
+                       MIN(created_at) AS first_at, MAX(created_at) AS last_at,
+                       MIN({_DAY}) AS first_day, MAX({_DAY}) AS last_day,
+                       COUNT(DISTINCT {_DAY}) AS active_days,
+                       MAX(take) AS max_take, AVG(take) AS avg_take
+                FROM events WHERE user_id = ?
+            """, (user_id,)).fetchone()
+            if head is None or not head["total"]:
+                return {"user_id": user_id, "total": 0, "found": False}
+
+            out: dict[str, Any] = {"user_id": user_id, "found": True, **dict(head)}
+            out["source"] = (conn.execute(
+                "SELECT COALESCE(source,'unknown') AS s FROM events WHERE user_id=? ORDER BY id DESC LIMIT 1",
+                (user_id,)).fetchone() or {"s": "unknown"})["s"]
+            name_row = conn.execute(
+                "SELECT user_name FROM events WHERE user_id=? AND user_name IS NOT NULL "
+                "ORDER BY id DESC LIMIT 1", (user_id,)).fetchone()
+            out["user_name"] = name_row["user_name"] if name_row else None
+            out.update(_bucketed(conn, "user_id = ?", (user_id,)))
+
+            out["top_beats"] = _all(conn, """
+                SELECT MAX(song1_name) AS name, COUNT(*) AS n FROM events
+                WHERE user_id=? AND kind='mix' AND song1_id IS NOT NULL
+                GROUP BY song1_id ORDER BY n DESC, name LIMIT 5
+            """, (user_id,))
+            out["top_vocals"] = _all(conn, """
+                SELECT MAX(song2_name) AS name, COUNT(*) AS n FROM events
+                WHERE user_id=? AND kind='mix' AND song2_id IS NOT NULL
+                GROUP BY song2_id ORDER BY n DESC, name LIMIT 5
+            """, (user_id,))
+            out["sittings"] = _sittings(conn, user_id)
+            out["report_tz"] = report_tz_label()
+            return out
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        log.exception("events: person(%s) failed", user_id)
+        return {"user_id": user_id, "total": 0, "found": False}
+
+
+def _sittings(conn: sqlite3.Connection, user_id: str) -> int:
+    """How many separate visits this person made — consecutive mixes more than
+    _SITTING_GAP_MINUTES apart start a new one. Six mixes in one evening is a very different
+    story from six mixes across six weeks, and a raw total cannot tell them apart.
+
+    This is the one place rows are read rather than aggregated (consecutive-row gaps are awkward
+    in SQL across SQLite versions), so it is capped: one person's own stamps, at most
+    _PERSON_ROW_CAP of them."""
+    stamps: list[datetime] = []
+    for r in conn.execute(
+            "SELECT created_at FROM events WHERE user_id=? ORDER BY created_at LIMIT ?",
+            (user_id, _PERSON_ROW_CAP)):
+        try:
+            dt = datetime.fromisoformat(r["created_at"])
+        except (ValueError, TypeError):
+            continue
+        # Compare like with like: a naive legacy stamp gets this machine's offset attached, so a
+        # mixed-vintage history cannot raise "can't subtract offset-naive and offset-aware".
+        stamps.append(dt if dt.tzinfo else dt.astimezone())
+    if not stamps:
+        return 0
+    gap = _SITTING_GAP_MINUTES * 60
+    return 1 + sum(1 for a, b in zip(stamps, stamps[1:])
+                   if (b - a).total_seconds() > gap)

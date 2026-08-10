@@ -4,28 +4,54 @@ import {
   DashboardLockedError,
   getOpsDevices,
   getOpsEvents,
+  getOpsHealthReasons,
+  getOpsPerson,
   getOpsRetention,
+  getOpsSongs,
   getOpsSummary,
+  getOpsTime,
   type OpsDevice,
   type OpsEvent,
+  type OpsHealthReasons,
+  type OpsPerson,
   type OpsRetention,
+  type OpsSong,
   type OpsSummary,
+  type OpsTime,
 } from "../../lib/api";
+import { HealthPanel, MusicPanel, PersonPanel, WhenPanel } from "./AdminPanels";
 import styles from "./AdminScreen.module.css";
 
 const PAGE = 50;
 
+type View = "overview" | "people" | "music" | "when";
+
+const TABS: { id: View; label: string }[] = [
+  { id: "overview", label: "Overview" },
+  { id: "people", label: "People" },
+  { id: "music", label: "Music" },
+  { id: "when", label: "When" },
+];
+
 /** The internal developer / operations dashboard (reached at #dev). Read-only.
- *  Shows every mix/set that's been made, newest first, with failures (red) and degraded
- *  mixes (amber) called out, a play button to hear each one, and a per-device rollup.
+ *
+ *  Four tabs, each answering one operator question — Overview: is it healthy? People: who is
+ *  using it? Music: what are they making? When: when do they use it? Clicking a person opens
+ *  their own page (their songs, their hours, their history).
+ *
+ *  Deliberately plain, at the founder's request: numbers and simple bars, no charting library.
  *  This is an ops tool, not part of the user flow — it never changes or deletes anything. */
 export function AdminScreen() {
-  const [view, setView] = useState<"activity" | "devices">("activity");
+  const [view, setView] = useState<View>("overview");
   const [summary, setSummary] = useState<OpsSummary | null>(null);
   const [events, setEvents] = useState<OpsEvent[]>([]);
   const [total, setTotal] = useState(0);
   const [devices, setDevices] = useState<OpsDevice[]>([]);
   const [retention, setRetention] = useState<OpsRetention | null>(null);
+  const [songs, setSongs] = useState<OpsSong[]>([]);
+  const [time, setTime] = useState<OpsTime | null>(null);
+  const [health, setHealth] = useState<OpsHealthReasons | null>(null);
+  const [person, setPerson] = useState<OpsPerson | null>(null);
   const [deviceFilter, setDeviceFilter] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,13 +73,19 @@ export function AdminScreen() {
       setTotal(ev.total);
       setDevices(dev);
       setLocked(false);
-      // Retention is a supplementary view — a failure fetching it must never break the core
-      // failure-visibility dashboard, so it loads separately and degrades to "not shown".
-      try {
-        setRetention(await getOpsRetention());
-      } catch {
-        setRetention(null);
-      }
+      // The rollups are supplementary: a failure fetching any of them must never break the core
+      // failure-visibility feed, so they load separately and each degrades to "not shown".
+      // Settled (not all) so one slow or broken rollup can't hide the others.
+      const [ret, sng, tim, hea] = await Promise.allSettled([
+        getOpsRetention(),
+        getOpsSongs(),
+        getOpsTime(),
+        getOpsHealthReasons(),
+      ]);
+      setRetention(ret.status === "fulfilled" ? ret.value : null);
+      setSongs(sng.status === "fulfilled" ? sng.value : []);
+      setTime(tim.status === "fulfilled" ? tim.value : null);
+      setHealth(hea.status === "fulfilled" ? hea.value : null);
     } catch (e) {
       if (e instanceof DashboardLockedError) setLocked(true);
       else
@@ -64,6 +96,17 @@ export function AdminScreen() {
       setLoading(false);
     }
   }, [deviceFilter]);
+
+  /** Open one person's page. Their detail is fetched on demand — the People list only needs the
+   *  rollup, so we don't pay for every person's history up front. */
+  const openPerson = useCallback(async (userId: string) => {
+    setPerson({ user_id: userId, found: false, total: 0 });
+    try {
+      setPerson(await getOpsPerson(userId));
+    } catch {
+      setPerson({ user_id: userId, found: false, total: 0 });
+    }
+  }, []);
 
   useEffect(() => {
     void load();
@@ -123,80 +166,165 @@ export function AdminScreen() {
           l="degraded"
           tone={summary?.degraded ? "amber" : undefined}
         />
-        <Tile n={summary?.devices} l="devices" />
+        <Tile n={peopleCount(summary)} l="people" />
       </div>
 
-      <div className={styles.toolbar}>
-        <div className={styles.toggle}>
-          <button
-            className={view === "activity" ? styles.active : ""}
-            onClick={() => setView("activity")}
-          >
-            Activity
-          </button>
-          <button
-            className={view === "devices" ? styles.active : ""}
-            onClick={() => setView("devices")}
-          >
-            By device
-          </button>
-        </div>
-        {deviceFilter && (
-          <span className={styles.filterNote}>
-            device {shortId(deviceFilter)}
-            <button onClick={() => setDeviceFilter(null)}>clear ✕</button>
-          </span>
-        )}
-      </div>
+      {summary && <SourceStrip summary={summary} />}
 
-      {loading && <div className={styles.state}>Loading…</div>}
-      {error && !loading && (
-        <div className={`${styles.state} ${styles.error}`}>{error}</div>
-      )}
-
-      {!loading && !error && view === "activity" && (
+      {/* One person's page takes over the body — it is a drill-down, not a fifth tab. */}
+      {person ? (
         <>
-          {events.length === 0 ? (
-            <div className={styles.state}>
-              No mixes yet — make one in the app and it'll show up here.
-            </div>
-          ) : (
-            <div className={styles.list} data-testid="event-list">
-              {events.map((ev) => (
-                <EventRow
-                  key={ev.id}
-                  ev={ev}
-                  expanded={expanded === ev.id}
-                  playing={playing === ev.id}
-                  onToggle={() =>
-                    setExpanded(expanded === ev.id ? null : ev.id)
-                  }
-                  onPlay={() => setPlaying(playing === ev.id ? null : ev.id)}
-                />
+          <div className={styles.toolbar}>
+            <button
+              className={styles.refresh}
+              onClick={() => setPerson(null)}
+              data-testid="person-back"
+            >
+              ← All people
+            </button>
+          </div>
+          <PersonPanel
+            person={person}
+            onSeeMixes={() => {
+              setDeviceFilter(person.user_id);
+              setPerson(null);
+              setView("overview");
+            }}
+          />
+        </>
+      ) : (
+        <>
+          <div className={styles.toolbar}>
+            <div className={styles.toggle} role="tablist">
+              {TABS.map((t) => (
+                <button
+                  key={t.id}
+                  role="tab"
+                  aria-selected={view === t.id}
+                  className={view === t.id ? styles.active : ""}
+                  onClick={() => setView(t.id)}
+                >
+                  {t.label}
+                </button>
               ))}
             </div>
+            {deviceFilter && (
+              <span className={styles.filterNote}>
+                just {shortId(deviceFilter)}
+                <button onClick={() => setDeviceFilter(null)}>clear ✕</button>
+              </span>
+            )}
+          </div>
+
+          {loading && <div className={styles.state}>Loading…</div>}
+          {/* role=alert so a failure is announced, not just coloured */}
+          {error && !loading && (
+            <div className={`${styles.state} ${styles.error}`} role="alert">
+              {error}
+            </div>
           )}
-          {events.length < total && (
-            <button
-              className={`${styles.refresh} ${styles.more}`}
-              onClick={() => void loadMore()}
-            >
-              Show more ({events.length} of {total})
-            </button>
+
+          {!loading && !error && view === "overview" && (
+            <>
+              <h2 className={styles.h2}>Everything made, newest first</h2>
+              {events.length === 0 ? (
+                <div className={styles.state}>
+                  No mixes yet — make one in the app or in Discord and
+                  it&apos;ll show up here.
+                </div>
+              ) : (
+                <div className={styles.list} data-testid="event-list">
+                  {events.map((ev) => (
+                    <EventRow
+                      key={ev.id}
+                      ev={ev}
+                      expanded={expanded === ev.id}
+                      playing={playing === ev.id}
+                      onToggle={() =>
+                        setExpanded(expanded === ev.id ? null : ev.id)
+                      }
+                      onPlay={() =>
+                        setPlaying(playing === ev.id ? null : ev.id)
+                      }
+                    />
+                  ))}
+                </div>
+              )}
+              {events.length < total && (
+                <button
+                  className={`${styles.refresh} ${styles.more}`}
+                  onClick={() => void loadMore()}
+                >
+                  Show more ({events.length} of {total})
+                </button>
+              )}
+              {health && <HealthPanel health={health} />}
+            </>
           )}
+
+          {!loading && !error && view === "people" && (
+            <DevicesView
+              devices={devices}
+              retention={retention}
+              onPick={(id) => void openPerson(id)}
+            />
+          )}
+
+          {!loading && !error && view === "music" && (
+            <MusicPanel songs={songs} />
+          )}
+
+          {!loading &&
+            !error &&
+            view === "when" &&
+            (time ? (
+              <WhenPanel time={time} />
+            ) : (
+              <div className={styles.state}>
+                Couldn&apos;t load the activity-over-time numbers. Refresh to
+                try again.
+              </div>
+            ))}
         </>
       )}
+    </div>
+  );
+}
 
-      {!loading && !error && view === "devices" && (
-        <DevicesView
-          devices={devices}
-          retention={retention}
-          onPick={(id) => {
-            setDeviceFilter(id === "(no id)" ? null : id);
-            setView("activity");
-          }}
-        />
-      )}
+/** How many distinct people have made anything. Prefers the by-source people counts, which
+ *  include rows with no id, so this tile agrees with the retention strip below it rather than
+ *  disagreeing by one (the two used different definitions before). */
+function peopleCount(summary: OpsSummary | null): number | undefined {
+  if (!summary) return undefined;
+  const bySource = Object.values(summary.people_by_source ?? {});
+  return bySource.length
+    ? bySource.reduce((a, b) => a + b, 0)
+    : summary.devices;
+}
+
+/** Where the work is coming from — the one number that says whether Discord is pulling its weight.
+ *  'unknown' is shown honestly rather than folded into either surface: those rows were recorded
+ *  before mixes were tagged, and guessing would make this split quietly wrong. */
+function SourceStrip({ summary }: { summary: OpsSummary }) {
+  const entries = Object.entries(summary.by_source ?? {}).sort(
+    (a, b) => b[1] - a[1],
+  );
+  if (entries.length === 0) return null;
+  const label = (k: string) =>
+    k === "web" ? "web" : k === "discord" ? "Discord" : "before tagging";
+  return (
+    <div className={styles.retention} data-testid="source-strip">
+      {entries.map(([k, n], i) => (
+        <span key={k}>
+          {i > 0 && <span className={styles.dotsep}>·</span>}
+          <b>{n}</b> from {label(k)}
+          {summary.people_by_source?.[k]
+            ? ` (${summary.people_by_source[k]} ${
+                summary.people_by_source[k] === 1 ? "person" : "people"
+              })`
+            : ""}
+        </span>
+      ))}
     </div>
   );
 }
@@ -282,7 +410,12 @@ function EventRow({
             <span className={styles.badge}>{ev.rule_label}</span>
           )}
           {ev.via === "set" && <span className={styles.meta}>in set</span>}
-          <span className={styles.meta}>{shortId(ev.user_id)}</span>
+          {ev.source === "discord" && (
+            <span className={styles.badge}>Discord</span>
+          )}
+          <span className={styles.meta}>
+            {ev.user_name ?? shortId(ev.user_id)}
+          </span>
           <span className={styles.meta}>{fmtTime(ev.created_at)}</span>
         </button>
         <button
@@ -370,8 +503,20 @@ function DevicesView({
             key={d.user_id}
             className={styles.devRow}
             onClick={() => onPick(d.user_id)}
+            disabled={d.user_id === "(no id)"}
+            title={
+              d.user_id === "(no id)"
+                ? "These mixes were made before ids were recorded, so there's no one to open."
+                : "Open this person's page"
+            }
           >
-            <span className={styles.devId}>{d.user_id}</span>
+            {/* the recognisable name first when we have one — a bare account id tells you nothing */}
+            <span className={styles.devId}>{d.user_name ?? d.user_id}</span>
+            {d.source !== "unknown" && (
+              <span className={styles.badge}>
+                {d.source === "discord" ? "Discord" : "Web"}
+              </span>
+            )}
             <span className={styles.badge}>{d.total} made</span>
             {d.active_days >= 2 && (
               <span
@@ -398,9 +543,10 @@ function DevicesView({
         ))}
       </div>
       <p className={styles.retentionNote}>
-        Retention counts devices (a saved browser tag), not verified people — a
-        new browser or cleared storage reads as new. Directional until sign-in
-        adds real usernames.
+        Discord rows are real accounts, so those are solid. Web rows count a
+        saved browser tag, not a verified person — the same human on a phone and
+        a laptop reads as two, and cleared storage reads as new. Directional
+        until the web app has sign-in.
       </p>
     </>
   );
