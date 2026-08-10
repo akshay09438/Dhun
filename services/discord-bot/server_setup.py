@@ -111,7 +111,7 @@ class Report:
         # The reason matters more than the exception type — "Missing Permissions" is the answer to
         # 90% of setup failures, and the founder can act on it.
         reason = getattr(exc, "text", None) or str(exc) or exc.__class__.__name__
-        self.failed.append(f"{label} — {reason}")
+        self.failed.append(f"{label}: {reason}")
         log.warning("setup step failed: %s", label, exc_info=exc)
 
 
@@ -167,17 +167,17 @@ async def apply_icon(guild: discord.Guild, report: Report, *, force: bool = Fals
 
 
 async def apply_banner(guild: discord.Guild, report: Report) -> None:
-    """Set the banner — only possible once the server has boost level 2. Reports the reason
+    """Set the banner. Only possible once the server has boost level 2. Reports the reason
     plainly rather than failing silently, because "why is there no banner" is an obvious question."""
     if "BANNER" not in guild.features:
-        report.already("banner (needs boost level 2 — artwork is ready)")
+        report.already("banner (needs boost level 2, artwork is ready)")
         return
     data = brand.image_bytes(brand.BANNER)
     if data is None:
         report.already("banner (artwork missing)")
         return
     try:
-        await guild.edit(banner=data, reason="Grinder /setup — brand the server")
+        await guild.edit(banner=data, reason="Grinder /setup - brand the server")
         report.ok("banner")
     except Exception as e:  # noqa: BLE001
         report.error("banner", e)
@@ -190,7 +190,7 @@ async def create_roles(guild: discord.Guild, report: Report) -> None:
             continue
         try:
             await guild.create_role(name=name, colour=discord.Colour(colour),
-                                    mentionable=True, reason=f"Grinder /setup — {reason}")
+                                    mentionable=True, reason=f"Grinder /setup - {reason}")
             report.ok(f"role @{name}")
         except Exception as e:  # noqa: BLE001
             report.error(f"role @{name}", e)
@@ -275,7 +275,7 @@ def welcome_embeds(guild: discord.Guild) -> list[discord.Embed]:
         title="Welcome to Grinder",
         description=(
             "Grinder makes a **DJ mashup** out of two songs: one song's **beat**, another song's "
-            "**vocals**. You don't need to know how to DJ — you just pick two songs."),
+            "**vocals**. You don't need to know how to DJ, you just pick two songs."),
         color=brand.PRIMARY)
     intro.set_image(url="attachment://logo.png")
 
@@ -302,12 +302,12 @@ def welcome_embeds(guild: discord.Guild) -> list[discord.Embed]:
     house = discord.Embed(title="How we use this place", color=brand.PINK)
     house.add_field(
         name="#best-mixes",
-        value="The good stuff, in one place. Read-only — mixes get carried up here from "
+        value="The good stuff, in one place. Read-only: mixes get carried up here from "
               "#i-made-this once people react to them.",
         inline=False)
     house.add_field(
         name="#i-made-this",
-        value="Post mixes you'd actually play. React 🔥 to the good ones — that's how they end up "
+        value="Post mixes you'd actually play. React 🔥 to the good ones. That's how they end up "
               "in #best-mixes, and how we find out what's working.",
         inline=False)
     house.add_field(
@@ -363,17 +363,17 @@ async def run(guild: discord.Guild, *, refresh_branding: bool = False) -> Report
 
 
 def report_embed(report: Report, guild_name: str) -> discord.Embed:
-    """Turn the report into something readable — and honest about what didn't work."""
+    """Turn the report into something readable, and honest about what didn't work."""
     colour = brand.FAIL if report.failed else brand.PRIMARY
     e = discord.Embed(
-        title="Server setup" + (" — with problems" if report.failed else " complete"),
+        title="Server setup" + (" with problems" if report.failed else " complete"),
         description=f"**{guild_name}** is ready." if not report.failed else
-                    f"Built most of **{guild_name}**, but some steps failed — see below.",
+                    f"Built most of **{guild_name}**, but some steps failed. See below.",
         color=colour)
 
     def block(items: list[str], limit: int = 18) -> str:
         if not items:
-            return "—"
+            return "-"
         shown = items[:limit]
         # never silently truncate — say how many were left out
         extra = len(items) - len(shown)
@@ -386,8 +386,8 @@ def report_embed(report: Report, guild_name: str) -> discord.Embed:
         e.add_field(name=f"Already there ({len(report.skipped)})", value=block(report.skipped), inline=False)
     if report.failed:
         e.add_field(name=f"Failed ({len(report.failed)})", value=block(report.failed), inline=False)
-        e.set_footer(text="Most failures are a missing permission. Re-running /setup is safe — "
+        e.set_footer(text="Most failures are a missing permission. Re-running /setup is safe: "
                           "it skips whatever already exists.")
     else:
-        e.set_footer(text="Re-running /setup is safe — it skips whatever already exists.")
+        e.set_footer(text="Re-running /setup is safe: it skips whatever already exists.")
     return e
