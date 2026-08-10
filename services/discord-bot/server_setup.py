@@ -146,19 +146,22 @@ def _overwrites_for(guild: discord.Guild, ch: ChannelSpec):
     }
 
 
-async def apply_icon(guild: discord.Guild, report: Report) -> None:
-    """Set the server icon to the G mark. Skipped if the server already has any icon — replacing
-    art the founder chose themselves would be presumptuous."""
-    if guild.icon is not None:
-        report.already("server icon (one is already set)")
+async def apply_icon(guild: discord.Guild, report: Report, *, force: bool = False) -> None:
+    """Set the server icon to Grinder's mark.
+
+    Skipped by default if the server already has an icon — replacing art the founder chose
+    themselves would be presumptuous. `force` (from `/setup refresh_branding:True`) overrides that,
+    which is how updated artwork gets onto an already-branded server."""
+    if guild.icon is not None and not force:
+        report.already("server icon (already set - use /setup refresh_branding:True to replace)")
         return
     data = brand.image_bytes(brand.ICON)
     if data is None:
         report.already("server icon (artwork missing)")
         return
     try:
-        await guild.edit(icon=data, reason="Grinder /setup — brand the server")
-        report.ok("server icon")
+        await guild.edit(icon=data, reason="Grinder /setup - brand the server")
+        report.ok("server icon" + (" (replaced)" if force else ""))
     except Exception as e:  # noqa: BLE001 — one failed step must not abort the rest of setup
         report.error("server icon", e)
 
@@ -343,11 +346,14 @@ async def post_welcome(guild: discord.Guild, report: Report) -> None:
         report.error("welcome post", e)
 
 
-async def run(guild: discord.Guild) -> Report:
+async def run(guild: discord.Guild, *, refresh_branding: bool = False) -> Report:
     """Build the whole community. Order matters: channels before the welcome post (it needs
-    #read-me), and the icon first so the founder sees something change immediately."""
+    #read-me), and the icon first so the founder sees something change immediately.
+
+    `refresh_branding` re-applies the icon (and banner) over existing art — the way to push updated
+    artwork onto a server that is already branded."""
     report = Report()
-    await apply_icon(guild, report)
+    await apply_icon(guild, report, force=refresh_branding)
     await apply_banner(guild, report)
     await create_roles(guild, report)
     await create_channels(guild, report)

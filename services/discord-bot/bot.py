@@ -315,9 +315,11 @@ async def help_cmd(interaction: discord.Interaction) -> None:
     await interaction.response.send_message(embed=ui.help_embed(), files=files, ephemeral=True)
 
 
-@bot.tree.command(name="setup", description="Build out this server — channels, roles, emojis, branding.")
+@bot.tree.command(name="setup", description="Build out this server - channels, roles, emojis, branding.")
+@app_commands.describe(
+    refresh_branding="Replace the server icon with Grinder's current artwork (default: leave it alone).")
 @app_commands.checks.has_permissions(manage_guild=True)
-async def setup_cmd(interaction: discord.Interaction) -> None:
+async def setup_cmd(interaction: discord.Interaction, refresh_branding: bool = False) -> None:
     """Build the community inside a server the founder already created and owns.
 
     Gated on Manage Server so a random member can't restructure the place. Deferred because a full
@@ -330,7 +332,7 @@ async def setup_cmd(interaction: discord.Interaction) -> None:
 
     await interaction.response.defer(thinking=True)
     try:
-        report = await server_setup.run(interaction.guild)
+        report = await server_setup.run(interaction.guild, refresh_branding=refresh_branding)
     except Exception as e:  # noqa: BLE001 — report the failure rather than a silent timeout
         log.exception("setup failed outright")
         await interaction.followup.send(

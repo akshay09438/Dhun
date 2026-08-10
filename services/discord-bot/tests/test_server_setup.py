@@ -474,3 +474,33 @@ async def test_an_ordinary_existing_channel_has_its_permissions_left_alone():
     await server_setup.run(g)
     general = next(c for c in g.channels if c.name == "general")
     assert general.perms == {}, "a normal channel's permissions must not be touched"
+
+
+# --- refreshing branding onto an already-branded server ------------------------------------
+
+@run_async
+async def test_refresh_branding_replaces_an_existing_server_icon():
+    """How updated artwork reaches a server that /setup already branded. Without this the icon is
+    whatever the FIRST run set, forever."""
+    g = FakeGuild(icon="the old G mark")
+    report = await server_setup.run(g, refresh_branding=True)
+    assert g.icon == "set"
+    assert any("server icon" in c for c in report.created)
+
+
+@run_async
+async def test_without_the_flag_an_existing_icon_is_still_left_alone():
+    """The default has to stay safe: an icon the founder chose themselves is not ours to replace."""
+    g = FakeGuild(icon="the founder's own art")
+    report = await server_setup.run(g)
+    assert g.icon == "the founder's own art"
+    note = next(s for s in report.skipped if "server icon" in s)
+    assert "refresh_branding" in note, "the skip note should say how to override it"
+
+
+@run_async
+async def test_refresh_branding_on_a_bare_server_still_just_sets_the_icon():
+    g = FakeGuild()
+    report = await server_setup.run(g, refresh_branding=True)
+    assert g.icon == "set"
+    assert not report.failed
