@@ -5,6 +5,14 @@ import wave
 import ui
 
 
+def _blob(e) -> str:
+    parts = [e.title or "", e.description or "",
+             (e.footer.text or "") if e.footer else ""]
+    for f in e.fields:
+        parts += [f.name or "", f.value or ""]
+    return "\n".join(parts)
+
+
 def test_accent_is_the_brand_purple_sampled_from_the_artwork():
     """Changed 2026-08-10: was the web app's #6D3BF5, a BLUE-violet. The Grinder artwork is a
     RED-violet, so the old accent read as a second, clashing brand sitting beside the logo. The
@@ -20,8 +28,8 @@ def test_cards_carry_the_grinder_mark_once_the_avatar_url_is_known():
     assert ui.help_embed().author.icon_url is None
     try:
         ui.set_avatar_url("https://cdn.example/icon.png")
-        for e in (ui.cooking_embed("A", "B"),
-                  ui.now_playing_embed(name="N", beat="A", vocals="B", total_secs=10, user=None),
+        for e in (ui.submit_embed(user=None, beat="A", vocals="B"),
+                  ui.grind_embed(number=1, user=None, pairs=[("A", "B")], total_secs=10),
                   ui.error_embed("nope")):
             assert e.author.icon_url == "https://cdn.example/icon.png"
     finally:
@@ -47,39 +55,103 @@ def test_bar_knob_moves_and_shows_times():
     assert ui.bar(0, 0) and ui.bar(5, None)               # never crashes on 0/None total
 
 
-def test_now_playing_hides_style_and_take():
-    # the mix STYLE (rule) and TAKE number are internal-only — never shown to users. Only
-    # song names + length appear on the card.
-    e = ui.now_playing_embed(name="Ocean Bina", beat="Hey Brother", vocals="Bad Guy",
-                             total_secs=210, user=None)
+def test_the_grind_card_hides_the_style_and_the_take():
+    """The mixing rule and the take number are internal only, on the ops dashboard, never on a
+    card. Song names, length, and who made it is the whole vocabulary."""
+    e = ui.grind_embed(number=147, user=None, pairs=[("Hey Brother", "Bad Guy")], total_secs=210)
     assert e.color.value == ui.ACCENT
-    assert "Ocean Bina" in e.title
+    assert "147" in e.title
     assert "Hey Brother" in e.description and "Bad Guy" in e.description
     names = [f.name for f in e.fields]
     assert "Length" in names
     assert "Style" not in names and "Take" not in names
-    blob = (e.title + e.description + " ".join(f"{f.name} {f.value}" for f in e.fields)
-            + (e.footer.text or "")).lower()
-    assert "take" not in blob and "style" not in blob   # not even in the copy
+    blob = _blob(e).lower()
+    assert "take" not in blob and "style" not in blob
 
 
-def test_in_voice_author_line():
-    e = ui.now_playing_embed(name="X", beat="a", vocals="b", total_secs=100, user=None, in_voice=True)
-    assert "voice" in e.author.name.lower()
+def test_a_long_grind_numbers_its_running_order_and_flags_the_new_one():
+    e = ui.grind_embed(number=9, user=None, pairs=[("A", "B"), ("C", "D")],
+                       total_secs=400, just_landed=True)
+    assert "long grind" in e.title and "2 tracks" in e.title
+    assert "just landed" in e.description
+    # the marker belongs to the pair that just arrived, not the one already there
+    first, second = e.description.splitlines()[0], e.description.splitlines()[1]
+    assert "just landed" not in first and "just landed" in second
 
 
-def test_cooking_hides_take():
-    e = ui.cooking_embed("A", "B")
-    blob = (e.title + e.description + (e.footer.text or "")).lower()
-    assert "take" not in blob
+def test_the_booth_banner_says_how_many_are_listening():
+    one = ui.grind_embed(number=1, user=None, pairs=[("A", "B")], total_secs=10,
+                         booth_listeners=1)
+    many = ui.grind_embed(number=1, user=None, pairs=[("A", "B")], total_secs=10,
+                          booth_listeners=4)
+    assert "1 listening" in one.description
+    assert "4 listening" in many.description
+    assert "PLAYING LIVE IN THE BOOTH" in many.description
 
 
-def test_help_error_set_cooking_colors():
+def test_a_queued_grind_states_its_position_without_judging_it():
+    e = ui.grind_embed(number=1, user=None, pairs=[("A", "B")], total_secs=10, queued_behind=2)
+    assert "waiting for The Booth" in e.description
+    assert "2 ahead of it" in e.description
+
+
+def test_the_submit_card_names_both_songs_and_predicts_nothing():
+    e = ui.submit_embed(user=None, beat="Midnight City", vocals="Kabhi Kabhi Aditi")
+    assert "Midnight City" in e.description and "Kabhi Kabhi Aditi" in e.description
+    assert "grinding..." in e.description
+    assert "take" not in _blob(e).lower()
+
+
+# --- the rule that shapes every card ---------------------------------------------------
+# Grinder never evaluates, rates, judges or predicts a grind. An opinion on the card tells people
+# what to think before they hear it, and it contaminates the 🔥/💀/😐 data, which is the actual
+# product signal. This test is the thing that stops a future card quietly reintroducing one.
+JUDGEMENT_WORDS = (
+    "clean grind", "rough grind", "shouldn't work", "should not work",
+    "no business together", "might actually get along", "could go either way",
+    "someone stop", "verdict", "score", "rating", "rated", "quality",
+    "banger", "cursed", "disaster", "risky", "risk", "warning", "degraded",
+    "good match", "bad match", "perfect match", "incompatible",
+)
+TECHNICAL_WORDS = ("bpm", "camelot", "semitone", "tempo", "key of", "hz")
+
+
+def _every_card():
+    return [
+        ui.submit_embed(user=None, beat="A", vocals="B"),
+        ui.grind_embed(number=1, user=None, pairs=[("A", "B")], total_secs=200),
+        ui.grind_embed(number=2, user=None, pairs=[("A", "B"), ("C", "D")], total_secs=400,
+                       just_landed=True),
+        ui.grind_embed(number=3, user=None, pairs=[("A", "B")], total_secs=200,
+                       booth_listeners=4),
+        ui.grind_embed(number=4, user=None, pairs=[("A", "B")], total_secs=200, queued_behind=1),
+        ui.booth_live_embed(listeners=3, grinds_this_session=5, last_up="A x B"),
+        ui.booth_quiet_embed(),
+        ui.mygrinds_embed(user=None, total=2, rows=[(1, "A x B", None)]),
+        ui.help_embed(),
+    ]
+
+
+def test_no_card_ever_rates_or_predicts_a_grind():
+    for e in _every_card():
+        blob = _blob(e).lower()
+        for word in JUDGEMENT_WORDS:
+            assert word not in blob, f"a card judged the grind: {word!r} in {e.title!r}"
+
+
+def test_no_card_ever_shows_a_technical_readout():
+    for e in _every_card():
+        blob = _blob(e).lower()
+        for word in TECHNICAL_WORDS:
+            assert word not in blob, f"a card leaked engine internals: {word!r} in {e.title!r}"
+
+
+def test_colors():
     assert ui.help_embed().color.value == ui.ACCENT
     assert ui.error_embed("nope").color.value == ui.FAIL
-    assert ui.set_lineup_embed("Set 1: a x b", 300, 2, None).color.value == ui.ACCENT
-    assert ui.building_embed("Set 1: a x b", 1).color.value == ui.ACCENT
-    assert ui.cooking_embed("A", "B").color.value == ui.ACCENT
+    assert ui.submit_embed(user=None, beat="A", vocals="B").color.value == ui.ACCENT
+    assert ui.grind_embed(number=1, user=None, pairs=[("A", "B")],
+                          total_secs=1).color.value == ui.ACCENT
 
 
 def test_wav_duration(tmp_path):

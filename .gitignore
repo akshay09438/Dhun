@@ -38,5 +38,8 @@ Thumbs.db
 .claude/settings.local.json
 services/api/_candidate_preload.py
 
-# Which avatar art the bot last uploaded (per-installation state, not source)
-services/discord-bot/assets/.applied-avatar
+# Which artwork the bot last uploaded, per slot (per-installation state, not source)
+services/discord-bot/assets/.applied-*
+
+# The bot's own small database (grind numbers, reactions). Local state, not source.
+services/discord-bot/data/

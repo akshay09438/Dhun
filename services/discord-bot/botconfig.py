@@ -37,6 +37,17 @@ class Config:
     token: str
     api_base: str
     guild_id: int | None
+    # Channel ids, set by `/setup` writing them back or by hand. All optional: a missing id
+    # disables that one feature and says so in the log, rather than the bot guessing at a channel
+    # by name. Guessing is how a message ends up in the wrong room in somebody else's server.
+    booth_channel_id: int | None = None          # the ONE voice channel grinds play in
+    grinder_channel_id: int | None = None        # #the-grinder: status message + arrival notes
+    fresh_grinds_channel_id: int | None = None   # #fresh-grinds: where 📌 sends a grind
+
+
+def _int_env(name: str) -> int | None:
+    v = os.environ.get(name, "").strip()
+    return int(v) if v.isdigit() else None
 
 
 def load_config() -> Config:
@@ -51,4 +62,8 @@ def load_config() -> Config:
             "Full walkthrough: services/discord-bot/README.md\n")
     api_base = os.environ.get("PROMPTDJ_API_BASE", "http://127.0.0.1:8000").strip()
     gid = os.environ.get("DISCORD_GUILD_ID", "").strip()
-    return Config(token=token, api_base=api_base, guild_id=int(gid) if gid.isdigit() else None)
+    return Config(token=token, api_base=api_base,
+                  guild_id=int(gid) if gid.isdigit() else None,
+                  booth_channel_id=_int_env("GRINDER_BOOTH_CHANNEL_ID"),
+                  grinder_channel_id=_int_env("GRINDER_MAIN_CHANNEL_ID"),
+                  fresh_grinds_channel_id=_int_env("GRINDER_SHOWCASE_CHANNEL_ID"))

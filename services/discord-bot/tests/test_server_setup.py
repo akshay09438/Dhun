@@ -26,12 +26,20 @@ def run_async(fn):
 # --- fakes -----------------------------------------------------------------------------
 
 class FakeRole:
-    def __init__(self, name):
+    def __init__(self, name, guild=None):
         self.name = name
+        self.guild = guild
+
+    async def delete(self, reason=None):
+        if self.guild is not None:
+            self.guild.roles.remove(self)
+            self.guild.deleted_roles.append(self.name)
 
 
 class FakeChannel:
-    def __init__(self, name, *, voice=False, topic=None, messages=()):
+    _next_id = [1000]
+
+    def __init__(self, name, *, voice=False, topic=None, messages=(), members=()):
         self.name = name
         self.voice = voice
         self.topic = topic
@@ -40,6 +48,11 @@ class FakeChannel:
         self.category = None
         self.edits = []
         self._messages = list(messages)
+        self.members = list(members)
+        self.deleted = False
+        self.guild = None
+        FakeChannel._next_id[0] += 1
+        self.id = FakeChannel._next_id[0]
 
     def history(self, limit=None):
         msgs = self._messages[:limit] if limit else self._messages
@@ -60,15 +73,43 @@ class FakeChannel:
         self.edits.append(kwargs)
         if "category" in kwargs:
             self.category = kwargs["category"]
+        # discord.py really does rename the channel. A fake that only recorded the call let a
+        # rename "succeed" while the channel kept its old name.
+        if "name" in kwargs:
+            self.name = kwargs["name"]
 
     async def set_permissions(self, target, **perms):
         self.perms[getattr(target, "name", str(target))] = perms
 
     async def send(self, *args, **kwargs):
         self.sent.append(kwargs)
-        # Sending genuinely leaves a message behind, so history() must see it — without this the
-        # fake would let the "is #welcome empty?" guard pass twice and hide a real double-post.
-        self._messages.append(kwargs)
+        # Sending genuinely leaves a message behind, so history() must see it - without this the
+        # fake would let the "is it empty?" guard pass twice and hide a real double-post.
+        msg = FakeMessage(kwargs)
+        self._messages.append(msg)
+        return msg
+
+    async def delete(self, reason=None):
+        self.deleted = True
+        if self.guild is not None:
+            self.guild.deleted_channels.append(self.name)
+
+
+class FakeMessage:
+    """discord.py returns a Message from send(), and setup pins it. A fake that returned None hid
+    that entirely - the same class of gap that let six real /setup bugs through on 2026-08-11."""
+
+    _next_id = [1]
+
+    def __init__(self, payload=None, *, bot_author=True):
+        self.payload = payload or {}
+        self.pinned = False
+        FakeMessage._next_id[0] += 1
+        self.id = FakeMessage._next_id[0]
+        self.author = type("A", (), {"bot": bot_author, "display_name": "someone"})()
+
+    async def pin(self, reason=None):
+        self.pinned = True
 
 
 class FakeCategory:
@@ -96,7 +137,11 @@ class FakeGuild:
         self.default_role = FakeRole("@everyone")
         self.me = FakeRole("Grinder")          # the bot's own member, for permission overwrites
         self.edits = []
+        self.deleted_channels = []
+        self.deleted_roles = []
         self.fail_on = set(fail_on)   # names of operations that should raise
+        for c in self._channels:
+            c.guild = self
 
     def _maybe_fail(self, op):
         if op in self.fail_on:
@@ -110,11 +155,11 @@ class FakeGuild:
 
     @property
     def text_channels(self):
-        return [c for c in self._channels if not c.voice]
+        return [c for c in self._channels if not c.voice and not c.deleted]
 
     @property
     def voice_channels(self):
-        return [c for c in self._channels if c.voice]
+        return [c for c in self._channels if c.voice and not c.deleted]
 
     async def edit(self, **kwargs):
         self._maybe_fail("edit")
@@ -155,7 +200,7 @@ class FakeGuild:
 
     async def create_role(self, name, **kw):
         self._maybe_fail(f"role:{name}")
-        r = FakeRole(name)
+        r = FakeRole(name, guild=self)
         self.roles.append(r)
         return r
 
@@ -197,21 +242,21 @@ def test_the_channels_chatter_would_ruin_are_read_only():
     """A welcome channel that fills with chatter stops being a welcome channel, and a curated
     "best of" that anyone can post into stops being curated."""
     read_only = {c.name for cat in server_setup.STRUCTURE for c in cat.channels if c.read_only}
-    assert read_only == {"welcome"}
+    assert read_only == {"read-this-first", "rules", "announcements"}
 
 
 def test_best_mixes_is_the_open_music_room_not_a_locked_showcase():
-    """Cut to four channels (2026-08-11), #best-mixes became the ONE music room: you run /mix there
+    """#the-grinder is the ONE music room: you run /grind there
     AND the good ones live there. If it were read-only there would be nowhere to make a mix."""
-    ch = next(c for cat in server_setup.STRUCTURE for c in cat.channels if c.name == "best-mixes")
+    ch = next(c for cat in server_setup.STRUCTURE for c in cat.channels if c.name == "the-grinder")
     assert ch.read_only is False
 
 
-def test_feedback_exists_exactly_once():
+def test_requests_exists_exactly_once():
     """The founder asked for a Feedback room; it was already in HANGOUT. Guard against someone
     "adding" a second one later and splitting the replies across two channels."""
     names = [c.name for cat in server_setup.STRUCTURE for c in cat.channels]
-    assert names.count("feedback") == 1
+    assert names.count("requests") == 1
 
 
 def test_every_text_channel_explains_itself():
@@ -243,7 +288,7 @@ async def test_run_builds_everything_on_an_empty_server():
 async def test_the_welcome_post_lands_in_welcome_with_the_logo():
     g = FakeGuild()
     await server_setup.run(g)
-    welcome = next(c for c in g.channels if c.name == "welcome")
+    welcome = next(c for c in g.channels if c.name == "read-this-first")
     assert len(welcome.sent) == 1
     payload = welcome.sent[0]
     assert payload["embeds"], "the welcome post should be embeds, not plain text"
@@ -284,9 +329,9 @@ async def test_an_icon_the_founder_already_chose_is_not_overwritten():
 
 @run_async
 async def test_the_welcome_post_is_not_repeated_into_a_used_channel():
-    g = FakeGuild(channels=[FakeChannel("welcome", messages=["someone already posted"])])
+    g = FakeGuild(channels=[FakeChannel("read-this-first", messages=["someone already posted"])])
     report = await server_setup.run(g)
-    welcome = next(c for c in g.channels if c.name == "welcome")
+    welcome = next(c for c in g.channels if c.name == "read-this-first")
     assert welcome.sent == []
     assert any("welcome post" in s for s in report.skipped)
 
@@ -323,9 +368,9 @@ async def test_one_failing_step_does_not_abort_the_rest():
 
 @run_async
 async def test_a_failed_category_does_not_abort_the_whole_run():
-    g = FakeGuild(fail_on=["category:GRINDER"])
+    g = FakeGuild(fail_on=["category:⚙️ GRIND"])
     report = await server_setup.run(g)
-    assert any("GRINDER" in f for f in report.failed)
+    assert any("GRIND" in f for f in report.failed)
     # the run must still COMPLETE (emojis, icon) rather than abort on the first bad step
     assert g.icon == "set"
     assert {e.name for e in g.emojis} == {n for n, _ in brand.emoji_files()}
@@ -369,7 +414,8 @@ def test_welcome_embeds_tell_a_first_timer_what_to_do():
         (e.title or "") + (e.description or "") + " ".join(f.name + f.value for f in e.fields)
         for e in server_setup.welcome_embeds(g)
     )
-    for expected in ("/mix", "/set", "/songs", "The Booth", "#best-mixes", "#feedback"):
+    for expected in ("/grind", "The Booth", "#the-grinder", "#fresh-grinds",
+                     "Keep going"):
         assert expected in text, f"the welcome post never mentions {expected}"
 
 
@@ -459,7 +505,7 @@ async def test_an_ordinary_channel_is_created_without_None_overwrites():
     g = FakeGuild()
     report = await server_setup.run(g)
     assert not report.failed, report.failed
-    for name in ("best-mixes", "feedback"):
+    for name in ("the-grinder", "general"):
         ch = next((c for c in g.channels if c.name == name), None)
         assert ch is not None, f"#{name} was not created"
         assert ch.overwrites is discord.utils.MISSING, f"#{name} should have no overwrites"
@@ -471,7 +517,7 @@ async def test_a_read_only_channel_still_lets_the_bot_post():
     post failed with Missing Permissions in the channel the bot had just made."""
     g = FakeGuild()
     await server_setup.run(g)
-    welcome = next(c for c in g.channels if c.name == "welcome")
+    welcome = next(c for c in g.channels if c.name == "read-this-first")
     ow = welcome.overwrites
     assert ow is not discord.utils.MISSING
     assert ow[g.default_role].send_messages is False, "@everyone should not be able to post"
@@ -482,9 +528,9 @@ async def test_a_read_only_channel_still_lets_the_bot_post():
 async def test_a_rerun_repairs_a_read_only_channel_the_bot_cannot_post_in():
     """A channel from before the fix denies the bot. Skipping it on a re-run would leave the server
     permanently broken, so the idempotent path repairs permissions instead of stepping over it."""
-    g = FakeGuild(channels=[FakeChannel("welcome")])   # exists, no bot allow
+    g = FakeGuild(channels=[FakeChannel("read-this-first")])   # exists, no bot allow
     await server_setup.run(g)
-    welcome = next(c for c in g.channels if c.name == "welcome")
+    welcome = next(c for c in g.channels if c.name == "read-this-first")
     assert welcome.perms.get("Grinder", {}).get("send_messages") is True
 
 
@@ -533,9 +579,12 @@ def test_the_server_stays_small_on_purpose():
     few people there get spread thin and every channel looks dead. This pins the decision so it
     isn't quietly grown back one channel at a time."""
     channels = [c for cat in server_setup.STRUCTURE for c in cat.channels]
-    assert len(server_setup.STRUCTURE) == 1, "one category; more is scaffolding for a crowd"
-    assert len(channels) == 4, [c.label for c in channels]
-    assert [c.label for c in channels] == ["welcome", "best-mixes", "feedback", "The Booth"]
+    assert len(server_setup.STRUCTURE) == 3, "three headers; more is scaffolding for a crowd"
+    assert len(channels) == 8, [c.label for c in channels]
+    assert [c.label for c in channels] == [
+        "read-this-first", "rules", "announcements",
+        "the-grinder", "fresh-grinds", "The Booth",
+        "general", "requests"]
 
 
 def test_there_is_somewhere_to_actually_make_a_mix():
@@ -557,10 +606,10 @@ def test_there_is_a_voice_channel_for_listening_together():
 async def test_channels_not_in_the_plan_are_reported():
     """Shrinking the layout leaves the old channels behind, because /setup only ever creates. The
     founder needs to be TOLD which ones those are."""
-    g = FakeGuild(channels=[FakeChannel("now-playing"), FakeChannel("i-made-this")])
+    g = FakeGuild(channels=[FakeChannel("now-playing"), FakeChannel("off-topic")])
     report = await server_setup.run(g)
     assert "#now-playing" in report.extra
-    assert "#i-made-this" in report.extra
+    assert "#off-topic" in report.extra
 
 
 @run_async
@@ -574,9 +623,9 @@ async def test_a_planned_channel_is_never_reported_as_extra():
 async def test_leftover_channels_are_not_deleted():
     """Deleting a channel could destroy conversation, so /setup reports and stops. This pins that
     it never quietly removes anything."""
-    g = FakeGuild(channels=[FakeChannel("i-made-this", messages=["something someone said"])])
+    g = FakeGuild(channels=[FakeChannel("off-topic", messages=["something someone said"])])
     await server_setup.run(g)
-    assert any(c.name == "i-made-this" for c in g.channels), "it must still be there"
+    assert any(c.name == "off-topic" for c in g.channels), "it must still be there"
 
 
 def test_the_report_tells_you_how_to_remove_a_leftover():
@@ -596,7 +645,7 @@ async def test_a_channel_is_created_even_when_a_CATEGORY_shares_its_name():
     "#welcome doesn't exist" when it tried to post the welcome into it."""
     g = FakeGuild(categories=[FakeCategory("WELCOME")])
     report = await server_setup.run(g)
-    assert any(c.name == "welcome" for c in g.text_channels), \
+    assert any(c.name == "read-this-first" for c in g.text_channels), \
         "#welcome was never created; it matched the WELCOME category"
     assert not report.failed, report.failed
 
@@ -605,7 +654,7 @@ async def test_a_channel_is_created_even_when_a_CATEGORY_shares_its_name():
 async def test_the_welcome_post_lands_when_a_category_shares_the_channel_name():
     g = FakeGuild(categories=[FakeCategory("WELCOME")])
     await server_setup.run(g)
-    welcome = next(c for c in g.text_channels if c.name == "welcome")
+    welcome = next(c for c in g.text_channels if c.name == "read-this-first")
     assert welcome.sent, "the welcome post should have been written"
 
 
@@ -615,12 +664,13 @@ async def test_an_existing_channel_is_moved_into_the_planned_category():
     HANGOUT headers while the new GRINDER category sat empty. Existing channels have to be adopted
     into the plan, not just left where they were."""
     old = FakeCategory("SHOWCASE")
-    stray = FakeChannel("best-mixes")
+    stray = FakeChannel("the-grinder")          # a PLANNED channel, sitting under the old header
     stray.category = old
     g = FakeGuild(channels=[stray], categories=[old])
     await server_setup.run(g)
-    moved = next(c for c in g.text_channels if c.name == "best-mixes")
-    assert moved.category is not None and moved.category.name == "GRINDER", \
+    moved = next(c for c in g.text_channels if c.name == "the-grinder")
+    assert moved is stray, "the existing channel should be adopted, not replaced by a new one"
+    assert moved.category is not None and "GRIND" in moved.category.name, \
         f"still in {getattr(moved.category, 'name', None)}"
 
 

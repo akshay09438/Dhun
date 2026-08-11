@@ -50,12 +50,21 @@ def _all_card_text() -> list[tuple[str, str]]:
     """(where, text) for every card the bot can post."""
     cards: list[tuple[str, discord.Embed]] = [
         ("help_embed", ui.help_embed()),
-        ("cooking_embed", ui.cooking_embed("Father Ocean", "Der Lagi")),
-        ("now_playing_embed", ui.now_playing_embed(
-            name="Ocean Bina", beat="Father Ocean", vocals="Der Lagi",
-            total_secs=185, user=None)),
-        ("set_lineup_embed", ui.set_lineup_embed("1. A x B", 300, 2, None)),
-        ("building_embed", ui.building_embed("1. A x B", 2)),
+        ("submit_embed", ui.submit_embed(user=None, beat="Father Ocean", vocals="Der Lagi")),
+        ("grind_embed", ui.grind_embed(
+            number=147, user=None, pairs=[("Father Ocean", "Der Lagi")], total_secs=185)),
+        ("grind_embed long", ui.grind_embed(
+            number=148, user=None, pairs=[("A", "B"), ("C", "D")], total_secs=400,
+            just_landed=True)),
+        ("grind_embed in booth", ui.grind_embed(
+            number=149, user=None, pairs=[("A", "B")], total_secs=200, booth_listeners=4)),
+        ("grind_embed queued", ui.grind_embed(
+            number=150, user=None, pairs=[("A", "B")], total_secs=200, queued_behind=2)),
+        ("booth_live_embed", ui.booth_live_embed(
+            listeners=4, grinds_this_session=12, last_up="A x B")),
+        ("booth_quiet_embed", ui.booth_quiet_embed()),
+        ("mygrinds_embed", ui.mygrinds_embed(user=None, total=3, rows=[(1, "A x B", None)])),
+        ("mygrinds_embed empty", ui.mygrinds_embed(user=None, total=0, rows=[])),
         ("error_embed", ui.error_embed("Something went wrong.")),
         ("setup report", server_setup.report_embed(
             server_setup.Report(created=["#general"], skipped=["banner"],
