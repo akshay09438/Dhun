@@ -304,3 +304,43 @@ def test_a_guild_refusing_the_clear_does_not_stop_the_bot_starting():
     fake = type("S", (), {"guilds": [_G()],
                           "_clear_stale_voice": botmod.PromptDJBot._clear_stale_voice})()
     asyncio.run(fake._clear_stale_voice())      # must not raise
+
+
+# --- the card must never claim something is playing when it is not -------------------------
+def test_the_live_banner_only_goes_up_after_the_connection_succeeds(b, monkeypatch):
+    """Observed 2026-08-11: a card read "PLAYING LIVE IN BOLLYWOOD_HOUSE - 2 listening" while the
+    voice handshake was failing five times over and nothing was audible. The banner was posted
+    before the connection was even attempted."""
+    edits = []
+
+    class _Ctx2(_Ctx):
+        def __init__(self, number, room):
+            super().__init__(number, room)
+            self.message = type("M", (), {
+                "edit": lambda _self, **kw: edits.append(kw) or _noop()})()
+
+    def _noop():
+        async def f():
+            return None
+        return f()
+
+    async def boom(*a, **k):
+        raise RuntimeError("voice websocket closed with 4017")
+
+    monkeypatch.setattr(boothmod.voice_player, "play_in", boom)
+    asyncio.run(b._play(_Ctx2(1, _Room())))
+
+    blob = " ".join((e["embed"].description or "") for e in edits if "embed" in e)
+    assert "PLAYING LIVE" not in blob, "a failed connection must never claim to be playing"
+    assert "couldn't play it out loud" in blob, "it should say the out-loud part failed"
+
+
+def test_a_failed_playout_does_not_count_as_a_session_grind(b, monkeypatch):
+    """The status message counts what the room actually heard."""
+    async def boom(*a, **k):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(boothmod.voice_player, "play_in", boom)
+    monkeypatch.setattr(b, "_say_it_did_not_play", lambda ctx: asyncio.sleep(0))
+    asyncio.run(b._play(_Ctx(1, _Room())))
+    assert b.grinds_this_session == 0

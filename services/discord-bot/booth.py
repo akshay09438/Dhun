@@ -118,19 +118,39 @@ class Booth:
             return
 
         self.now_playing = ctx
+        # CONNECT FIRST, CLAIM SECOND. The banner used to go up before the connection was even
+        # attempted, so on 2026-08-11 a card read "PLAYING LIVE IN BOLLYWOOD_HOUSE - 2 listening"
+        # while the voice handshake was failing five times over and nothing was audible. A card
+        # that says something is happening when it is not is the one thing this interface must
+        # never do.
+        try:
+            await voice_player.play_in(room, ctx.audio_path, on_finished=self._advance)
+        except Exception:  # noqa: BLE001 - the room going quiet must never kill the bot
+            log.exception("booth: could not play grind #%s in %s", ctx.number, room.name)
+            await self._say_it_did_not_play(ctx)
+            await self._advance()
+            return
+
         self.grinds_this_session += 1
         self.last_up = ctx.label()
         heard = self.listeners(room)
         log.info("booth: playing grind #%s (%s) in %s to %d listening",
                  ctx.number, ctx.label(), room.name, heard)
-
         await self._show_live_banner(ctx, heard, room)
         await self.refresh_status(ctx.interaction.guild)
+
+    async def _say_it_did_not_play(self, ctx) -> None:
+        """The grind itself is fine and the clip is attached - only the out-loud part failed. Say
+        exactly that, rather than leaving a card implying a room heard something it did not."""
+        if ctx.message is None:
+            return
+        embed = ui.grind_embed(number=ctx.number, user=ctx.interaction.user,
+                               pairs=ctx.named_pairs(), total_secs=ctx.duration,
+                               voice_failed=True)
         try:
-            await voice_player.play_in(room, ctx.audio_path, on_finished=self._advance)
-        except Exception:  # noqa: BLE001 - the room going quiet must never kill the bot
-            log.exception("booth: playback failed for grind #%s", ctx.number)
-            await self._advance()
+            await ctx.message.edit(embed=embed)
+        except discord.HTTPException:
+            pass
 
     async def _advance(self) -> None:
         """One finished, take the next. Called back from the audio player."""

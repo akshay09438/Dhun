@@ -108,7 +108,7 @@ def submit_embed(*, user: discord.abc.User | None, beat: str, vocals: str) -> di
 def grind_embed(*, number: int, user: discord.abc.User | None, pairs: list[tuple[str, str]],
                 total_secs: float,
                 booth_listeners: int | None = None, room_name: str | None = None,
-                queued_behind: int = 0) -> discord.Embed:
+                queued_behind: int = 0, voice_failed: bool = False) -> discord.Embed:
     """One card for both shapes. A single pair reads as one line; two or more become a long grind
     with a numbered running order.
 
@@ -126,7 +126,11 @@ def grind_embed(*, number: int, user: discord.abc.User | None, pairs: list[tuple
         beat, vocals = pairs[0]
         body = f"**{beat}**  ✕  **{vocals}**"
 
-    if booth_listeners is not None:
+    if voice_failed:
+        # Not a judgement of the grind, which is fine and attached above. Only the out-loud part
+        # failed, and saying so beats a card implying a room heard something it did not.
+        body = f"🔇  couldn't play it out loud, the clip above still works\n\n{body}"
+    elif booth_listeners is not None:
         listening = "1 listening" if booth_listeners == 1 else f"{booth_listeners} listening"
         where = f"IN {room_name.upper()}" if room_name else "IN VOICE"
         body = f"🔊  **PLAYING LIVE {where}**  ·  {listening}\n\n{body}"
