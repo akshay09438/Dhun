@@ -4,57 +4,98 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
-2026-08-11 (**ops dashboard + Grinder brand + a live Discord community**) — **Nothing is in flight. `main` == GitHub `main` @ `04115e4` (PRs #23, #24, #25, #26 merged). Working tree clean. All suites green.** Two things need a decision, and one needs urgent action (**disk: 4.3 GB free**).
+2026-08-11 (**session 2 — the Grinder Discord community becomes a real place**) — **All suites green. One PR open and NOT merged: [#29](https://github.com/akshay09438/Dhun/pull/29), 9 commits, conflicts already resolved.** Nothing is uncommitted and nothing is unpushed. **One thing is blocked and will not resolve on this machine: voice playback.**
 
 ---
 
 ## Where things stand
 
-**The Discord community is real and working.** Grinder is online in the founder's own server (`Grinder`, id `1536469142436057088`), wearing the founder's artwork, and plays mixes out loud in a voice channel. The internal dev dashboard now answers "who is using this, what are they making, when" instead of just showing a feed.
+The Discord bot stopped being a command you type and became somewhere to hang out. Everything below is on `feat/grinder-experience` and is live on the founder's server already — the server restructure was applied for real, so **Discord looks like this now whether or not #29 merges.**
 
-- **Catalog: 30 songs** (12 beats, 18 vocals), loaded and mixable.
-- **Running locally:** engine `:8000`, web `:5173`, Grinder bot (2 python processes seen).
-- **The founder's server:** icon set, all 6 custom emojis uploaded, 2 roles, The Booth voice channel. Boost level **0**, so banner and invite splash are locked by Discord.
+- **`/grind` takes no options.** Type it, press enter, a picker opens: choose a beat, choose a vocal, **➕ Add another pair** up to five, **Grind it** stitches them into one continuous set. Controls are greyed out until they can do something, which teaches the order without instructions.
+- **Three commands total:** `/grind`, `/mygrinds`, `/help`. `/set` and `/songs` deleted.
+- **The bot never judges a mix.** No flavour line, no verdict, no tempo or key. A test reads every card and fails on evaluative or technical wording.
+- **🔥 💀 😐 recorded per person per grind** — reactions, not buttons, so they keep working on old grinds and across restarts. Un-reacting really removes the vote.
+- **📌 Pin it** carries any grind to `#best-mixes`; pressing twice cannot post twice.
+- **The server is rebuilt** — START HERE / GRIND / TALK, every channel's copy written and pinned, `@Session Crew` deleted.
+- **`/grind` only works** in the grind category or for someone sitting in a listening room.
+- **Listening rooms are a category**, so new rooms work with no config change.
 
-## What shipped (2026-08-11)
+**Catalog: 30 songs** (12 beats, 18 vocals), unchanged. **The engine was not touched** — `render.py`, `validate.py`, `storage.py`, `config.py` and the whole web app are untouched by this session. Nothing about how a mix sounds changed.
 
-1. **The timezone one-way door, closed before launch.** Event timestamps were naive local time with no offset. On a UTC cloud box the same string means a different instant, with nothing in the row to tell them apart — a post-launch "activity by hour" chart would have silently blended two clocks across the deploy date, unrecoverably. Stamps are now timezone-aware; day/hour rollups happen in one explicit **report zone** (`PROMPTDJ_REPORT_TZ`), and the dashboard states which clock it is showing. `tzdata` added because Windows ships no IANA database, so the setting would otherwise look applied and be ignored.
-2. **Every mix records its source** ('web' | 'discord') **and a display name.** Recorded only — deliberately absent from the cache-id formulas, so it cannot change a mix or re-render a cached one.
-3. **The dev app is four tabs** — Overview (health + feed + a ranked "what is actually breaking"), People (busiest first → click for a per-person page: sittings, favourite songs, own hour pattern), Music (per-song beat/vocal use, degraded/failed, top partner), When (by hour, weekday, last 30 days). Deliberately plain: no charting library, exact numbers always rendered as text.
-4. **Grinder wears the founder's brand.** `Icon.png`→ later the founder's chosen `Avatar biggest size.png` as the bot avatar and server icon; the wordmark on `/help` and the welcome post; accent moved from the web app's blue-violet `#6D3BF5` to `#A824CC` **sampled from the artwork** (the old one clashed beside the logo).
-5. **`/setup` builds the community** — categories, channels, roles, server icon, all 6 emojis, welcome post. Manage-Server gated, **idempotent**, with a `refresh_branding` flag to replace already-set artwork.
-6. **Seven follow-up fixes from real use** — the launcher dying from a PowerShell prompt, `/setup` invisible in a new server, six `/setup` step failures, all em/en dashes removed from user-facing text, the layout cut from ten channels to four, and `#welcome` matching the leftover `WELCOME` category. See the implementation plan's 2026-08-11 status for what each one taught.
-7. **New read-only tool:** `python services/discord-bot/scripts/server_status.py` prints the live Discord server and diffs it against the plan. It caught two things a visual check had missed.
+---
+
+## In flight
+
+**PR [#29](https://github.com/akshay09438/Dhun/pull/29) — open, mergeable, not merged.** 9 commits, 16 files. Merge conflicts with `main` were resolved in-session (both branches had widened the same `.gitignore` rule). The PR body on GitHub says "No description provided" — the commit messages carry the detail.
+
+The profile banner shipped separately as **PR #28, already merged to `main`.**
+
+---
+
+## BLOCKED — voice playback cannot work on this machine
+
+Not a bug and not a config mistake. **Both available paths are closed on Windows ARM64:**
+
+|                      |                                                                                                                                                                                                                                                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **discord.py 2.5.x** | Requests voice gateway `?v=4`, which Discord has **retired**. The handshake completes, finds the media endpoint, then the socket is closed with **code 4017** — a code that version does not even recognise. Rolled out per voice server, which is why it worked once on the `bom03` endpoint and failed on every attempt afterwards on `bom06`. |
+| **discord.py 2.6+**  | Speaks `?v=8` and would work, but raises `RuntimeError: davey library needed in order to use voice` on connect. `davey` is Discord's audio E2EE and has **no distribution for win-arm64 at all** (`pip: from versions: none`); building it needs a Rust toolchain this machine lacks.                                                            |
+
+A `try/except ImportError` around `davey` in `voice_state.py` only decides whether E2EE is offered. **It is not a soft dependency for connecting** — I read it as one, upgraded on that basis, and was proven wrong by the runtime error. Corrected in `requirements.txt` so nobody re-litigates it.
+
+**Now pinned to `discord.py>=2.7`** anyway: everything non-voice is current, and voice fails instantly with a clear message instead of thirty seconds of doomed retries.
+
+**Voice needs an x86 host.** Everything else in the Discord experience works without it.
+
+---
+
+## Do first next session
+
+1. **Merge PR #29**, then `git pull` on `main` (local `main` is behind).
+2. **Decide the voice host.** A small cloud box or any x86 machine unblocks listening rooms, the live status message and arrival notes in one move. Until then treat all four as unproven.
+3. **Show reactions on the ops dashboard.** They are the product signal and currently land in the bot's own database, which the dashboard does not read. Either the bot posts them to an engine endpoint, or the dashboard reads both.
+4. **Clear the test rows from `events.db`** — the `aaaaaaaa`/`bbbbbbbb` placeholder rows still pollute real numbers before launch.
+
+---
 
 ## Verification evidence
 
-Re-run on merged `main` @ `04115e4`, this session, real output:
+Every check below was **run at session close** on the merged branch. Real output:
 
-- **Backend:** `services/api/.venv/Scripts/python.exe -m pytest -q` → **720 passed** in 190s.
-- **Discord bot:** `services/discord-bot/.venv/Scripts/python.exe -m pytest -q` → **75 passed** (was 23 at session start).
-- **Web:** `npm test` → **78 passed** (9 files). `npm run typecheck` → clean. `npm run lint` → clean.
-- **Migration + every dashboard read path exercised against the founder's REAL 68-row `events.db`** (backed up to the scratchpad first): 68/68 rows preserved, retention intact, `by_source={'unknown':68}`.
-- **All four dashboard tabs + the per-person page driven in a live browser** against real data, **zero console errors**.
-- **Grinder confirmed live:** logged in as `Grinder#7345`, in 2 servers, commands synced to the new guild, `brand: avatar uploaded from icon.png`, catalog 30 songs. Bot avatar **fetched from Discord's CDN and visually confirmed** as the founder's disc artwork.
-- **Each new test for the seven fixes was verified to FAIL against the old code** before its fix landed — not assumed.
-- **NOT run this session:** the catalog sanity sweep (`scripts/sanity_check.py`) and any render/ear check. No engine, `render.py`, `validate.py` or planner file was touched, so those are unaffected — but that is reasoning, not a fresh result.
+| Check       | Command                                                           | Result                                          |
+| ----------- | ----------------------------------------------------------------- | ----------------------------------------------- |
+| Discord bot | `services/discord-bot/.venv/Scripts/python.exe -m pytest -q`      | **148 passed** in 3.19s _(75 at session start)_ |
+| Backend     | `services/api/.venv/Scripts/python.exe -m pytest services/api -q` | **720 passed** in 192.63s                       |
+| Web         | `npm test`                                                        | **78 passed**, 9 files                          |
+| Typecheck   | `npm run typecheck`                                               | clean, no output                                |
+| Lint        | `npm run lint`                                                    | clean, no output                                |
 
-## DO FIRST NEXT SESSION
+**Note on running the backend suite:** it must be scoped to `services/api`. From the repo root, pytest also collects the Discord bot's tests, which need the bot's own virtualenv and fail at collection with 5 errors. That is a harness quirk, not a broken suite.
 
-1. **Free disk space — this is the blocker for everything else.** C: fell from ~12 GB to **4.3 GB free (99% full)** during this session; `services/api/data` alone is **9.7 GB for 30 songs** (~320 MB/song including rendered mixes). A 100-song catalog needs ~32 GB and **will not fit**. Either run the cache-eviction sweep, clear old renders, or move storage to R2. Nothing about catalog growth is possible until this is dealt with.
-2. **Decide the channel-plan divergence** (see Open below) — 10 minutes either way, and it stops `/setup` disagreeing with the live server.
-3. **Then the real product gap: radio mode.** The founder's stated goal is a Discord community with **continuous music in voice channels**. That does not exist — The Booth is silent unless someone runs `/mix` and taps play. Building it also yields the listening data (voice join/leave events are already permitted, no new Discord permission needed), which is the honest measure of whether a mix is any good. Worth a `/zuko:discover` first: what plays when nobody has asked for anything, does it loop the catalog or generate fresh mixes, can people queue requests, does it stop when the room empties.
+### Verified against the real world, not a fake
 
-## Open / parked (honest)
+- **The server restructure ran live** and is idempotent — a second run created nothing. Both retired channels were confirmed **empty before deletion**.
+- **`/grind`, `/mygrinds` and `/help` are the only commands registered**, checked by querying Discord's API directly.
+- **Grinder left the `merrygo` server** and is now in exactly one server.
+- **Voice worked exactly once** (grind #1, a card reading "PLAYING LIVE IN THE BOOTH · 2 listening" with audio at 0:57/3:08) and never again. See BLOCKED above.
 
-- **DIVERGENCE, accepted, needs a decision:** `server_setup.STRUCTURE` describes `#welcome` and `#best-mixes`; the live server has **neither** — the founder kept their own layout and said "right now it's fine". So `/setup` reports those as missing and the founder's channels as "not in the plan" every run. Also: **the welcome post has never been posted anywhere**, because its target `#welcome` was never created. Do not trust an older status block that says otherwise — check with `server_status.py`.
-- **Source tagging is deployed but UNPROVEN in the wild.** All 68 events still read `source='unknown'`; no real mix has been made since the tagging shipped, so the end-to-end path (Discord `/mix` → a row tagged `discord` with a username) is verified only by tests, not by a real mix. **Re-verify next session:** make one mix in Discord, refresh `/#dev`, confirm the row shows a Discord badge and a name.
-- **WAITING ON THE FOUNDER (only they can do it):** the **Application icon** in the Discord Developer Portal still shows the old "G" next to `/mix` in the command picker. The bot's _avatar_ is correct (fetched and confirmed); the command-picker icon is a separate Developer Portal field the API cannot change.
-- **`@Session Crew` is a role nobody can join.** Created as an opt-in "ping me for sessions" role, but only an admin can grant it, which defeats the point. Either make it self-assignable or delete it. Founder decision pending.
-- **Banner + invite splash locked** at boost level 0 (need levels 2 and 1). Artwork is shipped and ready at `services/discord-bot/assets/banner.png`; `/setup` applies it automatically the moment the server qualifies.
-- **Founder artwork defect:** all four `Avatar *.png` exports are broken identically (disc sliced horizontally, halves offset, the G mashed into a blob) at every size including the 2048 master — a shifted layer or broken clipping mask in the source. Flagged twice; the founder chose `Avatar biggest size.png` anyway, which is their call and may be a deliberate "cut record" look. `Icon.png` (the clean G) is still in the source folder if it is ever wanted back.
-- **Still wanted from the founder:** a **horizontal lockup** (G + GRINDER on one line) — the wordmark lives inside a circle so it cannot sit across a banner or a web header.
-- **The two data gaps that matter, both still unbuilt:** nothing records **listening** (played to the end vs skipped) or **drop-off** (people who open the app or bot and leave without finishing a mix). The first is the whole game for a listening room; the second is the actual answer to "where do people get stuck".
-- **The engine is the founder's laptop.** It renders one mix at a time in-process and must stay awake, so it cannot serve the 100–500 people the founder is considering. Costed this session: ~$13 one-time to load 100 songs (~$0.13/song via Replicate), then ~$40/month hosting + R2 for a few hundred users. **Advice given: invite 5–10 friends on the current setup first and find out whether people stay, before paying for scale.**
-- **Housekeeping:** the founder's `events.db` still contains leftover test rows with placeholder songs (`aaaaaaaa`/`bbbbbbbb`, shown as "Song 1 → Song 2") that will skew launch numbers. Also, `PROMPTDJ_REPORT_TZ` must be set to `Asia/Kolkata` when the API moves to a cloud box, or day/hour rollups will group by UTC days.
-- **Pre-existing, not introduced:** the repo has no `.gitattributes`, so several web files show as modified purely from CRLF/LF churn on every checkout. Cosmetic, but it makes `git status` noisy.
+### Three bugs that only real use exposed
+
+Each now has a regression test that was **confirmed to fail against the old code**:
+
+1. A view method named `_refresh` shadowed `discord.ui.View._refresh(components)` and **took the whole bot down** the moment a dropdown was touched. A test now walks every View subclass and fails on any single-underscore method whose signature disagrees with the library's.
+2. The "PLAYING LIVE" banner was posted **before** the connection was attempted, so a card claimed a room was listening while the handshake was failing five times over.
+3. Force-killing the bot left a **zombie voice session** alive on Discord's side, blocking every later attempt. Startup now declares it is in no voice channel first.
+
+---
+
+## Open escalations and things to RE-VERIFY (claims, not facts)
+
+- **`.env` was edited three times this session** with the founder's explicit approval each time, recorded via `.zuko/approve.js` and cleared after: the three channel ids, the corrected `DISCORD_GUILD_ID` (it still pointed at `merrygo`), and the two category ids. **Claim to re-verify:** the file holds only the token plus those settings and no secret was logged. A backup sits outside the repo in the session scratchpad.
+- **The live pinned status message and arrival notes have never been seen working.** They are built and their decisions are unit-tested, but they ride the same voice-state path that could not be exercised. **Treat as unverified.**
+- **`⚙️ Rougher` does not exist.** The spec asked for it; the engine exposes no aggression control and the mixing rule is auto-assigned. Building a button that silently re-rolled would have put a second lie on the card. **Needs a decision about changing the engine.**
+- **Onboarding, the auto-awarded `First Grind` role, and the weekly `Head Grinder` rotation are not built.** The first is a server setting only the founder can reach; the other two need a scheduler and a week of reaction data.
+- **Disk: 9.7 GB free**, `services/api/data` is most of it. A 100-song catalog needs roughly 32 GB and will not fit.
+- **The GitHub CLI is not installed**, so PRs cannot be opened from the terminal. Installing it would still need an interactive browser login.
+- **Two dev processes were left running** by this session: the engine on port 8000, and the Grinder bot. Both are the founder's normal local setup.
