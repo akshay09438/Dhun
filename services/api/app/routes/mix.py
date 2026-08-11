@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import sys
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Response
@@ -419,7 +420,8 @@ def _record_mix_event(mix_id: str, song1_id: str, song2_id: str, take: int, rule
                       user_id: str | None, via: str, status: str,
                       anomalies: list, fail_reason: str | None, plan: MixPlan | None,
                       source: str | None = None, user_name: str | None = None,
-                      fail: failure.Failure | None = None) -> None:
+                      fail: failure.Failure | None = None,
+                      timings: dict[str, float] | None = None) -> None:
     """Record this mix's outcome to the ops event log (the dashboard's memory). NON-FATAL by
     construction: any failure here is logged and swallowed — recording must never break a mix."""
     try:
@@ -436,6 +438,10 @@ def _record_mix_event(mix_id: str, song1_id: str, song2_id: str, take: int, rule
             # misclassified failure stays visible in the data instead of being baked in.
             extra["fail_detail"] = fail.detail
             extra["machine"] = fail.machine
+        if timings:
+            # Where this render's seconds went, per stage. Recorded on every mix, so "which
+            # stage got slower" is answerable about real traffic instead of a synthetic run.
+            extra["timings"] = timings
         events.record_mix(
             settings.data_dir, mix_id=mix_id, status=status, user_id=user_id, via=via,
             song1_id=song1_id, song2_id=song2_id,
@@ -461,7 +467,8 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
     anomalies: list = []  # bound up-front so a failure before the scan still records cleanly
     try:
         maybe_sweep()  # free disk (evict old regenerable renders) before this render-heavy job
-        _stage(mix_id, "studying the two songs")
+        stages = _Stages(mix_id)
+        stages.mark("studying the two songs")
         a1, a2 = _load_analysis(song1_id), _load_analysis(song2_id)
         # Beat-sensor health: every on-beat move trusts Song 1's downbeats, so surface a mis-detected
         # grid instead of silently locking to the wrong beats (founder rule 2026-08-07). Informational
@@ -473,7 +480,7 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
             (log.warning if not _gh["ok"] else log.info)("mix %s beat-grid %s: %s", mix_id, _tag, _gh)
         # `rule` selects the arrangement style ON TOP of the shared BPM+key foundation build_mix_plan does:
         # 1 = dry simple mix, 3 = chop & repeat (rendered below), 4 = echo + reverb (build_mix_plan gates it).
-        _stage(mix_id, "planning the arrangement")
+        stages.mark("planning the arrangement")
         plan = build_mix_plan(mix_id, a1, a2, prompt, take=take, chain=SHIPPED_CHAIN, rule=rule)
         # Phase 0 (T1.2): log the key-fit on every render — informational only, never gated. Lets us
         # look at the log and find how many "good" pairs were quietly key-clashing.
@@ -487,7 +494,7 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         # or low-confidence key -> shift 0, logged). The K1 referee then re-derives the shifted vocal's
         # chroma independently. Any failure -> a VISIBLE decline, never a silently un-shifted "key-matched"
         # mix (PitchError below; K1 raises ValidationError, handled with the other quality failures).
-        _stage(mix_id, "matching the key")
+        stages.mark("matching the key")
         orig_s2_voc = stem_path(song2_id, "vocals")
         s2_voc = orig_s2_voc
         shift, why = resolve_key_shift(a1, a2) if key_match_enabled() else (0, "key-match disabled")
@@ -548,12 +555,12 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         if s1_voc.exists():
             stems["vocals"] = s1_voc
 
-        _stage(mix_id, "mixing it down")
+        stages.mark("mixing it down")
         if rule == 3:
             _render_rule3(plan, mix_id, song1_id, song2_id, a1, a2, s1_voc, s2_voc, stems)
         else:
             render_mix(plan, stems, s2_voc, _mix_wav(mix_id))
-        _stage(mix_id, "checking it sounds right")
+        stages.mark("checking it sounds right")
         validate.assert_render(_mix_wav(mix_id))  # the quality guard runs on EVERY rule's output
 
         # 3.1 (set transitions): stamp the mix's OWN beat grid + length onto the plan before caching it,
@@ -565,7 +572,7 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         # Best-parts highlight is COMMON to every rule (founder 2026-08-06: the same crop + set-transition
         # treatment Rule 1 uses must apply to Rule 3 and Rule 4 too — only the best parts come down, not the
         # full song). Built off the shared plan grid, so it works on any rule's rendered WAV.
-        _stage(mix_id, "trimming to the best part")
+        stages.mark("trimming to the best part")
         _build_bestparts(plan, mix_id)
         _plan_path(mix_id).write_text(plan.model_dump_json())  # persisting the plan, so 'ready' implies it exists
         # A previously-rendered live bus for this mix_id may hold a DIFFERENT key (it is evictable and
@@ -576,8 +583,11 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         except OSError:  # a stale bus we cannot remove must never fail the mix
             log.warning("could not clear the stale live bus for %s", mix_id)
         _jobs.pop(mix_id, None)  # readiness now inferred from the stored files
+        timings = stages.finish()
+        log.info("mix %s stage timings %s", mix_id, timings)
         _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "ok",
-                          anomalies, None, plan, source=source, user_name=user_name)
+                          anomalies, None, plan, source=source, user_name=user_name,
+                          timings=timings)
         return None
     except Exception as exc:  # noqa: BLE001 — nothing leaks raw; every failure is CLASSIFIED below
         # ONE handler, four verdicts (app/failure.py). The four this replaced all ended in a
@@ -655,6 +665,38 @@ def _stage(mix_id: str, text: str) -> None:
         _jobs[mix_id] = ("processing", text)
 
 
+class _Stages:
+    """Where a render's 25-30 seconds actually goes.
+
+    Doubles as the card's progress feed and as the profile, because a profile that only exists
+    when someone remembers to run a script is a profile that is always out of date. Every mix
+    records its own per-stage timings into the event log, so "which stage got slower" is a
+    question the ops dashboard can answer about REAL traffic rather than a synthetic run.
+
+    Costs one monotonic clock read per stage. Nothing here can fail a mix."""
+
+    def __init__(self, mix_id: str) -> None:
+        self.mix_id = mix_id
+        self.timings: dict[str, float] = {}
+        self._current: str | None = None
+        self._since = time.monotonic()
+        self._started = self._since
+
+    def mark(self, text: str) -> None:
+        now = time.monotonic()
+        if self._current is not None:
+            self.timings[self._current] = round(
+                self.timings.get(self._current, 0.0) + (now - self._since), 3)
+        self._current, self._since = text, now
+        _stage(self.mix_id, text)
+
+    def finish(self) -> dict[str, float]:
+        self.mark("done")
+        self.timings.pop("done", None)
+        self.timings["total"] = round(time.monotonic() - self._started, 3)
+        return self.timings
+
+
 def _with_queue_state(mix: Mix) -> Mix:
     """Attach where this mix is in the line, so the card can say "6th, about 3 minutes"."""
     stats = renderq.queue.stats()
@@ -667,6 +709,16 @@ def _with_queue_state(mix: Mix) -> Mix:
     elif mix.status == "processing":
         mix.stage = mix.message or "grinding"
     return mix
+
+
+@router.get("/queue")
+def queue_state() -> dict:
+    """How busy the grinder is right now: how many are rendering, how many are waiting, and the
+    cap. Counts only - no song ids, no user ids, nothing about anybody's content - so it needs
+    no token and can be read by the bot, the dev dashboard, or a load test while it runs.
+
+    Without this, the cap holding is unobservable: after the fact everything just looks finished."""
+    return renderq.queue.stats()
 
 
 @router.post("/mix/name")

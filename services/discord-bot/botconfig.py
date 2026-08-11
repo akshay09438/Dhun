@@ -47,11 +47,24 @@ class Config:
     grind_category_id: int | None = None         # text channels where /grind is allowed
     grinder_channel_id: int | None = None        # the main text channel: status + arrival notes
     fresh_grinds_channel_id: int | None = None   # where 📌 sends a grind
+    # EXTRA VOICE IDENTITIES (2026-08-12). One bot application can hold ONE voice connection per
+    # SERVER, so with a single Grinder every listening room but one is silent. Each token here is a
+    # separate free Discord application that can hold its own connection, i.e. one more room with
+    # sound in it. They never handle commands or post anything - see speakers.py. Empty is the
+    # default and behaves exactly as before.
+    room_tokens: list[str] = dataclasses.field(default_factory=list)
 
 
 def _int_env(name: str) -> int | None:
     v = os.environ.get(name, "").strip()
     return int(v) if v.isdigit() else None
+
+
+def _token_list(name: str) -> list[str]:
+    """Comma-separated bot tokens, blanks dropped. These are SECRETS and live only in the
+    founder-created .env, exactly like DISCORD_TOKEN - never committed, never written by the
+    agent. Absent means an empty list, which is the ordinary single-Grinder setup."""
+    return [t.strip() for t in os.environ.get(name, "").split(",") if t.strip()]
 
 
 def load_config() -> Config:
@@ -71,4 +84,5 @@ def load_config() -> Config:
                   rooms_category_id=_int_env("GRINDER_ROOMS_CATEGORY_ID"),
                   grind_category_id=_int_env("GRINDER_GRIND_CATEGORY_ID"),
                   grinder_channel_id=_int_env("GRINDER_MAIN_CHANNEL_ID"),
-                  fresh_grinds_channel_id=_int_env("GRINDER_SHOWCASE_CHANNEL_ID"))
+                  fresh_grinds_channel_id=_int_env("GRINDER_SHOWCASE_CHANNEL_ID"),
+                  room_tokens=_token_list("GRINDER_ROOM_TOKENS"))
