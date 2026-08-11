@@ -88,12 +88,12 @@ def test_the_booth_banner_says_how_many_are_listening():
                           booth_listeners=4)
     assert "1 listening" in one.description
     assert "4 listening" in many.description
-    assert "PLAYING LIVE IN THE BOOTH" in many.description
+    assert "PLAYING LIVE" in many.description
 
 
 def test_a_queued_grind_states_its_position_without_judging_it():
     e = ui.grind_embed(number=1, user=None, pairs=[("A", "B")], total_secs=10, queued_behind=2)
-    assert "waiting for The Booth" in e.description
+    assert "waiting for the room" in e.description
     assert "2 ahead of it" in e.description
 
 

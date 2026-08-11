@@ -106,6 +106,8 @@ class PromptDJBot(discord.Client):
         # "already synced" looked identical in the log, which hid whether /setup would appear.
         log.info("in %d server(s): %s", len(guilds),
                  ", ".join(f"{g.name} ({g.id})" for g in guilds) or "none")
+        for g in guilds:
+            booth.check_config(g)     # say so loudly if a configured channel has been deleted
         await self.sync_to_guilds(guilds)
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
@@ -586,11 +588,49 @@ async def _vocal_ac(interaction: discord.Interaction, current: str):
             for s in match_songs(bot.vocals, current)]
 
 
+def _grinding_allowed_here(interaction: discord.Interaction) -> str | None:
+    """None if `/grind` may run here, otherwise the sentence to send back.
+
+    Grinding is confined to the grind category on purpose (founder, 2026-08-11). The whole point is
+    that generation happens in public, in the same few channels, where people scroll past what
+    everyone else is throwing together. Allowed anywhere, it scatters across the server and nobody
+    sees anyone else's - at which point being in a server buys you nothing over using the app alone.
+
+    Sitting in one of the listening rooms also counts, because Discord treats a voice channel's
+    built-in chat as its own channel and somebody in a room should not have to leave it to grind.
+    """
+    if not CFG.grind_category_id:
+        return None                     # not configured: allow everywhere rather than block everything
+
+    channel = interaction.channel
+    cat_id = getattr(getattr(channel, "category", None), "id", None) \
+        or getattr(channel, "category_id", None)
+    if cat_id == CFG.grind_category_id:
+        return None
+    if booth.room_of(interaction.user) is not None:
+        return None                     # they are in a listening room; let them grind from there
+
+    guild = interaction.guild
+    allowed = []
+    if guild is not None:
+        allowed = [f"<#{c.id}>" for c in guild.text_channels
+                   if (getattr(getattr(c, "category", None), "id", None)
+                       or getattr(c, "category_id", None)) == CFG.grind_category_id]
+    where = " or ".join(allowed) if allowed else "the grind channels"
+    return (f"Not here. Everyone grinds in {where}, out in the open, so you can see what other "
+            f"people are throwing together.\n"
+            f"You can also grind from inside a listening room while the music is on.")
+
+
 @bot.tree.command(name="grind", description="Throw two songs in the grinder and find out.")
 async def grind_cmd(interaction: discord.Interaction) -> None:
     """No options at all, on purpose. `/grind` used to offer `beat` and `vocal` as optional fields,
     and a first-timer reading two blanks cannot tell that leaving them empty is the right move -
     they look like something you have to fill in. Type it, press enter, the picker opens."""
+    where = _grinding_allowed_here(interaction)
+    if where is not None:
+        await interaction.response.send_message(where, ephemeral=True)
+        return
     if not bot.songs:
         await bot.refresh_catalog()
     if not bot.beats or not bot.vocals:

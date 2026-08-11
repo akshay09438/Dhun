@@ -107,7 +107,8 @@ def submit_embed(*, user: discord.abc.User | None, beat: str, vocals: str) -> di
 # --------------------------------------------------------------------------------------
 def grind_embed(*, number: int, user: discord.abc.User | None, pairs: list[tuple[str, str]],
                 total_secs: float,
-                booth_listeners: int | None = None, queued_behind: int = 0) -> discord.Embed:
+                booth_listeners: int | None = None, room_name: str | None = None,
+                queued_behind: int = 0) -> discord.Embed:
     """One card for both shapes. A single pair reads as one line; two or more become a long grind
     with a numbered running order.
 
@@ -127,11 +128,13 @@ def grind_embed(*, number: int, user: discord.abc.User | None, pairs: list[tuple
 
     if booth_listeners is not None:
         listening = "1 listening" if booth_listeners == 1 else f"{booth_listeners} listening"
-        body = f"🔊  **PLAYING LIVE IN THE BOOTH**  ·  {listening}\n\n{body}"
+        where = f"IN {room_name.upper()}" if room_name else "IN VOICE"
+        body = f"🔊  **PLAYING LIVE {where}**  ·  {listening}\n\n{body}"
     elif queued_behind > 0:
-        # A statement of position, not a judgement. The Booth plays one grind at a time.
+        # A statement of position, not a judgement. A bot can hold only one voice connection per
+        # server, so a grind finishing while another is playing waits rather than interrupting.
         nxt = "next up" if queued_behind == 1 else f"{queued_behind} ahead of it"
-        body = f"🔊  waiting for The Booth  ·  {nxt}\n\n{body}"
+        body = f"🔊  waiting for the room  ·  {nxt}\n\n{body}"
 
     e = discord.Embed(title=f"🎧  {title}", description=body, color=ACCENT)
     _author(e, BOT_NAME)
@@ -150,29 +153,29 @@ def error_embed(msg: str) -> discord.Embed:
 # The Booth's live status - one pinned message the bot keeps editing.
 # --------------------------------------------------------------------------------------
 def booth_live_embed(*, listeners: int, grinds_this_session: int,
-                     last_up: str | None) -> discord.Embed:
-    people = "1 in the room" if listeners == 1 else f"{listeners} in the room"
+                     last_up: str | None, room: str | None = None) -> discord.Embed:
+    people = "1 person in" if listeners == 1 else f"{listeners} people in"
+    where = f" **{room}**" if room else " the rooms"
     made = ("nothing yet" if grinds_this_session == 0 else
             "1 grind this session" if grinds_this_session == 1 else
             f"{grinds_this_session} grinds this session")
-    body = f"{people}  ·  {made}"
+    body = f"{people}{where}  ·  {made}"
     if last_up:
         body += f"\nlast up: {last_up}"
-    body += "\n\n→ join 🔊 The Booth"
-    e = discord.Embed(title="🔴  THE BOOTH IS LIVE", description=body, color=ACCENT)
-    return e
+    body += "\n\n→ jump in and grind something, everyone in there hears it"
+    return discord.Embed(title="🔴  SOMEONE IS LISTENING", description=body, color=ACCENT)
 
 
 def booth_quiet_embed() -> discord.Embed:
     return discord.Embed(
-        title="⚫  The Booth is quiet.",
+        title="⚫  Nobody is listening right now.",
         description="Somebody go start something.",
         color=brand.DEEP)
 
 
-def arrival_line(name: str, listeners: int) -> str:
-    people = "1 in the room" if listeners == 1 else f"{listeners} in the room"
-    return f"🚪 **{name}** walked into The Booth. {people}."
+def arrival_line(name: str, room: str, listeners: int) -> str:
+    people = "1 in there" if listeners == 1 else f"{listeners} in there"
+    return f"🚪 **{name}** walked into **{room}**. {people}."
 
 
 # --------------------------------------------------------------------------------------

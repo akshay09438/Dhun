@@ -40,9 +40,13 @@ class Config:
     # Channel ids, set by `/setup` writing them back or by hand. All optional: a missing id
     # disables that one feature and says so in the log, rather than the bot guessing at a channel
     # by name. Guessing is how a message ends up in the wrong room in somebody else's server.
-    booth_channel_id: int | None = None          # the ONE voice channel grinds play in
-    grinder_channel_id: int | None = None        # #the-grinder: status message + arrival notes
-    fresh_grinds_channel_id: int | None = None   # #fresh-grinds: where 📌 sends a grind
+    # CATEGORIES, not single channels. The founder adds and renames rooms as the community grows,
+    # and a category survives that - a channel id does not. Deleting the one configured voice
+    # channel is exactly how playback silently stopped working on 2026-08-11.
+    rooms_category_id: int | None = None         # every voice room grinds may play in
+    grind_category_id: int | None = None         # text channels where /grind is allowed
+    grinder_channel_id: int | None = None        # the main text channel: status + arrival notes
+    fresh_grinds_channel_id: int | None = None   # where 📌 sends a grind
 
 
 def _int_env(name: str) -> int | None:
@@ -64,6 +68,7 @@ def load_config() -> Config:
     gid = os.environ.get("DISCORD_GUILD_ID", "").strip()
     return Config(token=token, api_base=api_base,
                   guild_id=int(gid) if gid.isdigit() else None,
-                  booth_channel_id=_int_env("GRINDER_BOOTH_CHANNEL_ID"),
+                  rooms_category_id=_int_env("GRINDER_ROOMS_CATEGORY_ID"),
+                  grind_category_id=_int_env("GRINDER_GRIND_CATEGORY_ID"),
                   grinder_channel_id=_int_env("GRINDER_MAIN_CHANNEL_ID"),
                   fresh_grinds_channel_id=_int_env("GRINDER_SHOWCASE_CHANNEL_ID"))
