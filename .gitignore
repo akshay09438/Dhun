@@ -38,5 +38,7 @@ Thumbs.db
 .claude/settings.local.json
 services/api/_candidate_preload.py
 
-# Which avatar art the bot last uploaded (per-installation state, not source)
-services/discord-bot/assets/.applied-avatar
+# Which artwork the bot last uploaded, per slot (per-installation state, not source).
+# A pattern, not one filename: the avatar was the only slot until the profile banner was added,
+# and a new marker silently showing up as untracked is easy to commit by accident.
+services/discord-bot/assets/.applied-*

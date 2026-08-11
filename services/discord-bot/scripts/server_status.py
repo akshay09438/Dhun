@@ -28,10 +28,31 @@ CFG = load_config()
 class Inspector(discord.Client):
     async def on_ready(self) -> None:
         try:
+            await self._report_app()
             for g in self.guilds:
                 self._report(g)
         finally:
             await self.close()
+
+    async def _report_app(self) -> None:
+        """The bot's two pictures, which are DIFFERENT settings and get confused constantly:
+
+        * the bot USER avatar - what shows beside its messages. Set by the API, so /setup does it.
+        * the APPLICATION icon - what shows in Discord's slash-command picker. Developer Portal
+          only; no bot can change its own. This is why the old "G" lingered next to /mix long after
+          the avatar was replaced.
+        """
+        user = self.user
+        print(f"\n{'=' * 72}\nGrinder app\n{'=' * 72}")
+        print(f"  bot avatar (beside messages) : {user.display_avatar.url if user else '?'}")
+        try:
+            info = await self.application_info()
+            if info.icon is None:
+                print("  app icon (command picker)    : NOT SET -> Discord shows a default")
+            else:
+                print(f"  app icon (command picker)    : {info.icon.url}")
+        except Exception as e:  # noqa: BLE001 - a read-only check must never be the thing that fails
+            print(f"  app icon (command picker)    : couldn't read ({e})")
 
     def _report(self, g: discord.Guild) -> None:
         planned_names = {c.label.lower() for cat in server_setup.STRUCTURE for c in cat.channels}
