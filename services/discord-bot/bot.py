@@ -148,6 +148,7 @@ class PromptDJBot(discord.Client):
                              brand.ICON.name, brand.icon_fingerprint())
             else:
                 log.info("brand: avatar already up to date")
+            await self._apply_profile_banner(user)
             url = str(user.display_avatar.url) if user.display_avatar else None
             # Log it: this is the ONLY way to check from outside what picture Discord actually holds
             # for the bot, and it distinguishes the bot's avatar from the separate Application icon
@@ -156,6 +157,32 @@ class PromptDJBot(discord.Client):
             ui.set_avatar_url(url)
         except Exception:  # noqa: BLE001 — branding is cosmetic; never let it stop the bot
             log.warning("brand: couldn't set the avatar (continuing)", exc_info=True)
+
+    async def _apply_profile_banner(self, user) -> None:
+        """Set the strip behind the bot's picture on its profile card.
+
+        Separate from the avatar's try/except on purpose: banner support is newer than the avatar's
+        and a server-side refusal here must not swallow the avatar's own success log. Kept quiet
+        about failure for the same reason as the avatar — a bot that can't set a picture must still
+        make mixes.
+
+        NOT the same thing as the SERVER banner (`brand.BANNER`), which needs boost level 2. This
+        one is the bot's own profile and has no such gate.
+        """
+        data = brand.image_bytes(brand.PROFILE_BANNER)
+        if data is None:
+            log.info("brand: no profile banner shipped (%s missing)", brand.PROFILE_BANNER.name)
+            return
+        if user.banner is not None and not brand.art_needs_upload(brand.PROFILE_BANNER):
+            log.info("brand: profile banner already up to date")
+            return
+        try:
+            await user.edit(banner=data)
+            brand.mark_art_applied(brand.PROFILE_BANNER)
+            log.info("brand: profile banner uploaded from %s (%s)",
+                     brand.PROFILE_BANNER.name, brand.art_fingerprint(brand.PROFILE_BANNER))
+        except Exception:  # noqa: BLE001
+            log.warning("brand: couldn't set the profile banner (continuing)", exc_info=True)
 
 
 bot = PromptDJBot()
