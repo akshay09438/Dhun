@@ -4,7 +4,9 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
-2026-08-12 (**session 5 — the `/zuko:goodnight` concurrency batch, and the ARM voice wall coming down**). Branch `zuko/goodnight-2026-08-12`, **3 commits, not merged, no PR yet.** One dangerous change is **STAGED and waiting for the founder**. Nothing else is uncommitted.
+2026-08-12 (**session 5 — the `/zuko:goodnight` concurrency batch, and the ARM voice wall coming down**). Branch `zuko/goodnight-2026-08-12`, **6 commits, pushed, not merged, no PR yet.** One dangerous change is **STAGED and waiting for the founder**. Nothing is uncommitted. **All suites green.**
+
+**⚠️ THE ONE THING TO READ FIRST: voice is AGENT-PROVEN, NOT FOUNDER-CONFIRMED.** What was proven is that the voice PATH works — a connection was negotiated and a generated test tone was streamed into `#Bollywood_House` with no error. What has **never** happened is a human hearing a real grind play in a room: nobody was in the channel, no mix went through `booth.py`, and "playback finished with no error" is the API's word, not an ear's. **The founder said they will test it themselves.** Until they do, treat every statement about listening rooms working as a claim.
 
 ---
 
@@ -12,7 +14,11 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 **The overnight batch (jobs 1-8 from the previous handoff) ran, re-scoped at kickoff against three founder lenses: developer / a consumer who wants an instant mix in Discord / a founder with no budget.** Full plain-language report: [.zuko/goodnight/report.md](../.zuko/goodnight/report.md).
 
-**THE HEADLINE — voice works on this machine now.** Grinder had never once been able to play audio in a listening room here; both rooms were silent rooms. The recorded reason ("ARM cannot do voice") was **too broad**, and the breadth is what kept it unsolved. The true constraint: `davey` (required unconditionally at `discord/voice_client.py:222`, not just for E2EE) is a **Rust** crate publishing `win_amd64` wheels and **no `win_arm64` wheel**. Windows 11 on ARM runs Intel binaries by emulation, so an Intel CPython 3.11 installs it and it works. **Proven, not theorised: connected to `#Bollywood_House`, negotiated `aead_xchacha20_poly1305_rtpsize`, played audio, clean disconnect — and the whole bot suite (192) passes under the new venv.** Cost: nothing.
+**THE HEADLINE — voice works on this machine now.** Grinder had never once been able to play audio in a listening room here; both rooms were silent rooms. The recorded reason ("ARM cannot do voice") was **too broad**, and the breadth is what kept it unsolved. The true constraint: `davey` (required unconditionally at `discord/voice_client.py:222`, not just for E2EE) is a **Rust** crate publishing `win_amd64` wheels and **no `win_arm64` wheel**. Windows 11 on ARM runs Intel binaries by emulation, so an Intel CPython 3.11 installs it and it works. **Proven, not theorised: connected to `#Bollywood_House`, negotiated `aead_xchacha20_poly1305_rtpsize`, streamed a generated test tone, clean disconnect — and the whole bot suite passes under the new venv.** Cost: nothing.
+
+**What that proof does and does NOT cover.** It exercised `channel.connect()` + `vc.play(FFmpegPCMAudio)`, which is the same mechanism `voice_player.play_in` uses — so the wall really is down. It did **not** exercise: a real mix file, `booth.on_grind_finished`, the one-grind-at-a-time room queue, the live pinned status message, arrival notes, or **anybody actually hearing it**. Those are the founder's test.
+
+**Fixed at handoff time, because it would have wasted that test:** `voice_player.voice_supported()` checked PyNaCl only, so on the ARM environment it answered "yes, voice works" and the real failure then surfaced as a raw `RuntimeError` partway through a grind — precisely the thing that gate exists to prevent. It now checks both libraries, and the new `voice_unavailable_reason()` names the missing piece **and the fix** rather than just saying no. Pinned by 2 tests; the suite passes in both environments (the "both libraries present" test skips honestly on ARM rather than asserting something untrue there).
 
 **Everything else in the batch is built and applied on the branch:** the failure taxonomy (`app/failure.py` — declined / quality / resources / bug, in `events.db` as `fail_kind`); the bounded render queue (`app/renderq.py`, cap 8, 2 slots per person); **sets routed through the same queue as ONE job** (they used to bypass the cap entirely with their own thread); resource failures re-queued instead of blamed on the user; a grinding card that moves; per-stage timings on every render; `GET /queue`; and `speakers.py`, the extra-voice-identity pool.
 
@@ -22,11 +28,12 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Do first next session
 
-1. **Decide the staged disk change** (see the approval queue below). It is the only thing blocking.
-2. **Wire `speakers.py` into `booth.py` — and now it can actually be PROVEN.** This was deliberately left unwired: the implementation plan records five separate occasions where a forgiving test fake hid a real Discord bug in exactly this path, and until voice ran there was no way to exercise it. That excuse is gone.
-3. **The founder must create the extra bot identities** (Discord developer portal → new application → bot token) and paste them into `services/discord-bot/.env` as `GRINDER_ROOM_TOKENS=tok1,tok2`. Free; only a human can do it. Until then, one room at a time.
-4. **Consider the best-parts crop.** It costs **7.98s of a 25.68s render — 31%** — and runs _after_ the full mix is already rendered. That is where the next second of speed is, not in the mixing.
-5. **Open the PR for this branch** (3 commits) and merge once the staged card is decided.
+1. **THE FOUNDER TESTS VOICE** (they said they would): start Grinder with `Start-Grinder.bat`, sit in `Bollywood_House`, run `/grind`, and listen. That converts the biggest claim in this file into a fact - or tells us the remaining problem is in `booth.py`, not the connection.
+2. **Decide the staged disk change** (see the approval queue below).
+3. **Wire `speakers.py` into `booth.py` — and now it can actually be PROVEN.** This was deliberately left unwired: the implementation plan records five separate occasions where a forgiving test fake hid a real Discord bug in exactly this path, and until voice ran there was no way to exercise it. That excuse is gone.
+4. **The founder must create the extra bot identities** (Discord developer portal → new application → bot token) and paste them into `services/discord-bot/.env` as `GRINDER_ROOM_TOKENS=tok1,tok2`. Free; only a human can do it. Until then, one room at a time.
+5. **Consider the best-parts crop.** It costs **7.98s of a 25.68s render — 31%** — and runs _after_ the full mix is already rendered. That is where the next second of speed is, not in the mixing.
+6. **Open the PR for this branch** and merge once the staged card is decided. The GitHub CLI is still not installed, so use the link git prints on push.
 
 ---
 
@@ -48,8 +55,8 @@ Run at session close, on `zuko/goodnight-2026-08-12`. Real output:
 
 | Check                        | Command                                                                | Result                                          |
 | ---------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------- |
-| Discord bot (ARM venv)       | `services/discord-bot/.venv/Scripts/python.exe -m pytest -q`           | **192 passed** _(171 at session start)_         |
-| Discord bot (new Intel venv) | `services/discord-bot/.venv-x64/Scripts/python.exe -m pytest -q`       | **192 passed**                                  |
+| Discord bot (ARM venv, the fallback)  | `services/discord-bot/.venv/Scripts/python.exe -m pytest -q`     | **193 passed, 1 skipped** _(171 at session start; the skip is honest - davey really is absent there)_ |
+| Discord bot (Intel venv, what Start-Grinder uses) | `services/discord-bot/.venv-x64/Scripts/python.exe -m pytest -q` | **194 passed** |
 | Backend, mix + set routes    | `pytest services/api/tests/test_mix_route.py test_set_route.py -q`     | 34 passed                                       |
 | Backend, new modules         | `pytest .../test_renderq.py test_failure.py test_events_rollups.py -q` | 14 + 13 + 24 passed                             |
 | Backend, full                | `services/api/.venv/Scripts/python.exe -m pytest services/api -q`      | **754 passed** in 226s _(720 at session start)_ |
@@ -80,7 +87,8 @@ Run at session close, on `zuko/goodnight-2026-08-12`. Real output:
 
 ## Open escalations and things to RE-VERIFY (claims, not facts)
 
-- **`speakers.py` is BUILT AND TESTED BUT NOT WIRED** to playback. Its decisions are covered by 10 tests; no audio has ever flowed through it. Treat every claim about multi-room playback as unverified.
+- **VOICE IS AGENT-PROVEN, NOT FOUNDER-CONFIRMED — the top item to close next session.** A test tone streamed cleanly into a real room; no human has heard a real grind, and `booth.py`'s playback path was never entered. **The founder said they will test it themselves.** If it works for them, say so here and the listening rooms become real. If it does not, the failure will be in `booth.py`/`voice_player.play_in`, NOT in the connection - that part is settled.
+- **`speakers.py` is BUILT AND TESTED BUT NOT WIRED** to playback. Its decisions are covered by 12 tests; no audio has ever flowed through it. Treat every claim about multi-room playback as unverified.
 - **Voice works only under the Intel venv.** `Start-Grinder.bat` prefers `services/discord-bot/.venv-x64` and falls back to the ARM `.venv`. **Claim to re-verify:** that the launcher picks the right one on a normal double-click — it was edited but the launcher itself was not run end to end.
 - **The Intel Python lives at `%LOCALAPPDATA%\Programs\Python\Python311-x64`** and the venv at `services/discord-bot/.venv-x64` (both gitignored). A machine rebuild loses them; the recipe is in the technical spec.
 - **Disk: 8.9 GB free.** The load test wrote and then removed ~60 render files. `services/api/data` is still the bulk.

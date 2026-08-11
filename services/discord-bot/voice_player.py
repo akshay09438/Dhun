@@ -12,12 +12,37 @@ import discord
 
 
 def voice_supported() -> bool:
-    """True only if PyNaCl imported — discord.py needs it to encrypt the voice stream."""
+    """True only if BOTH voice libraries imported.
+
+    `davey` joined `nacl` here on 2026-08-12. discord.py 2.7 requires davey unconditionally for
+    any voice at all — `VoiceClient.__init__` raises before a single packet is sent — so checking
+    only PyNaCl made this function answer "yes, voice works" on a machine where it certainly does
+    not, and the failure then surfaced as a raw RuntimeError halfway through a grind instead of as
+    the plain sentence this gate exists to produce.
+
+    davey publishes no ARM-Windows build, so on the ARM environment this is correctly False; the
+    Intel environment (`.venv-x64`, which Start-Grinder.bat prefers) has it and this is True."""
     try:
         import nacl  # noqa: F401
+        import davey  # noqa: F401
         return True
     except Exception:  # noqa: BLE001 — any import/build failure means voice is off
         return False
+
+
+def voice_unavailable_reason() -> str | None:
+    """WHY voice is off, in words a person can act on, or None when it works. A gate that only
+    says "no" sends someone hunting; this one names the missing piece and the fix."""
+    try:
+        import nacl  # noqa: F401
+    except Exception:  # noqa: BLE001
+        return "the PyNaCl package did not load"
+    try:
+        import davey  # noqa: F401
+    except Exception:  # noqa: BLE001
+        return ("the davey package is missing - it has no ARM build, so Grinder must run on the "
+                "Intel environment (.venv-x64), which Start-Grinder.bat prefers automatically")
+    return None
 
 
 async def play_in_channel(interaction: "discord.Interaction", audio_path) -> str:
@@ -27,8 +52,8 @@ async def play_in_channel(interaction: "discord.Interaction", audio_path) -> str
     if voice_state is None or voice_state.channel is None:
         return "Join a voice channel first, then tap **Play in voice** again."
     if not voice_supported():
-        return ("Voice playback isn't available on this machine yet (the PyNaCl package didn't "
-                "load). The clip above still plays anywhere — that's the reliable path.")
+        return (f"Voice playback isn't available on this machine yet ({voice_unavailable_reason()}). "
+                "The clip above still plays anywhere — that's the reliable path.")
     channel = voice_state.channel
     guild = interaction.guild
     if guild is None:
@@ -58,7 +83,7 @@ async def play_in(channel, audio_path, *, on_finished=None) -> None:
     import asyncio
 
     if not voice_supported():
-        raise RuntimeError("voice playback is unavailable (PyNaCl did not load)")
+        raise RuntimeError(f"voice playback is unavailable ({voice_unavailable_reason()})")
 
     guild = channel.guild
     vc = guild.voice_client

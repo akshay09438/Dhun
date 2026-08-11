@@ -4,9 +4,10 @@ One Discord bot application holds ONE voice connection per SERVER - so with a si
 every listening room but one is permanently silent, and adding rooms adds silent rooms. The only
 fix is extra bot identities, which are free.
 
-⚠️ The audio path here is UNPROVEN: voice does not work at all on the founder's Windows-ARM
-machine (see the handoff). What these pin is every DECISION the pool makes, because a pool that
-can only be tested by connecting to Discord is a pool that never gets tested.
+⚠️ The audio path here is UNPROVEN. As of 2026-08-12 voice DOES work on this machine (on the Intel
+environment - see the handoff), but no audio has ever flowed through this pool: it is not yet wired
+into booth.py. What these pin is every DECISION the pool makes, because a pool that can only be
+tested by connecting to Discord is a pool that never gets tested.
 """
 import os
 
@@ -103,3 +104,39 @@ def test_config_reads_the_extra_tokens_from_the_environment(monkeypatch):
     assert botconfig._token_list("GRINDER_ROOM_TOKENS") == ["tok-a", "tok-b"]
     monkeypatch.delenv("GRINDER_ROOM_TOKENS")
     assert botconfig._token_list("GRINDER_ROOM_TOKENS") == []
+
+
+# --- the availability gate must not lie ---------------------------------------------------
+
+def test_the_voice_gate_checks_BOTH_libraries_not_just_one(monkeypatch):
+    """It used to check PyNaCl only. discord.py 2.7 requires `davey` unconditionally for ANY
+    voice - VoiceClient.__init__ raises before a single packet is sent - so on the ARM setup the
+    gate answered "yes, voice works" and the failure then surfaced as a raw RuntimeError partway
+    through a grind, which is exactly what this gate exists to prevent."""
+    import builtins
+    import voice_player
+
+    real_import = builtins.__import__
+
+    def no_davey(name, *a, **kw):
+        if name == "davey":
+            raise ImportError("no ARM build")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", no_davey)
+    assert voice_player.voice_supported() is False
+    reason = voice_player.voice_unavailable_reason() or ""
+    assert "davey" in reason
+    assert "Intel" in reason, "the reason must name the fix, not just the missing piece"
+
+
+def test_when_both_libraries_are_there_the_gate_opens_and_gives_no_reason():
+    """Skipped on the ARM environment, where davey is genuinely absent - the suite has to pass in
+    BOTH environments, and asserting "voice is available" where it truthfully is not would be a
+    test that lies in exactly the way this gate was just fixed for."""
+    import pytest
+    import voice_player
+
+    if voice_player.voice_unavailable_reason() is not None:
+        pytest.skip("ARM environment: davey is genuinely missing, which is the honest answer here")
+    assert voice_player.voice_supported() is True
