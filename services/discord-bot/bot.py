@@ -367,7 +367,12 @@ class AddPairView(discord.ui.View):
         return [discord.SelectOption(label=lbl, value=val, default=dflt)
                 for lbl, val, dflt in select_option_specs(songs, selected_id)]
 
-    def _refresh(self) -> None:
+    def _refresh_options(self) -> None:
+        """Rebuild both dropdowns so a picked song shows as selected rather than the placeholder.
+
+        NOT called _refresh: discord.ui.View already has a _refresh(components) that the library
+        calls whenever Discord sends a message update. Shadowing it took the whole bot down with a
+        TypeError the first time somebody edited a message."""
         self.beat_select.options = self._opts(bot.beats, self.sel_beat)
         self.vocal_select.options = self._opts(bot.vocals, self.sel_vocal)
 
@@ -381,12 +386,12 @@ class AddPairView(discord.ui.View):
 
     async def _on_beat(self, interaction: discord.Interaction) -> None:
         self.sel_beat = self.beat_select.values[0]
-        self._refresh()
+        self._refresh_options()
         await interaction.response.edit_message(embed=self.embed(), view=self)
 
     async def _on_vocal(self, interaction: discord.Interaction) -> None:
         self.sel_vocal = self.vocal_select.values[0]
-        self._refresh()
+        self._refresh_options()
         await interaction.response.edit_message(embed=self.embed(), view=self)
 
     @discord.ui.button(label="Stitch it on", emoji="➕",
@@ -465,6 +470,132 @@ class GrindView(discord.ui.View):
 
 
 # --------------------------------------------------------------------------------------
+# The picker `/grind` opens: beat, vocal, and a + to stack another pair BEFORE building.
+#
+# Why this exists as well as the + on a finished card (founder, 2026-08-11): stacking pairs
+# up front is how you sketch a set on the go, deciding the whole shape before hearing any of
+# it. The + on the finished card catches the other impulse - you heard one, it went hard, now
+# you want more. Both are real; they happen at different moments.
+# --------------------------------------------------------------------------------------
+class GrindBuilderView(discord.ui.View):
+    def __init__(self, user_id: int) -> None:
+        super().__init__(timeout=600)
+        self.owner_id = user_id
+        self.pairs: list[tuple[str, str]] = []
+        self.sel_beat: str | None = None
+        self.sel_vocal: str | None = None
+
+        self.beat_select = discord.ui.Select(placeholder="Pick a beat...", row=0,
+                                             options=self._opts(bot.beats, None))
+        self.beat_select.callback = self._on_beat
+        self.vocal_select = discord.ui.Select(placeholder="Pick a vocal...", row=1,
+                                              options=self._opts(bot.vocals, None))
+        self.vocal_select.callback = self._on_vocal
+        self.add_item(self.beat_select)
+        self.add_item(self.vocal_select)
+
+    @staticmethod
+    def _opts(songs, selected_id):
+        return [discord.SelectOption(label=lbl, value=val, default=dflt)
+                for lbl, val, dflt in select_option_specs(songs, selected_id)]
+
+    def _refresh_options(self) -> None:
+        # NOT _refresh: discord.ui.View owns that name and calls it with the message components.
+        self.beat_select.options = self._opts(bot.beats, self.sel_beat)
+        self.vocal_select.options = self._opts(bot.vocals, self.sel_vocal)
+
+    def _staged(self) -> list[tuple[str, str]]:
+        """Everything that would be built right now, including a pair that is picked but not yet
+        added. Hitting Grind it with a pair sitting in the dropdowns should just work rather than
+        silently dropping it."""
+        out = list(self.pairs)
+        if self.sel_beat and self.sel_vocal:
+            out.append((self.sel_beat, self.sel_vocal))
+        return out
+
+    def embed(self) -> discord.Embed:
+        lines = [f"`{i}`  **{_name_of(a)}**  ✕  **{_name_of(b)}**"
+                 for i, (a, b) in enumerate(self.pairs, 1)]
+        picking = ""
+        if self.sel_beat or self.sel_vocal:
+            b = f"**{_name_of(self.sel_beat)}**" if self.sel_beat else "_pick a beat_"
+            v = f"**{_name_of(self.sel_vocal)}**" if self.sel_vocal else "_pick a vocal_"
+            picking = f"\n\nnext up: {b}  ✕  {v}"
+        body = ("\n".join(lines) or "_nothing stacked yet_") + picking
+        e = discord.Embed(
+            title="⚙️  What are we grinding?",
+            description=(f"{body}\n\nHit **➕ Add another** to stack more, or **Grind it** when "
+                         f"you are done. Up to {MAX_PAIRS_PER_GRIND}."),
+            color=ui.ACCENT)
+        return e
+
+    async def _guard(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.owner_id:
+            return True
+        await interaction.response.send_message(
+            "That is someone else's. Type `/grind` to start your own.", ephemeral=True)
+        return False
+
+    async def _on_beat(self, interaction: discord.Interaction) -> None:
+        if not await self._guard(interaction):
+            return
+        self.sel_beat = self.beat_select.values[0]
+        self._refresh_options()
+        await interaction.response.edit_message(embed=self.embed(), view=self)
+
+    async def _on_vocal(self, interaction: discord.Interaction) -> None:
+        if not await self._guard(interaction):
+            return
+        self.sel_vocal = self.vocal_select.values[0]
+        self._refresh_options()
+        await interaction.response.edit_message(embed=self.embed(), view=self)
+
+    @discord.ui.button(label="Add another", emoji="➕",
+                       style=discord.ButtonStyle.secondary, row=2)
+    async def add_another(self, interaction: discord.Interaction,
+                          button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+        if not (self.sel_beat and self.sel_vocal):
+            await interaction.response.send_message("Pick a beat and a vocal first.",
+                                                    ephemeral=True)
+            return
+        if len(self.pairs) >= MAX_PAIRS_PER_GRIND:
+            await interaction.response.send_message(
+                f"That is the limit, {MAX_PAIRS_PER_GRIND}. Hit **Grind it**.", ephemeral=True)
+            return
+        self.pairs.append((self.sel_beat, self.sel_vocal))
+        self.sel_beat = self.sel_vocal = None
+        self._refresh_options()
+        await interaction.response.edit_message(embed=self.embed(), view=self)
+
+    @discord.ui.button(label="Take the last one off", emoji="↩️",
+                       style=discord.ButtonStyle.secondary, row=2)
+    async def undo(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+        if self.pairs:
+            self.pairs.pop()
+        await interaction.response.edit_message(embed=self.embed(), view=self)
+
+    @discord.ui.button(label="Grind it", emoji="⚙️",
+                       style=discord.ButtonStyle.primary, row=2)
+    async def go(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+        pairs = self._staged()
+        if not pairs:
+            await interaction.response.send_message("Pick a beat and a vocal first.",
+                                                    ephemeral=True)
+            return
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(view=self)      # freeze the picker
+        await GrindContext(interaction, pairs[:MAX_PAIRS_PER_GRIND]).run(first=True)
+        self.stop()
+
+
+# --------------------------------------------------------------------------------------
 # The commands. Three, on purpose: nobody explores slash-command parameters, they click buttons.
 # Everything else lives on the card.
 # --------------------------------------------------------------------------------------
@@ -483,14 +614,27 @@ async def _vocal_ac(interaction: discord.Interaction, current: str):
 
 
 @bot.tree.command(name="grind", description="Throw two songs in the grinder and find out.")
-@app_commands.describe(beat="The song you want the beat from",
-                       vocal="The song you want the singing from")
+@app_commands.describe(beat="Optional. Leave both blank to open the picker.",
+                       vocal="Optional. Leave both blank to open the picker.")
 @app_commands.autocomplete(beat=_beat_ac, vocal=_vocal_ac)
-async def grind_cmd(interaction: discord.Interaction, beat: str, vocal: str) -> None:
-    await interaction.response.defer(thinking=True)
+async def grind_cmd(interaction: discord.Interaction,
+                    beat: str | None = None, vocal: str | None = None) -> None:
+    """Both ways in. Naming both songs goes straight to grinding, which is the fast path once you
+    know what you want. Typing just `/grind` opens the picker, where the + lets you stack several
+    pairs before anything is built."""
     if not bot.songs:
         await bot.refresh_catalog()
-    await GrindContext(interaction, [(beat, vocal)]).run(first=True)
+    if beat and vocal:
+        await interaction.response.defer(thinking=True)
+        await GrindContext(interaction, [(beat, vocal)]).run(first=True)
+        return
+    if not bot.beats or not bot.vocals:
+        await interaction.response.send_message(
+            "The song library has not loaded. Make sure the engine is running, then try again.",
+            ephemeral=True)
+        return
+    view = GrindBuilderView(interaction.user.id)
+    await interaction.response.send_message(embed=view.embed(), view=view)
 
 
 @bot.tree.command(name="mygrinds", description="Everything you have made.")

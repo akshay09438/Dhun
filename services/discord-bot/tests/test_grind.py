@@ -4,6 +4,7 @@ The reaction tests matter most. 🔥 / 💀 / 😐 are the only signal that says
 landed, so a bug that double-counts or silently drops one corrupts the thing the product is being
 built to learn.
 """
+import asyncio
 import os
 
 import pytest
@@ -106,3 +107,95 @@ def test_an_unfinished_grind_is_not_listed():
     """A grind with no card attached never finished rendering, so it is not something you made."""
     _grind(user_id=7)                            # never gets attach_message
     assert store.recent_for_user(7) == []
+
+
+# --- views must not shadow the library's own methods --------------------------------------
+def test_no_view_shadows_a_discord_internal_method():
+    """The bug this catches, from a real run on 2026-08-11: a view defined `_refresh()`, which
+    discord.ui.View already uses as `_refresh(components)`. Discord sent a message update, the
+    library called it with an argument, and the TypeError killed the entire gateway handler - the
+    bot went down completely, from a name collision.
+
+    Checked by signature, not by a hardcoded list, so a future discord.py that adds a new internal
+    method still fails loudly here rather than at runtime in front of people.
+    """
+    import inspect
+
+    import discord
+
+    import bot as botmod
+
+    # Dunders are excluded: overriding __init__ is normal and correct. What is never safe is
+    # shadowing a single-underscore internal the library calls on its own schedule.
+    base = {n for n, _ in inspect.getmembers(discord.ui.View, inspect.isfunction)
+            if n.startswith("_") and not n.startswith("__")}
+    offences = []
+    for name, obj in vars(botmod).items():
+        if not (inspect.isclass(obj) and issubclass(obj, discord.ui.View)
+                and obj is not discord.ui.View):
+            continue
+        for attr, fn in vars(obj).items():
+            if attr in base and inspect.isfunction(fn):
+                theirs = inspect.signature(getattr(discord.ui.View, attr))
+                ours = inspect.signature(fn)
+                if str(theirs) != str(ours):
+                    offences.append(f"{name}.{attr}{ours} shadows View.{attr}{theirs}")
+    assert not offences, "a view overrode a discord.py internal with a different signature:\n" + \
+        "\n".join(offences)
+
+
+# --- the picker /grind opens --------------------------------------------------------------
+def _builder(monkeypatch, beats=("b1", "b2"), vocals=("v1", "v2")):
+    import bot as botmod
+
+    class _S:
+        def __init__(self, i):
+            self.id = i
+            self.name = i
+
+    monkeypatch.setattr(botmod.bot, "beats", [_S(b) for b in beats], raising=False)
+    monkeypatch.setattr(botmod.bot, "vocals", [_S(v) for v in vocals], raising=False)
+    monkeypatch.setattr(botmod.bot, "songs", [_S(x) for x in list(beats) + list(vocals)],
+                        raising=False)
+
+    # A discord.ui.View schedules its own timeout task on construction, so it needs a running
+    # loop to exist at all. These tests only read plain attributes afterwards.
+    async def make():
+        return botmod.GrindBuilderView(user_id=1)
+
+    return asyncio.run(make())
+
+
+def test_the_picker_stacks_pairs_before_anything_is_built(monkeypatch):
+    """The founder's ask: a + beside the vocal so a set can be sketched on the go, deciding the
+    whole shape before hearing any of it."""
+    v = _builder(monkeypatch)
+    v.sel_beat, v.sel_vocal = "b1", "v1"
+    assert v._staged() == [("b1", "v1")]
+    v.pairs.append(("b1", "v1"))
+    v.sel_beat = v.sel_vocal = None
+    v.sel_beat, v.sel_vocal = "b2", "v2"
+    assert v._staged() == [("b1", "v1"), ("b2", "v2")]
+
+
+def test_a_pair_left_sitting_in_the_dropdowns_is_not_silently_dropped(monkeypatch):
+    """Hitting Grind it with a pair picked but not yet added should just work. Losing it would
+    look like the button ignoring you."""
+    v = _builder(monkeypatch)
+    v.sel_beat, v.sel_vocal = "b1", "v1"
+    assert v._staged() == [("b1", "v1")]
+
+
+def test_a_half_picked_pair_is_not_staged(monkeypatch):
+    v = _builder(monkeypatch)
+    v.sel_beat = "b1"
+    assert v._staged() == []
+
+
+def test_the_picker_respects_the_five_pair_cap(monkeypatch):
+    import bot as botmod
+    v = _builder(monkeypatch)
+    v.pairs = [("b1", "v1")] * botmod.MAX_PAIRS_PER_GRIND
+    v.sel_beat, v.sel_vocal = "b2", "v2"
+    # _staged can exceed the cap; the command truncates, so the cap holds either way
+    assert len(v._staged()[:botmod.MAX_PAIRS_PER_GRIND]) == botmod.MAX_PAIRS_PER_GRIND
