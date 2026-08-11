@@ -32,17 +32,22 @@ LOGO = ASSETS / "logo.png"        # the GRINDER wordmark disc: welcome post + /h
 BANNER = ASSETS / "banner.png"    # glow banner — needs server boost level 2 before it can be set
 EMOJI_DIR = ASSETS / "emojis"
 
-# The strip behind the bot's picture on its PROFILE card. A DIFFERENT setting from BANNER above,
-# which is the SERVER header — that one Discord locks behind boost level 2, this one it does not,
-# so this applies today. Left flat purple, Discord invents a colour from the avatar and the profile
-# looks unfinished.
+# The "Remix anything." strip. ONE file, TWO jobs, which is why it is named after the artwork
+# rather than after either use:
+#   * the strip behind the bot's picture on its PROFILE card. A DIFFERENT setting from BANNER
+#     above, which is the SERVER header — that one Discord locks behind boost level 2, this one it
+#     does not, so this applies today. Left flat purple, Discord invents a colour from the avatar
+#     and the profile looks unfinished.
+#   * the picture on the welcome post. The founder picked it over the wordmark disc (`LOGO`) on
+#     2026-08-11: a 2.8:1 strip reads as a header and leaves the words room to breathe, where a
+#     square disc fills the embed and pushes the copy off the first screen.
 #
 # 1360x480 is 2x the 680x240 Discord renders, so it stays sharp on a high-DPI screen. JPEG, not
 # PNG, is deliberate: the artwork's film grain is nearly incompressible as PNG (1426 KB vs 102 KB
 # for a visually identical JPEG at quality 94), and a 14x file for no visible gain is not worth it.
 # The layout is avatar-aware — the avatar covers the bottom-left, so the wordmark sits top-left and
 # the tagline bottom-RIGHT. Re-exporting the art without honouring that will bury the tagline.
-PROFILE_BANNER = ASSETS / "profile-banner.jpg"
+REMIX_BANNER = ASSETS / "remix-banner.jpg"
 
 # The custom emojis, and what each one is FOR. The bot uploads these to the server on /setup and
 # then refers to them by name, falling back to a plain unicode glyph if a server has not got them

@@ -122,10 +122,13 @@ async def test_resident_dj_is_left_alone():
 async def test_every_room_gets_a_pinned_message_saying_what_it_is_for():
     g = FakeGuild()
     await server_setup.run(g)
-    for name in server_setup.CHANNEL_COPY:
-        ch = next(c for c in g.text_channels if c.name == name)
-        assert len(ch.sent) == 1, f"#{name} should get exactly one pinned post"
-        assert ch._messages[0].pinned is True, f"#{name}'s post should be pinned"
+    # Voice rooms too. They carry a text chat, and a blank room is the least welcoming thing a
+    # room can be - both of the founder's listening rooms were empty until this was fixed.
+    for ch in g.text_channels + g.voice_channels:
+        if ch.name == server_setup.WELCOME_CHANNEL:
+            continue                      # covered by the welcome-post tests
+        assert len(ch.sent) == 1, f"#{ch.name} should get exactly one pinned post"
+        assert ch._messages[0].pinned is True, f"#{ch.name}'s post should be pinned"
 
 
 @run_async
@@ -134,9 +137,8 @@ async def test_a_second_run_does_not_repost_the_copy():
     g = FakeGuild()
     await server_setup.run(g)
     await server_setup.run(g)
-    for name in server_setup.CHANNEL_COPY:
-        ch = next(c for c in g.text_channels if c.name == name)
-        assert len(ch.sent) == 1, f"#{name} was posted into twice"
+    for ch in g.text_channels + g.voice_channels:
+        assert len(ch.sent) == 1, f"#{ch.name} was posted into twice"
 
 
 @run_async

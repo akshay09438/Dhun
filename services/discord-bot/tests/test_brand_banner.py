@@ -26,18 +26,18 @@ def _jpeg_size(path):
 
 
 def test_the_profile_banner_ships_and_is_a_separate_file_from_the_server_banner():
-    assert brand.PROFILE_BANNER.exists(), "the profile banner art must ship with the bot"
-    assert brand.PROFILE_BANNER != brand.BANNER, (
+    assert brand.REMIX_BANNER.exists(), "the profile banner art must ship with the bot"
+    assert brand.REMIX_BANNER != brand.BANNER, (
         "the profile banner and the SERVER banner are different Discord settings — the server one "
         "needs boost level 2, this one does not"
     )
-    assert brand.image_bytes(brand.PROFILE_BANNER) is not None
+    assert brand.image_bytes(brand.REMIX_BANNER) is not None
 
 
 def test_the_profile_banner_matches_the_shape_discord_renders():
     """680x240 is the slot. Anything else and Discord centre-crops, which buried the tagline behind
     the avatar in every earlier attempt."""
-    w, h = _jpeg_size(brand.PROFILE_BANNER)
+    w, h = _jpeg_size(brand.REMIX_BANNER)
     assert abs(w / h - 680 / 240) < 0.01, f"{w}x{h} is not the 680:240 profile-banner shape"
     assert w >= 1360, "ship at 2x so it stays sharp on a high-DPI screen"
 
@@ -45,7 +45,7 @@ def test_the_profile_banner_matches_the_shape_discord_renders():
 def test_the_profile_banner_stays_small_enough_to_be_worth_committing():
     """It is JPEG rather than PNG on purpose — the grain makes PNG ~14x bigger for no visible gain.
     A regression here means someone re-exported it as PNG."""
-    kb = brand.PROFILE_BANNER.stat().st_size / 1024
+    kb = brand.REMIX_BANNER.stat().st_size / 1024
     assert kb < 400, f"{kb:.0f} KB — too big; export as JPEG, not PNG"
 
 
@@ -99,10 +99,10 @@ def _apply(user):
 
 
 def _use_temp_art(tmp_path, monkeypatch, data=b"art"):
-    art = tmp_path / "profile-banner.jpg"
+    art = tmp_path / "remix-banner.jpg"
     art.write_bytes(data)
     monkeypatch.setattr(brand, "ASSETS", tmp_path)
-    monkeypatch.setattr(brand, "PROFILE_BANNER", art)
+    monkeypatch.setattr(brand, "REMIX_BANNER", art)
     brand._cache.pop(art, None)
     return art
 
@@ -148,7 +148,7 @@ def test_discord_refusing_the_banner_never_stops_the_bot(tmp_path, monkeypatch):
 
 def test_a_missing_banner_file_is_skipped_quietly(tmp_path, monkeypatch):
     monkeypatch.setattr(brand, "ASSETS", tmp_path)
-    monkeypatch.setattr(brand, "PROFILE_BANNER", tmp_path / "not-here.jpg")
+    monkeypatch.setattr(brand, "REMIX_BANNER", tmp_path / "not-here.jpg")
     user = _FakeUser(banner=None)
     _apply(user)
     assert user.edits == [], "nothing to upload means no call to Discord"

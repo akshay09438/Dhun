@@ -62,20 +62,22 @@ class CategorySpec:
 # the only place the layout is described, so re-shaping the community is a one-place edit.
 STRUCTURE: tuple[CategorySpec, ...] = (
     CategorySpec("🚪 START HERE", (
-        ChannelSpec("read-this-first", "how it works, 30 seconds", read_only=True),
-        ChannelSpec("rules", "the no-rules rules", read_only=True),
-        ChannelSpec("announcements", "changelog, events", read_only=True),
+        ChannelSpec("read-this-first", "what Grinder is, in 30 seconds", read_only=True),
+        # Not "the no-rules rules", which it used to say. There IS one hard rule and burying it
+        # under a joke is how somebody talks themselves into testing it.
+        ChannelSpec("rules", "short. read it.", read_only=True),
+        ChannelSpec("announcements", "what's new", read_only=True),
     )),
     CategorySpec("⚙️ GRIND", (
         # THE channel. Everyone grinds here, in public, on purpose. The whole Midjourney mechanic
         # is that generation happens in one place where strangers watch each other work - scatter
         # it across channels and nobody sees anyone else's, which kills the only reason to be in a
         # server rather than using the app alone.
-        ChannelSpec("the-grinder", "type /grind - everyone grinds here, in the open"),
+        ChannelSpec("the-grinder", "type /grind here. everyone grinds in the open."),
         # The curated half. The grinder is everything: the wins, the disasters, the noise.
         # Fresh-grinds is the highlight reel, filled by anyone hitting 📌 on a card. Failures are
         # entertaining but you still want somewhere to send a newcomer.
-        ChannelSpec("fresh-grinds", "the ones that survived"),
+        ChannelSpec("fresh-grinds", "the ones worth keeping. carried up with 📌."),
         ChannelSpec("the-booth", voice=True, display="The Booth"),
     )),
     CategorySpec("💬 TALK", (
@@ -425,152 +427,367 @@ async def upload_emojis(guild: discord.Guild, report: Report) -> None:
             report.error(f":{name}:", e)
 
 
-def welcome_embeds(guild: discord.Guild) -> list[discord.Embed]:
-    """The #read-this-first post. Should take 30 seconds to read, and no longer."""
-    intro = discord.Embed(
-        title="you're in. here's the whole thing.",
+# --------------------------------------------------------------------------------------
+# Where the rooms actually ARE on this server, which is not always where the plan says.
+#
+# The founder renames rooms as the community finds its shape - `the-grinder` became
+# `get-shit-done`, `fresh-grinds` became `best-mixes`, and one `The Booth` became two genre rooms.
+# Copy that TYPES a channel name rots the moment that happens, and a newcomer following a rotted
+# signpost is exactly the first impression this whole file exists to get right. So the copy is
+# built against the LIVE channels and refers to them by mention, which always renders whatever the
+# room is called today.
+# --------------------------------------------------------------------------------------
+@dataclasses.dataclass(frozen=True)
+class Links:
+    grind: object | None = None        # the main text channel where /grind happens
+    showcase: object | None = None     # where 📌 carries a grind
+    rooms: tuple = ()                  # every voice room, each of which needs its own intro
+
+
+def resolve_links(guild: discord.Guild, ids: dict | None = None) -> Links:
+    """Find the real channels. A CONFIGURED id wins over the planned name, because the id is what
+    the bot itself uses and it survives a rename; the name is only the fallback for a server that
+    still matches the plan."""
+    ids = ids or {}
+
+    def pick(key: str, planned_name: str):
+        cid = ids.get(key)
+        if cid:
+            found = guild.get_channel(cid)
+            if found is not None:
+                return found
+        return _by_name(guild.text_channels, planned_name)
+
+    return Links(grind=pick("grind", GRIND_CHANNEL),
+                 showcase=pick("showcase", SHOWCASE_CHANNEL),
+                 # EVERY voice room, not just the configured one: a room with no intro tells a
+                 # newcomer nothing, and the founder adds rooms without telling anyone.
+                 rooms=tuple(guild.voice_channels))
+
+
+def link(channel, fallback: str) -> str:
+    """A channel mention, or plain words if that channel is not there to point at."""
+    cid = getattr(channel, "id", None)
+    return f"<#{cid}>" if cid else fallback
+
+
+# The welcome post's picture. The founder's "Remix anything." strip, not the wordmark disc.
+WELCOME_IMAGE_NAME = "remix-banner.jpg"
+
+
+def welcome_embeds(guild: discord.Guild, links: Links | None = None) -> list[discord.Embed]:
+    """The #read-this-first post.
+
+    ONE embed, deliberately. It used to be three stacked ones with nine paragraphs between them,
+    and the founder's note was exactly right: too much message, too chaotic. A first-timer who
+    lands on a wall of text closes the tab, so this says what Grinder is, gives ONE instruction,
+    and stops. Everything else is discoverable from the thing itself."""
+    links = links or Links()
+    grind = link(links.grind, "the grind channel")
+    showcase = link(links.showcase, "the showcase channel")
+    e = discord.Embed(
+        title="you're in.",
         description=(
-            "Grinder mashes two songs together.\n"
-            "You pick a beat. You pick a vocal. It figures out how to make them one track.\n\n"
-            "Sometimes it's incredible. Sometimes it's a war crime.\n"
-            "That's the fun part."),
+            "Grinder mashes two songs into one.\n\n"
+            "You pick a beat. You pick a vocal.\n"
+            "It works out the rest.\n\n"
+            f"**Go to {grind} and type `/grind`**\n\n"
+            "React 🔥 💀 😐 to anything you hear.\n"
+            f"Hit 📌 to send the good ones to {showcase}."),
         color=brand.PRIMARY)
-    intro.set_image(url="attachment://logo.png")
-
-    how = discord.Embed(title="how to do it", color=brand.PRIMARY)
-    how.add_field(
-        name="the four steps",
-        value=("1. Go to #the-grinder\n"
-               "2. Type `/grind`\n"
-               "3. Pick a beat and a vocal. Want something longer? Hit **➕ Add another** and "
-               "stack up to 5 pairs before you build anything.\n"
-               "4. Hit **Grind it** and find out what you've done"),
-        inline=False)
-    how.add_field(
-        name="then what",
-        value=("React to it. 🔥 if it goes hard, 💀 if it's a disaster, 😐 if it's mid.\n"
-               "🔁 **Again** gives you the same songs mixed a different way.\n"
-               "📌 sends it to #fresh-grinds if it deserves to live."),
-        inline=False)
-    how.add_field(
-        name="the good part",
-        value=("Jump into 🔊 The Booth and grind while people are in there. Everyone hears it at "
-               "the same second. Ten people finding out together whether a Bollywood vocal "
-               "survives a techno beat is a better time than doing it alone."),
-        inline=False)
-    how.set_footer(text=f"{guild.name} · that's it. go break something.")
-    return [intro, how]
+    e.set_image(url=f"attachment://{WELCOME_IMAGE_NAME}")
+    e.set_footer(text="that's it. go break something.")
+    return [e]
 
 
-# The pinned message for each channel, so a newcomer landing anywhere knows what the room is for.
-# Plain ASCII punctuation throughout: no em dashes, no en dashes (founder rule).
-CHANNEL_COPY: dict[str, tuple[str, str]] = {
-    "rules": ("the rules", (
-        "there aren't many.\n\n"
-        "**1.** Grind whatever you want. There are no bad ideas here, only bad grinds, and those "
-        "are funny too.\n"
-        "**2.** Don't be a dick. That's the actual rule.\n"
-        "**3.** No slurs, no harassment, no weird stuff about minors. Instant ban, no "
-        "conversation.\n"
-        "**4.** Don't spam the grinder. Let other people have a turn.\n"
-        "**5.** If something's broken, say so in #requests. If it's brilliant, say so louder.\n\n"
-        "that's it. go make something cursed.")),
-    "announcements": ("this is where we post what's new.", (
-        "New features, Booth sessions, things we fixed, things we broke.\n\n"
-        "Turn on notifications for this one if you want to know when we're running a live "
-        "session.")),
-    "the-grinder": ("this is where it happens.", (
-        "Type `/grind` right here.\n\n"
-        "Everyone grinds in this channel, on purpose. You'll see what other people are throwing "
-        "together, which is the fastest way to learn what works, and the fastest way to find out "
-        "that the thing you thought would never work absolutely works.\n\n"
-        "React to other people's grinds. 🔥 💀 😐\n"
-        "Steal their ideas. That's allowed. Encouraged, actually.\n\n"
-        "**🔊 The Booth is right there.** Grind while you're in it and everyone in the room hears "
-        "it live.")),
-    "fresh-grinds": ("the hall of fame.", (
-        "Hit 📌 on any grind in #the-grinder and it lands here.\n\n"
-        "This is the good stuff. And the legendary disasters, those count too.\n\n"
-        "Scroll it when you need ideas.")),
-    "general": ("no agenda here.", (
-        "Talk about music, talk about nothing, drop a track you're obsessed with, argue about "
-        "whether the last grind was genius or a hate crime.\n\n"
-        "If you're new, say hi. Someone will say it back.")),
-    "requests": ("tell us what you want.", (
-        "Three kinds of post:\n\n"
-        "🐛  **broken** - something didn't work. Tell us what you did.\n"
-        "🎵  **missing** - a song, artist, or genre you want in the hopper.\n"
-        "💡  **wild** - a feature you want. Ask for anything. Seriously.\n\n"
-        "We read all of it. We build a lot of it.\n"
-        "The stuff in here is where most of the good ideas come from.")),
-}
+# How a room's intro is recognised on a later run. Nothing else Grinder posts into a room starts
+# with this, which is what lets the intro be found without needing a pin.
+ROOM_TITLE_PREFIX = "🔊"
 
 
-async def _post_once(channel, report: Report, label: str, embed: discord.Embed,
-                     files=None, pin: bool = False) -> None:
-    """Post into a channel only if nothing is there yet, so re-running /setup never spams it."""
+def room_embed(room_name: str, links: Links | None = None) -> discord.Embed:
+    """The intro pinned in a listening room's own text chat.
+
+    Voice channels carry a text chat, so there is no reason for one to be blank - and both rooms
+    were, which is the least welcoming thing a room can be. Named after the room it sits in, so two
+    rooms do not read as a copy-paste."""
+    return discord.Embed(
+        title=f"🔊  {room_name}",
+        description=(
+            "A listening room.\n\n"
+            "Sit in here and grind. Whatever you make plays out loud to everyone in the room, at "
+            "the same second.\n\n"
+            "Better than finding out on your own."),
+        color=brand.PRIMARY)
+
+
+def channel_copy(links: Links | None = None) -> dict[str, tuple[str, str]]:
+    """The pinned "what is this room for" message for each text channel.
+
+    Keyed by the PLANNED name (the role a channel plays), resolved to whatever it is called on this
+    server by `_copy_target`. Plain ASCII punctuation throughout: no em dashes, no en dashes
+    (founder rule)."""
+    links = links or Links()
+    grind = link(links.grind, "the grind channel")
+    return {
+        # Short on purpose. The five numbered rules that used to live here were mostly not rules,
+        # and burying "no slurs, no minors" as item three among jokes reads as though it is one.
+        "rules": ("the rules", (
+            "Don't be a dick. No slurs, no harassment, nothing involving minors, and that last "
+            "one is an instant ban.\n\n"
+            "Everything else is fair game. Grind whatever you want, however cursed it comes out."
+            "\n\n"
+            # Censored, the founder's own call (2026-08-11). Leave it that way.
+            "F**k around and find out.")),
+        "announcements": ("what's new lands here.", (
+            "New songs, new features, things we fixed, things we broke.\n\n"
+            "Turn notifications on for this one if you want to know when something is happening "
+            "in the rooms.")),
+        GRIND_CHANNEL: ("this is where it happens.", (
+            "Type `/grind` right here.\n\n"
+            "Everyone grinds in the open, on purpose. You see what other people are throwing "
+            "together, which is the fastest way to learn what works.\n\n"
+            "React 🔥 💀 😐 to theirs. Steal their ideas, that is allowed.\n\n"
+            "Grinding while you sit in a voice room plays it out loud to everyone in there.")),
+        SHOWCASE_CHANNEL: ("the ones worth keeping.", (
+            f"Hit 📌 on any grind in {grind} and it lands here.\n\n"
+            "The good stuff, and the legendary disasters. Both count.\n\n"
+            "Scroll it when you need ideas.")),
+        "general": ("no agenda here.", (
+            "Talk about music, talk about nothing, drop a track you cannot stop playing.\n\n"
+            "New? Say hi. Someone will say it back.")),
+        "requests": ("tell us what you want.", (
+            "🐛  **broken** - something did not work. Say what you did.\n"
+            "🎵  **missing** - a song or artist you want in the library.\n"
+            "💡  **wild** - any feature at all. Ask for anything.\n\n"
+            "We read all of it, and we build a lot of it.")),
+    }
+
+
+def _copy_target(guild: discord.Guild, planned_name: str, links: Links):
+    """The live channel that plays a planned channel's role."""
+    if planned_name == GRIND_CHANNEL:
+        return links.grind
+    if planned_name == SHOWCASE_CHANNEL:
+        return links.showcase
+    return _by_name(guild.text_channels, planned_name)
+
+
+# --------------------------------------------------------------------------------------
+# Posting the copy - and REFRESHING it, which is the part that was missing.
+#
+# The old rule was "post only into an empty channel", so re-running /setup could never spam. True,
+# but it also meant the copy in this file could never reach a server that had been set up once:
+# on 2026-08-11 the live #read-this-first was still advertising /mix, /set and /songs (all deleted)
+# and pointing at two channels that no longer existed, through two rewrites of this file.
+#
+# So: find Grinder's own intro post and EDIT it. Editing rather than delete-and-repost keeps the
+# message's place in the channel and any reactions on it, and it is the only operation that cannot
+# lose somebody else's words - Discord will not let a bot edit a message it did not write.
+# --------------------------------------------------------------------------------------
+def _copy_digest(embeds) -> tuple:
+    """Just the words WE author. Deliberately ignores colour, image and url: Discord hands those
+    back enriched (proxy urls, a type tag), so comparing them would report a difference on every
+    run and edit a message that already says the right thing."""
+    return tuple(
+        (e.title or "", e.description or "",
+         (e.footer.text or "") if e.footer else "",
+         tuple((f.name or "", f.value or "") for f in e.fields))
+        for e in embeds)
+
+
+# How far back to look for an unpinned intro. Generous enough to survive a few early messages,
+# small enough that it is one page from Discord.
+_INTRO_SCAN = 20
+
+
+async def _find_intro(channel, guild: discord.Guild, *, trust_oldest: bool,
+                      title_prefix: str | None = None):
+    """Grinder's existing intro post in this channel, if it has one.
+
+    Three ways of recognising it. Which apply depends on what else lives in the channel, and NONE
+    of them may depend on a permission the bot might not have:
+
+    * PINNED and written by Grinder. The obvious signal, but NOT a sufficient one on its own:
+      pinning needs Manage Messages, which Grinder does not have on the live server, so almost
+      every intro there is unpinned. Relying on this alone posted a second intro into both
+      listening rooms on every run.
+    * A distinctive TITLE, for the rooms. A room intro is titled "🔊  <room>" and nothing else
+      Grinder posts starts with that, so it is recognisable without a pin and without risking a
+      grind card.
+    * The channel's OLDEST message, if Grinder wrote it. Only safe where nothing else posts, so it
+      is off for the grind channel and the rooms - their oldest bot message is usually somebody's
+      grind card, and adopting one would overwrite a person's grind with room copy.
+    """
+    me = getattr(getattr(guild, "me", None), "id", None)
+    if me is None:
+        return None
+
+    def mine(m) -> bool:
+        return getattr(m.author, "id", None) == me and bool(getattr(m, "embeds", None))
+
     try:
-        async for _ in channel.history(limit=1):
-            report.already(f"{label} (#{channel.name} isn't empty)")
-            return
-    except Exception as e:  # noqa: BLE001 - can't read history => don't risk double-posting
+        async for m in channel.pins():
+            if mine(m):
+                return m
+    except Exception:  # noqa: BLE001 - no permission to read pins is not a reason to give up
+        pass
+
+    if not trust_oldest and not title_prefix:
+        return None
+    try:
+        # The oldest few, not strictly the first: somebody can have said something in a channel
+        # before Grinder introduced itself, and taking only message #1 would then miss the intro
+        # and post a second one beside it.
+        async for m in channel.history(limit=_INTRO_SCAN, oldest_first=True):
+            if not mine(m):
+                continue
+            if trust_oldest:
+                return m
+            if (m.embeds[0].title or "").startswith(title_prefix):
+                return m
+    except Exception:  # noqa: BLE001 - can't read history => don't risk double-posting
+        return None
+    return None
+
+
+async def _post_or_refresh(channel, guild: discord.Guild, report: Report, label: str,
+                           embeds: list[discord.Embed], *, files=None,
+                           trust_oldest: bool = True, title_prefix: str | None = None) -> None:
+    try:
+        existing = await _find_intro(channel, guild, trust_oldest=trust_oldest,
+                                     title_prefix=title_prefix)
+    except Exception as e:  # noqa: BLE001
         report.error(label, e)
         return
+
+    if existing is not None:
+        if _copy_digest(getattr(existing, "embeds", [])) == _copy_digest(embeds):
+            report.already(f"{label} (already current)")
+            return
+        try:
+            kwargs = {"embeds": list(embeds)}
+            if files is not None:
+                kwargs["attachments"] = files      # swaps the picture out with the words
+            await existing.edit(**kwargs)
+            report.ok(f"{label} (updated)")
+        except Exception as e:  # noqa: BLE001
+            report.error(label, e)
+        return
+
     try:
-        msg = await channel.send(embed=embed, files=files or [])
-        if pin:
-            try:
-                await msg.pin()
-            except discord.HTTPException:
-                pass          # pinning is a nicety; the post is useful either way
+        msg = await channel.send(embeds=list(embeds), files=files or [])
+        try:
+            await msg.pin()
+        except discord.HTTPException:
+            pass          # pinning is a nicety; the post is useful either way
         report.ok(label)
     except Exception as e:  # noqa: BLE001
         report.error(label, e)
 
 
-async def post_welcome(guild: discord.Guild, report: Report) -> None:
-    """Post (once) into the welcome channel. Skipped if it already has messages, so re-running
-    /setup never spams it."""
+async def post_welcome(guild: discord.Guild, report: Report,
+                       links: Links | None = None) -> None:
+    """Write (or rewrite) the welcome post."""
     channel = _by_name(guild.text_channels, WELCOME_CHANNEL)
     if channel is None:
         report.error("welcome post", RuntimeError(f"#{WELCOME_CHANNEL} doesn't exist"))
         return
-    try:
-        async for _ in channel.history(limit=1):
-            report.already(f"welcome post (#{WELCOME_CHANNEL} isn't empty)")
-            return
-    except Exception as e:  # noqa: BLE001
-        report.error("welcome post", e)
-        return
-    logo = brand.image_bytes(brand.LOGO)
-    files = [discord.File(brand.LOGO, filename="logo.png")] if logo else []
-    try:
-        msg = await channel.send(embeds=welcome_embeds(guild), files=files)
-        try:
-            await msg.pin()
-        except discord.HTTPException:
-            pass
-        report.ok(f"welcome post in #{WELCOME_CHANNEL}")
-    except Exception as e:  # noqa: BLE001
-        report.error("welcome post", e)
+    files = None
+    if brand.image_bytes(brand.REMIX_BANNER) is not None:
+        files = [discord.File(brand.REMIX_BANNER, filename=WELCOME_IMAGE_NAME)]
+    await _post_or_refresh(channel, guild, report, f"welcome post in #{channel.name}",
+                           welcome_embeds(guild, links), files=files)
 
 
-async def post_channel_copy(guild: discord.Guild, report: Report) -> None:
-    """Pin the "what is this room for" message in each channel that has one."""
-    for name, (title, body) in CHANNEL_COPY.items():
-        channel = _by_name(guild.text_channels, name)
+async def post_channel_copy(guild: discord.Guild, report: Report,
+                            links: Links | None = None) -> None:
+    """Pin the "what is this room for" message in every room, voice included."""
+    links = links if links is not None else resolve_links(guild)
+    # Where people's own grinds land. Their oldest bot message is a grind card, not an intro.
+    grind_surface = {getattr(c, "id", None)
+                     for c in ([links.grind] if links.grind is not None else []) + list(links.rooms)}
+
+    for name, (title, body) in channel_copy(links).items():
+        channel = _copy_target(guild, name, links)
         if channel is None:
             continue
         embed = discord.Embed(title=title, description=body, color=brand.PRIMARY)
-        await _post_once(channel, report, f"pinned post in #{name}", embed, pin=True)
+        await _post_or_refresh(channel, guild, report, f"pinned post in #{channel.name}", [embed],
+                               trust_oldest=getattr(channel, "id", None) not in grind_surface)
+
+    for room in links.rooms:
+        await _post_or_refresh(room, guild, report, f"pinned post in 🔊 {room.name}",
+                               [room_embed(room.name, links)], trust_oldest=False,
+                               title_prefix=ROOM_TITLE_PREFIX)
 
 
-async def run(guild: discord.Guild, *, refresh_branding: bool = False) -> Report:
+def topic_for(planned_name: str) -> str:
+    """The one-line description the plan wants under a channel's name."""
+    for cat in STRUCTURE:
+        for ch in cat.channels:
+            if ch.name == planned_name:
+                return ch.topic
+    return ""
+
+
+async def sync_topics(guild: discord.Guild, report: Report,
+                      links: Links | None = None) -> None:
+    """Give a channel the one-line description the plan wants - but ONLY if it has none.
+
+    The topic sits directly under the channel name, so it is read before the pinned post is, and
+    #rules had none at all.
+
+    It does NOT overwrite a description that is already there, even one that disagrees with the
+    plan. Most of the live ones were written by the founder rather than by /setup (they are in
+    their own voice, not the plan's), and quietly replacing somebody's words with ours is the same
+    presumption as renaming their server. Where they differ, it says so and leaves the choice
+    where it belongs."""
+    links = links if links is not None else resolve_links(guild)
+    for cat in STRUCTURE:
+        for spec in cat.channels:
+            if spec.voice or not spec.topic:
+                continue          # voice channels have no topic field
+            channel = _copy_target(guild, spec.name, links)
+            if channel is None:
+                continue
+            current = getattr(channel, "topic", None)
+            if current == spec.topic:
+                continue
+            if current:
+                report.already(f"description of #{channel.name} kept as you wrote it "
+                               f"(the plan would say: {spec.topic!r})")
+                continue
+            try:
+                await channel.edit(topic=spec.topic, reason="Grinder - a room with no description")
+                report.ok(f"description of #{channel.name}")
+            except Exception as e:  # noqa: BLE001
+                report.error(f"description of #{channel.name}", e)
+
+
+async def refresh_copy(guild: discord.Guild, ids: dict | None = None) -> Report:
+    """Rewrite the words in every room and NOTHING else.
+
+    Separate from `run` on purpose. `/setup` also CREATES the channels the plan describes, which on
+    a server whose rooms have been renamed by hand would add a second set beside them. Refreshing
+    the copy has none of that risk: it only ever edits Grinder's own posts, or writes into a room
+    that has no intro at all."""
+    report = Report()
+    links = resolve_links(guild, ids)
+    await sync_topics(guild, report, links)
+    await post_welcome(guild, report, links)
+    await post_channel_copy(guild, report, links)
+    return report
+
+
+async def run(guild: discord.Guild, *, refresh_branding: bool = False,
+              ids: dict | None = None) -> Report:
     """Build the whole community. Order matters: channels before the welcome post (it needs
     #welcome), and the icon first so the founder sees something change immediately.
 
     `refresh_branding` re-applies the icon (and banner) over existing art — the way to push updated
-    artwork onto a server that is already branded."""
+    artwork onto a server that is already branded. `ids` are the bot's configured channel ids, which
+    is how the copy finds rooms the founder has renamed."""
     report = Report()
     await apply_icon(guild, report, force=refresh_branding)
     await apply_banner(guild, report)
@@ -583,8 +800,11 @@ async def run(guild: discord.Guild, *, refresh_branding: bool = False) -> Report
     await delete_retired(guild, report)
     await delete_empty_categories(guild, report)
     await upload_emojis(guild, report)
-    await post_welcome(guild, report)
-    await post_channel_copy(guild, report)
+    # Resolved AFTER the channels exist, or the copy would link to nothing on a first run.
+    links = resolve_links(guild, ids)
+    await sync_topics(guild, report, links)
+    await post_welcome(guild, report, links)
+    await post_channel_copy(guild, report, links)
     report.extra = extra_channels(guild)
     report.channel_ids = channel_ids(guild)
     return report

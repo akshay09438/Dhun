@@ -211,10 +211,11 @@ def help_embed() -> discord.Embed:
     e.set_thumbnail(url="attachment://logo.png")
     e.add_field(
         name="⚙️  /grind",
-        value=("Type it on its own and you get a picker: choose a beat, choose a vocal, and hit "
+        # No option form here on purpose: /grind takes no arguments. It used to, and this line
+        # outlived the change, so /help was teaching a shortcut that silently does nothing.
+        value=("Type it and a picker opens: choose a beat, choose a vocal, and hit "
                "**➕ Add another** to stack up to 5 pairs. Then **Grind it** and the whole lot "
-               "comes back as one continuous set.\n"
-               "In a hurry? `/grind beat: ... vocal: ...` skips the picker."),
+               "comes back as one continuous set."),
         inline=False)
     e.add_field(
         name="🔁  Again",

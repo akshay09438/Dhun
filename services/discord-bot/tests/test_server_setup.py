@@ -12,6 +12,7 @@ import discord
 
 import brand
 import server_setup
+import ui
 
 
 def run_async(fn):
@@ -26,9 +27,13 @@ def run_async(fn):
 # --- fakes -----------------------------------------------------------------------------
 
 class FakeRole:
+    _next_id = [500]
+
     def __init__(self, name, guild=None):
         self.name = name
         self.guild = guild
+        FakeRole._next_id[0] += 1
+        self.id = FakeRole._next_id[0]
 
     async def delete(self, reason=None):
         if self.guild is not None:
@@ -38,6 +43,9 @@ class FakeRole:
 
 class FakeChannel:
     _next_id = [1000]
+    # Set False on a channel to model a server where the bot lacks Manage Messages, which is the
+    # live situation and is why nearly every intro on the real server is unpinned.
+    pin_allowed = True
 
     def __init__(self, name, *, voice=False, topic=None, messages=(), members=()):
         self.name = name
@@ -54,9 +62,8 @@ class FakeChannel:
         FakeChannel._next_id[0] += 1
         self.id = FakeChannel._next_id[0]
 
-    def history(self, limit=None):
-        msgs = self._messages[:limit] if limit else self._messages
-
+    @staticmethod
+    def _aiter(msgs):
         class _Iter:
             def __aiter__(self):
                 async def gen():
@@ -65,6 +72,17 @@ class FakeChannel:
                 return gen()
 
         return _Iter()
+
+    def history(self, limit=None, oldest_first=False):
+        # discord.py hands back NEWEST first unless asked otherwise. The fake used to always give
+        # oldest-first, which would have hidden a refresh that adopted the wrong message.
+        msgs = list(self._messages) if oldest_first else list(reversed(self._messages))
+        return self._aiter(msgs[:limit] if limit else msgs)
+
+    def pins(self):
+        # discord.py 2.7 made this an async ITERATOR; awaiting it is deprecated. Refreshing copy in
+        # place depends on finding the pinned intro, so the fake mirrors the current shape.
+        return self._aiter([m for m in self._messages if m.pinned])
 
     def __post_init__(self):
         pass
@@ -77,6 +95,10 @@ class FakeChannel:
         # rename "succeed" while the channel kept its old name.
         if "name" in kwargs:
             self.name = kwargs["name"]
+        # Same trap for the topic: recording the call without applying it would let a stale
+        # description "get fixed" in the test and stay wrong on the real server.
+        if "topic" in kwargs:
+            self.topic = kwargs["topic"]
 
     async def set_permissions(self, target, **perms):
         self.perms[getattr(target, "name", str(target))] = perms
@@ -86,6 +108,9 @@ class FakeChannel:
         # Sending genuinely leaves a message behind, so history() must see it - without this the
         # fake would let the "is it empty?" guard pass twice and hide a real double-post.
         msg = FakeMessage(kwargs)
+        msg.embeds = list(kwargs.get("embeds") or ([kwargs["embed"]] if kwargs.get("embed") else []))
+        msg.author.id = getattr(getattr(self.guild, "me", None), "id", 1)
+        msg._pin_allowed = self.pin_allowed
         self._messages.append(msg)
         return msg
 
@@ -106,16 +131,38 @@ class FakeMessage:
         self.pinned = False
         FakeMessage._next_id[0] += 1
         self.id = FakeMessage._next_id[0]
-        self.author = type("A", (), {"bot": bot_author, "display_name": "someone"})()
+        # `id` matters as much as `bot`: refreshing copy in place is only safe because Grinder can
+        # tell ITS OWN post from another bot's, and a fake with no id let that check pass for free.
+        self.author = type("A", (), {"bot": bot_author, "display_name": "someone",
+                                     "id": 1 if bot_author else 99})()
+        self.embeds = []
+        self.attachments = []
+        self.edited = False
 
     async def pin(self, reason=None):
+        if not getattr(self, "_pin_allowed", True):
+            raise discord.HTTPException(_Resp(), "Missing Permissions")
         self.pinned = True
+
+    async def edit(self, **kwargs):
+        # discord.py replaces the embeds outright, so a refresh that forgets one drops it.
+        self.edited = True
+        if "embeds" in kwargs:
+            self.embeds = list(kwargs["embeds"] or [])
+        elif "embed" in kwargs:
+            self.embeds = [kwargs["embed"]] if kwargs["embed"] else []
+        if "attachments" in kwargs:
+            self.attachments = list(kwargs["attachments"] or [])
 
 
 class FakeCategory:
+    _next_id = [9000]
+
     def __init__(self, name, guild=None):
         self.name = name
         self.guild = guild
+        FakeCategory._next_id[0] += 1
+        self.id = FakeCategory._next_id[0]
 
     @property
     def channels(self):
@@ -149,6 +196,7 @@ class FakeGuild:
         self.emojis = list(emojis)
         self.default_role = FakeRole("@everyone")
         self.me = FakeRole("Grinder")          # the bot's own member, for permission overwrites
+        self.me.id = 1                          # matches FakeMessage's bot author id
         self.edits = []
         self.deleted_channels = []
         self.deleted_roles = []
@@ -176,6 +224,14 @@ class FakeGuild:
     @property
     def voice_channels(self):
         return [c for c in self._channels if c.voice and not c.deleted]
+
+    def get_channel(self, cid):
+        """Resolving a CONFIGURED id is how the copy finds the founder's renamed rooms, so the
+        fake needs the same lookup discord.py offers."""
+        for c in self._channels + self.categories:
+            if getattr(c, "id", None) == cid and not getattr(c, "deleted", False):
+                return c
+        return None
 
     async def edit(self, **kwargs):
         self._maybe_fail("edit")
@@ -344,12 +400,42 @@ async def test_an_icon_the_founder_already_chose_is_not_overwritten():
 
 
 @run_async
-async def test_the_welcome_post_is_not_repeated_into_a_used_channel():
-    g = FakeGuild(channels=[FakeChannel("read-this-first", messages=["someone already posted"])])
-    report = await server_setup.run(g)
-    welcome = next(c for c in g.channels if c.name == "read-this-first")
-    assert welcome.sent == []
-    assert any("welcome post" in s for s in report.skipped)
+async def test_the_welcome_post_is_REFRESHED_not_repeated():
+    """This used to assert "post nothing at all if the channel has anything in it". That rule is
+    what left the live #read-this-first advertising three deleted commands through two rewrites of
+    this file, so the guard is now the thing actually worth guarding: Grinder's own welcome gets
+    the NEW words, and there is still only one of it."""
+    ch = FakeChannel("read-this-first")
+    g = FakeGuild(channels=[ch])
+    await server_setup.run(g)
+    assert len(ch.sent) == 1
+
+    # A rewrite of the copy, exactly as a real session would produce.
+    original = server_setup.welcome_embeds
+    try:
+        server_setup.welcome_embeds = lambda guild, links=None: [
+            discord.Embed(title="you're in.", description="completely new words")]
+        await server_setup.run(g)
+    finally:
+        server_setup.welcome_embeds = original
+
+    assert len(ch.sent) == 1, "the new copy was posted beside the old one instead of replacing it"
+    assert ch._messages[0].embeds[0].description == "completely new words"
+
+
+@run_async
+async def test_a_stranger_posting_first_does_not_stop_grinder_introducing_itself():
+    """Someone talking in the welcome channel before setup ran must not leave the server with no
+    welcome at all - and their message must not be touched."""
+    theirs = FakeMessage(bot_author=False)
+    theirs.embeds = [discord.Embed(title="hello?")]
+    ch = FakeChannel("read-this-first", messages=[theirs])
+    g = FakeGuild(channels=[ch])
+
+    await server_setup.run(g)
+
+    assert len(ch.sent) == 1, "no welcome post was written"
+    assert not theirs.edited, "somebody else's message was rewritten"
 
 
 # --- the banner, which Discord gates behind boosts --------------------------------------
@@ -425,14 +511,26 @@ def test_report_embed_says_how_many_it_left_out_rather_than_silently_truncating(
 
 
 def test_welcome_embeds_tell_a_first_timer_what_to_do():
+    """The list used to include the literal strings "#the-grinder" and "#fresh-grinds". Those are
+    the hardcoded names that went stale the moment the founder renamed a room, so the requirement
+    is now the SAME promise made durably: name the command, and LINK the rooms."""
     g = FakeGuild()
+    grind = FakeChannel("get-shit-done")          # deliberately not the planned name
+    show = FakeChannel("best-mixes")
+    g._channels += [grind, show]
+    for c in (grind, show):
+        c.guild = g
+    links = server_setup.resolve_links(g, {"grind": grind.id, "showcase": show.id})
+
     text = " ".join(
         (e.title or "") + (e.description or "") + " ".join(f.name + f.value for f in e.fields)
-        for e in server_setup.welcome_embeds(g)
+        for e in server_setup.welcome_embeds(g, links)
     )
-    for expected in ("/grind", "The Booth", "#the-grinder", "#fresh-grinds",
-                     "Add another", "Grind it"):
-        assert expected in text, f"the welcome post never mentions {expected}"
+    assert "/grind" in text, "the welcome post never names the one command that matters"
+    assert f"<#{grind.id}>" in text, "it never points at the channel to grind in"
+    assert f"<#{show.id}>" in text, "it never points at where the good ones go"
+    for reaction in ui.REACTIONS:
+        assert reaction in text, f"the welcome post never mentions the {reaction} reaction"
 
 
 # --- command sync: /setup has to EXIST in a server you just made -------------------------
