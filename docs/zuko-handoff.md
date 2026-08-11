@@ -46,13 +46,16 @@ Raises the auto-clean floor **2.0 → 4.0 GB** (the old floor sat _inside_ the z
 
 Run at session close, on `zuko/goodnight-2026-08-12`. Real output:
 
-| Check                        | Command                                                                | Result                                                   |
-| ---------------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------- |
-| Discord bot (ARM venv)       | `services/discord-bot/.venv/Scripts/python.exe -m pytest -q`           | **192 passed** _(171 at session start)_                  |
-| Discord bot (new Intel venv) | `services/discord-bot/.venv-x64/Scripts/python.exe -m pytest -q`       | **192 passed**                                           |
-| Backend, mix + set routes    | `pytest services/api/tests/test_mix_route.py test_set_route.py -q`     | 34 passed                                                |
-| Backend, new modules         | `pytest .../test_renderq.py test_failure.py test_events_rollups.py -q` | 14 + 13 + 24 passed                                      |
-| Backend, full                | `services/api/.venv/Scripts/python.exe -m pytest services/api -q`      | **see the session's final line — re-run before merging** |
+| Check                        | Command                                                                | Result                                          |
+| ---------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------- |
+| Discord bot (ARM venv)       | `services/discord-bot/.venv/Scripts/python.exe -m pytest -q`           | **192 passed** _(171 at session start)_         |
+| Discord bot (new Intel venv) | `services/discord-bot/.venv-x64/Scripts/python.exe -m pytest -q`       | **192 passed**                                  |
+| Backend, mix + set routes    | `pytest services/api/tests/test_mix_route.py test_set_route.py -q`     | 34 passed                                       |
+| Backend, new modules         | `pytest .../test_renderq.py test_failure.py test_events_rollups.py -q` | 14 + 13 + 24 passed                             |
+| Backend, full                | `services/api/.venv/Scripts/python.exe -m pytest services/api -q`      | **754 passed** in 226s _(720 at session start)_ |
+| Web                          | `npm test`                                                             | **78 passed**, 9 files                          |
+| Typecheck                    | `npm run typecheck`                                                    | clean                                           |
+| Lint                         | `npm run lint`                                                         | clean                                           |
 
 **Note (unchanged):** the backend suite must be scoped to `services/api`; from the repo root pytest also collects the Discord bot's tests, which need the bot's own virtualenv and fail at collection. Harness quirk, not a broken suite.
 
