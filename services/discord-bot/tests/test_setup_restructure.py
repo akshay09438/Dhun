@@ -148,3 +148,27 @@ async def test_setup_reports_the_channel_ids_the_bot_needs():
     assert set(report.channel_ids) == {
         "GRINDER_BOOTH_CHANNEL_ID", "GRINDER_MAIN_CHANNEL_ID", "GRINDER_SHOWCASE_CHANNEL_ID"}
     assert all(isinstance(v, int) for v in report.channel_ids.values())
+
+
+# --- the leftover headers ----------------------------------------------------------------
+@run_async
+async def test_an_empty_leftover_category_is_removed():
+    """Moving every channel into the new headers leaves the old ones as empty labels. Three dead
+    headers at the top of the sidebar is the half-finished look this restructure exists to fix."""
+    from test_server_setup import FakeCategory
+    old = FakeCategory("SHOWCASE")
+    g = FakeGuild(categories=[old])
+    await server_setup.run(g)
+    assert "SHOWCASE" in g.deleted_categories
+
+
+@run_async
+async def test_a_category_that_still_holds_a_channel_is_left_completely_alone():
+    from test_server_setup import FakeCategory
+    old = FakeCategory("SHOWCASE")
+    keeper = FakeChannel("off-topic")
+    g = FakeGuild(channels=[keeper], categories=[old])
+    keeper.category = old
+    report = await server_setup.run(g)
+    assert "SHOWCASE" not in g.deleted_categories
+    assert any("SHOWCASE" in s and "kept" in s for s in report.skipped)

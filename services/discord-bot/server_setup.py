@@ -352,6 +352,27 @@ async def delete_retired(guild: discord.Guild, report: Report) -> None:
             report.error(f"delete 🔊 {name}", e)
 
 
+async def delete_empty_categories(guild: discord.Guild, report: Report) -> None:
+    """Remove old category headers that no longer hold anything.
+
+    Moving every channel into the new headers leaves the old ones behind as empty labels. Nothing
+    is lost by deleting a category with no channels in it, and three dead headers at the top of the
+    sidebar is exactly the "half-finished" look this restructure exists to fix. A category that
+    still holds ANY channel is left completely alone."""
+    planned = {cat.name.lower() for cat in STRUCTURE}
+    for cat in list(guild.categories):
+        if cat.name.lower() in planned:
+            continue
+        if getattr(cat, "channels", None):
+            report.already(f"category {cat.name} kept - it still has channels in it")
+            continue
+        try:
+            await cat.delete(reason="Grinder /setup - empty leftover header")
+            report.ok(f"empty category {cat.name} deleted")
+        except Exception as e:  # noqa: BLE001
+            report.error(f"delete category {cat.name}", e)
+
+
 async def delete_retired_roles(guild: discord.Guild, report: Report) -> None:
     for name in RETIRED_ROLES:
         role = _by_name(guild.roles, name)
@@ -561,6 +582,7 @@ async def run(guild: discord.Guild, *, refresh_branding: bool = False) -> Report
     await apply_renames(guild, report)
     await create_channels(guild, report)
     await delete_retired(guild, report)
+    await delete_empty_categories(guild, report)
     await upload_emojis(guild, report)
     await post_welcome(guild, report)
     await post_channel_copy(guild, report)

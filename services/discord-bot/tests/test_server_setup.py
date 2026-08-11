@@ -113,8 +113,21 @@ class FakeMessage:
 
 
 class FakeCategory:
-    def __init__(self, name):
+    def __init__(self, name, guild=None):
         self.name = name
+        self.guild = guild
+
+    @property
+    def channels(self):
+        if self.guild is None:
+            return []
+        return [c for c in self.guild.text_channels + self.guild.voice_channels
+                if c.category is self]
+
+    async def delete(self, reason=None):
+        if self.guild is not None:
+            self.guild.categories.remove(self)
+            self.guild.deleted_categories.append(self.name)
 
 
 class FakeEmoji:
@@ -139,9 +152,12 @@ class FakeGuild:
         self.edits = []
         self.deleted_channels = []
         self.deleted_roles = []
+        self.deleted_categories = []
         self.fail_on = set(fail_on)   # names of operations that should raise
         for c in self._channels:
             c.guild = self
+        for cat in self.categories:
+            cat.guild = self
 
     def _maybe_fail(self, op):
         if op in self.fail_on:
@@ -173,7 +189,7 @@ class FakeGuild:
 
     async def create_category(self, name, **kw):
         self._maybe_fail(f"category:{name}")
-        c = FakeCategory(name)
+        c = FakeCategory(name, guild=self)
         self.categories.append(c)
         return c
 
