@@ -128,6 +128,8 @@ without spending it.
 
 | Check                                  | Result                                                      |
 | -------------------------------------- | ----------------------------------------------------------- |
+| Backend suite, full                    | **754 passed** (was 720)                                    |
+| Web suite / typecheck / lint           | 78 passed / clean / clean                                   |
 | Discord bot suite (ARM venv)           | **192 passed** (was 171)                                    |
 | Discord bot suite (new Intel venv)     | **192 passed**                                              |
 | Backend: mix + set routes              | 34 passed                                                   |
