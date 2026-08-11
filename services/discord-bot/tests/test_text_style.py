@@ -75,6 +75,10 @@ def _all_card_text() -> list[tuple[str, str]]:
 
     for i, e in enumerate(server_setup.welcome_embeds(_G())):
         cards.append((f"welcome_embeds[{i}]", e))
+    # The pinned room copy is read by more people than any card, so it gets the same check.
+    for name, (title, body) in server_setup.channel_copy().items():
+        cards.append((f"channel_copy[{name}]", discord.Embed(title=title, description=body)))
+    cards.append(("room_embed", server_setup.room_embed("The Booth")))
     return [(where, _embed_text(e)) for where, e in cards]
 
 

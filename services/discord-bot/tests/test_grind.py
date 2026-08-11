@@ -229,7 +229,8 @@ def test_no_user_facing_text_promises_stitching_onto_an_existing_grind():
 
     texts = [_flat(ui.help_embed())]
     texts += [_flat(e) for e in server_setup.welcome_embeds(_G())]
-    texts += [body for _, body in server_setup.CHANNEL_COPY.values()]
+    texts += [body for _, body in server_setup.channel_copy().values()]
+    texts.append(_flat(server_setup.room_embed("The Booth")))
     blob = "\n".join(texts).lower()
     for phrase in ("keep going", "stitched onto", "stitch it on", "onto the end"):
         assert phrase not in blob, f"user-facing copy still promises appending: {phrase!r}"

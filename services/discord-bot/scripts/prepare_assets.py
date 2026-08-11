@@ -47,10 +47,10 @@ IMAGES: tuple[tuple[str, str, tuple[int, int]], ...] = (
 # IMAGES because it saves as JPEG: the art is a grainy gradient, which PNG cannot compress (1426 KB
 # vs 102 KB for a visually identical q94 JPEG). Source is the founder's 4x export; 1360x480 is 2x
 # what Discord renders, so it stays sharp on a high-DPI screen.
-PROFILE_BANNER_SRC = "grinder-banner-680x240@4x.png"
-PROFILE_BANNER_OUT = "profile-banner.jpg"
-PROFILE_BANNER_SIZE = (1360, 480)
-PROFILE_BANNER_QUALITY = 94
+REMIX_BANNER_SRC = "grinder-banner-680x240@4x.png"
+REMIX_BANNER_OUT = "remix-banner.jpg"
+REMIX_BANNER_SIZE = (1360, 480)
+REMIX_BANNER_QUALITY = 94
 
 # Custom emojis. Discord's hard cap is 256 KB; 128x128 is the display size.
 EMOJI_SIZE = (128, 128)
@@ -83,20 +83,20 @@ def main(src_dir: str) -> int:
             kb = _save(im, OUT / out_name) / 1024
         print(f"  {out_name:12s} {im.size[0]:4d}x{im.size[1]:<4d} {kb:7.0f} KB")
 
-    p = src / PROFILE_BANNER_SRC
+    p = src / REMIX_BANNER_SRC
     if not p.exists():
-        missing.append(PROFILE_BANNER_SRC)
+        missing.append(REMIX_BANNER_SRC)
     else:
         with Image.open(p) as im:
             # resize(), not thumbnail(): the source is already exactly 680x240's ratio, and
             # thumbnail() only ever shrinks to FIT, which would silently leave a smaller export at
             # its own size rather than at the 2x size the comment above promises.
-            im = im.convert("RGB").resize(PROFILE_BANNER_SIZE, Image.LANCZOS)
-            out = OUT / PROFILE_BANNER_OUT
+            im = im.convert("RGB").resize(REMIX_BANNER_SIZE, Image.LANCZOS)
+            out = OUT / REMIX_BANNER_OUT
             out.parent.mkdir(parents=True, exist_ok=True)
-            im.save(out, "JPEG", quality=PROFILE_BANNER_QUALITY, optimize=True, subsampling=0)
+            im.save(out, "JPEG", quality=REMIX_BANNER_QUALITY, optimize=True, subsampling=0)
         kb = out.stat().st_size / 1024
-        print(f"  {PROFILE_BANNER_OUT:12s} {im.size[0]:4d}x{im.size[1]:<4d} {kb:7.0f} KB")
+        print(f"  {REMIX_BANNER_OUT:12s} {im.size[0]:4d}x{im.size[1]:<4d} {kb:7.0f} KB")
 
     emoji_src = src / "Emojis"
     if emoji_src.is_dir():

@@ -195,18 +195,18 @@ class PromptDJBot(discord.Client):
         NOT the same thing as the SERVER banner (`brand.BANNER`), which needs boost level 2. This
         one is the bot's own profile and has no such gate.
         """
-        data = brand.image_bytes(brand.PROFILE_BANNER)
+        data = brand.image_bytes(brand.REMIX_BANNER)
         if data is None:
-            log.info("brand: no profile banner shipped (%s missing)", brand.PROFILE_BANNER.name)
+            log.info("brand: no profile banner shipped (%s missing)", brand.REMIX_BANNER.name)
             return
-        if user.banner is not None and not brand.art_needs_upload(brand.PROFILE_BANNER):
+        if user.banner is not None and not brand.art_needs_upload(brand.REMIX_BANNER):
             log.info("brand: profile banner already up to date")
             return
         try:
             await user.edit(banner=data)
-            brand.mark_art_applied(brand.PROFILE_BANNER)
+            brand.mark_art_applied(brand.REMIX_BANNER)
             log.info("brand: profile banner uploaded from %s (%s)",
-                     brand.PROFILE_BANNER.name, brand.art_fingerprint(brand.PROFILE_BANNER))
+                     brand.REMIX_BANNER.name, brand.art_fingerprint(brand.REMIX_BANNER))
         except Exception:  # noqa: BLE001
             log.warning("brand: couldn't set the profile banner (continuing)", exc_info=True)
 
@@ -734,6 +734,12 @@ async def help_cmd(interaction: discord.Interaction) -> None:
     await interaction.response.send_message(embed=ui.help_embed(), files=files, ephemeral=True)
 
 
+def configured_channel_ids() -> dict:
+    """The ids the bot already works from, handed to setup so the copy links to the rooms as the
+    founder has named them rather than to the names the plan happens to use."""
+    return {"grind": CFG.grinder_channel_id, "showcase": CFG.fresh_grinds_channel_id}
+
+
 @bot.tree.command(name="setup", description="Set up this server: channels, roles, emojis and branding.")
 @app_commands.describe(
     refresh_branding="Replace the server icon with Grinder's current artwork (default: leave it alone).")
@@ -751,7 +757,8 @@ async def setup_cmd(interaction: discord.Interaction, refresh_branding: bool = F
 
     await interaction.response.defer(thinking=True)
     try:
-        report = await server_setup.run(interaction.guild, refresh_branding=refresh_branding)
+        report = await server_setup.run(interaction.guild, refresh_branding=refresh_branding,
+                                        ids=configured_channel_ids())
     except Exception as e:  # noqa: BLE001 — report the failure rather than a silent timeout
         log.exception("setup failed outright")
         await interaction.followup.send(
