@@ -19,14 +19,13 @@ import json
 import logging
 import re
 import sys
-import threading
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from app import events
+from app import events, failure, renderq
 from app.audio import chroma, pitch
 from app.audio.analysis import analysis_path
 from app.audio.stems import stem_path
@@ -51,7 +50,10 @@ from app.storage import maybe_sweep, path_for
 _REPO = Path(__file__).resolve().parents[4]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
-from workers.render import render_mix  # noqa: E402
+from workers.render import RenderError, render_mix  # noqa: E402
+# RenderError is imported READ-ONLY, purely so a failure can be classified as a quality
+# verdict about this pair rather than an unexplained crash. workers/render.py is a dangerous
+# surface and is NOT modified.
 
 router = APIRouter()
 log = logging.getLogger("promptdj.mix")
@@ -416,7 +418,8 @@ def _render_rule3(plan: MixPlan, mix_id: str, song1_id: str, song2_id: str,
 def _record_mix_event(mix_id: str, song1_id: str, song2_id: str, take: int, rule: int,
                       user_id: str | None, via: str, status: str,
                       anomalies: list, fail_reason: str | None, plan: MixPlan | None,
-                      source: str | None = None, user_name: str | None = None) -> None:
+                      source: str | None = None, user_name: str | None = None,
+                      fail: failure.Failure | None = None) -> None:
     """Record this mix's outcome to the ops event log (the dashboard's memory). NON-FATAL by
     construction: any failure here is logged and swallowed — recording must never break a mix."""
     try:
@@ -428,11 +431,17 @@ def _record_mix_event(mix_id: str, song1_id: str, song2_id: str, take: int, rule
             extra = {"tempo_forced": plan.tempo_forced, "master_bpm": plan.master_bpm,
                      "vocal_stretch": plan.vocal_stretch,
                      "camelot": plan.camelot_fit.model_dump() if plan.camelot_fit else None}
+        if fail is not None:
+            # The engine's own words + how much room the host actually had. Recorded so a
+            # misclassified failure stays visible in the data instead of being baked in.
+            extra["fail_detail"] = fail.detail
+            extra["machine"] = fail.machine
         events.record_mix(
             settings.data_dir, mix_id=mix_id, status=status, user_id=user_id, via=via,
             song1_id=song1_id, song2_id=song2_id,
             song1_name=names.get(song1_id), song2_name=names.get(song2_id),
             rule=rule, take=take, anomalies=anoms, fail_reason=fail_reason, extra=extra,
+            fail_kind=(fail.kind if fail is not None else None),
             source=source, user_name=user_name)
     except Exception:  # noqa: BLE001 — telemetry is best-effort; a mix must never fail on it
         log.exception("failed to record mix event for %s", mix_id)
@@ -440,8 +449,11 @@ def _record_mix_event(mix_id: str, song1_id: str, song2_id: str, take: int, rule
 
 def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, rule: int = 1,
              user_id: str | None = None, via: str = "single",
-             source: str | None = None, user_name: str | None = None) -> None:
+             source: str | None = None, user_name: str | None = None) -> failure.Failure | None:
     """Background worker: plan -> validate -> render (Rule 1/4 or Rule 3) -> validate the audio.
+
+    Returns None on success, or the classified Failure - which the queue reads to decide whether
+    this is worth another go. (It only ever is when the HOST ran out of room.)
 
     `user_id` (the per-browser device tag, or a real Discord account id), `via` ('single' | 'set'),
     `source` ('web' | 'discord') and `user_name` (a display name where the surface has one) are
@@ -449,6 +461,7 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
     anomalies: list = []  # bound up-front so a failure before the scan still records cleanly
     try:
         maybe_sweep()  # free disk (evict old regenerable renders) before this render-heavy job
+        _stage(mix_id, "studying the two songs")
         a1, a2 = _load_analysis(song1_id), _load_analysis(song2_id)
         # Beat-sensor health: every on-beat move trusts Song 1's downbeats, so surface a mis-detected
         # grid instead of silently locking to the wrong beats (founder rule 2026-08-07). Informational
@@ -460,6 +473,7 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
             (log.warning if not _gh["ok"] else log.info)("mix %s beat-grid %s: %s", mix_id, _tag, _gh)
         # `rule` selects the arrangement style ON TOP of the shared BPM+key foundation build_mix_plan does:
         # 1 = dry simple mix, 3 = chop & repeat (rendered below), 4 = echo + reverb (build_mix_plan gates it).
+        _stage(mix_id, "planning the arrangement")
         plan = build_mix_plan(mix_id, a1, a2, prompt, take=take, chain=SHIPPED_CHAIN, rule=rule)
         # Phase 0 (T1.2): log the key-fit on every render — informational only, never gated. Lets us
         # look at the log and find how many "good" pairs were quietly key-clashing.
@@ -473,6 +487,7 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         # or low-confidence key -> shift 0, logged). The K1 referee then re-derives the shifted vocal's
         # chroma independently. Any failure -> a VISIBLE decline, never a silently un-shifted "key-matched"
         # mix (PitchError below; K1 raises ValidationError, handled with the other quality failures).
+        _stage(mix_id, "matching the key")
         orig_s2_voc = stem_path(song2_id, "vocals")
         s2_voc = orig_s2_voc
         shift, why = resolve_key_shift(a1, a2) if key_match_enabled() else (0, "key-match disabled")
@@ -533,10 +548,12 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         if s1_voc.exists():
             stems["vocals"] = s1_voc
 
+        _stage(mix_id, "mixing it down")
         if rule == 3:
             _render_rule3(plan, mix_id, song1_id, song2_id, a1, a2, s1_voc, s2_voc, stems)
         else:
             render_mix(plan, stems, s2_voc, _mix_wav(mix_id))
+        _stage(mix_id, "checking it sounds right")
         validate.assert_render(_mix_wav(mix_id))  # the quality guard runs on EVERY rule's output
 
         # 3.1 (set transitions): stamp the mix's OWN beat grid + length onto the plan before caching it,
@@ -548,6 +565,7 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         # Best-parts highlight is COMMON to every rule (founder 2026-08-06: the same crop + set-transition
         # treatment Rule 1 uses must apply to Rule 3 and Rule 4 too — only the best parts come down, not the
         # full song). Built off the shared plan grid, so it works on any rule's rendered WAV.
+        _stage(mix_id, "trimming to the best part")
         _build_bestparts(plan, mix_id)
         _plan_path(mix_id).write_text(plan.model_dump_json())  # persisting the plan, so 'ready' implies it exists
         # A previously-rendered live bus for this mix_id may hold a DIFFERENT key (it is evictable and
@@ -560,31 +578,95 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         _jobs.pop(mix_id, None)  # readiness now inferred from the stored files
         _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "ok",
                           anomalies, None, plan, source=source, user_name=user_name)
-    except MixDeclined as e:
-        _jobs[mix_id] = ("error", e.reason)
-        _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "failed",
-                          anomalies, e.reason, None, source=source, user_name=user_name)
-    except pitch.PitchError as e:
-        _mix_wav(mix_id).unlink(missing_ok=True)
-        reason = f"Couldn't key-match this pair cleanly, so it wasn't shipped: {e}"
-        _jobs[mix_id] = ("error", reason)
-        _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "failed",
-                          anomalies, reason, None, source=source, user_name=user_name)
-    except validate.ValidationError as e:
-        _mix_wav(mix_id).unlink(missing_ok=True)
-        _bestparts_wav(mix_id).unlink(missing_ok=True)
-        reason = f"The mix didn't pass the quality check: {e}"
-        _jobs[mix_id] = ("error", reason)
-        _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "failed",
-                          anomalies, reason, None, source=source, user_name=user_name)
-    except Exception:  # noqa: BLE001 — never leak a raw trace to the user...
-        log.exception("mix render failed for %s", mix_id)  # ...but do log it, so a systematic bug isn't invisible
+        return None
+    except Exception as exc:  # noqa: BLE001 — nothing leaks raw; every failure is CLASSIFIED below
+        # ONE handler, four verdicts (app/failure.py). The four this replaced all ended in a
+        # sentence, and three of those sentences were indistinguishable in `events.db` — so a
+        # starved machine and a genuinely bad pair counted as the same thing. They no longer do.
+        fail = failure.classify(
+            exc, data_dir=settings.data_dir,
+            declined=MixDeclined,
+            quality=(validate.ValidationError, pitch.PitchError, RenderError))
+        # A half-written render must never be served, cached, or joined into a set. Safe on a
+        # decline too, where nothing was written in the first place.
         _mix_wav(mix_id).unlink(missing_ok=True)
         _bestparts_wav(mix_id).unlink(missing_ok=True)
-        reason = "Couldn't build this mix. Try another pair or regenerate."
-        _jobs[mix_id] = ("error", reason)
+        # Only a genuine BUG earns a stack trace. A referee verdict or a full disk is expected
+        # behaviour, and a traceback for each one just buries the real bugs.
+        if fail.kind == failure.BUG:
+            log.exception("mix %s failed (bug)", mix_id)
+        else:
+            log.warning("mix %s failed (%s): %s [host %s]",
+                        mix_id, fail.kind, fail.detail, fail.machine)
+        # A resource failure stays "processing" and says BUSY, because the queue is about to
+        # put it back in the line. Marking it failed here and then quietly retrying would show
+        # the user an error for a mix that is, in fact, still coming. (If the retries run out,
+        # the queue's on_gave_up hook writes the real error - see _submit_render.)
+        _jobs[mix_id] = (("processing", BUSY_MESSAGE) if fail.is_resources
+                         else ("error", fail.user_message))
         _record_mix_event(mix_id, song1_id, song2_id, take, rule, user_id, via, "failed",
-                          anomalies, reason, None, source=source, user_name=user_name)
+                          anomalies, fail.user_message, None,
+                          source=source, user_name=user_name, fail=fail)
+        return fail
+
+
+# What a person reads while their grind is waiting for room to free up. Deliberately NOT
+# "try another pair" - a full host says nothing whatever about the songs they picked, and
+# that sentence sent people off changing their choice to fix someone else's problem.
+BUSY_MESSAGE = "The grinder is slammed right now - you're in the line."
+
+
+def _queue_key(mix_id: str) -> str:
+    """How the queue identifies this render. Scoped to the OUTPUT DIRECTORY as well as the mix
+    id, because two renders writing to different places are genuinely different jobs even when
+    the recipe is identical. In production `data_dir` never changes, so this is exactly the mix
+    id and the "two people asked for the same mix" dedupe is unaffected."""
+    return f"{settings.data_dir}|{mix_id}"
+
+
+def _submit_render(mix_id: str, req: "MixRequest", take: int, rule: int) -> renderq.Admission:
+    """Hand this render to the bounded queue instead of starting a thread and hoping.
+
+    The queue retries a render that died for lack of room; `gave_up` is how the user finally
+    hears about it if the host simply never has room. Without that hook a mix would sit on
+    "you're in the line" forever, which is a worse lie than the error it replaced."""
+    outcome: dict[str, failure.Failure] = {}
+
+    def run() -> bool:
+        fail = _run_mix(mix_id, req.song1_id, req.song2_id, req.prompt, take, rule, req.user_id,
+                        source=req.source, user_name=req.user_name)
+        if fail is None:
+            return False
+        outcome["fail"] = fail
+        return fail.is_resources
+
+    def gave_up() -> None:
+        fail = outcome.get("fail")
+        _jobs[mix_id] = ("error", fail.user_message if fail is not None
+                         else "The grinder ran out of room. Give it a minute and try again.")
+
+    return renderq.queue.submit(_queue_key(mix_id), run, user_id=req.user_id, on_gave_up=gave_up)
+
+
+def _stage(mix_id: str, text: str) -> None:
+    """Say what is happening RIGHT NOW, so the card has something true to show. Only ever
+    updates a job that is still processing - it must never overwrite a finished verdict."""
+    if _jobs.get(mix_id, (None,))[0] == "processing":
+        _jobs[mix_id] = ("processing", text)
+
+
+def _with_queue_state(mix: Mix) -> Mix:
+    """Attach where this mix is in the line, so the card can say "6th, about 3 minutes"."""
+    stats = renderq.queue.stats()
+    mix.queue_waiting = stats["waiting"]
+    position = renderq.queue.position_of(_queue_key(mix.mix_id))
+    if position is not None:
+        mix.queue_position = position
+        mix.queue_eta_secs = int(round(renderq.queue.eta_secs(position)))
+        mix.stage = f"waiting for room - {position} ahead of you"
+    elif mix.status == "processing":
+        mix.stage = mix.message or "grinding"
+    return mix
 
 
 @router.post("/mix/name")
@@ -623,17 +705,15 @@ def start_mix(req: MixRequest, response: Response) -> Mix:
 
     if _jobs.get(mix_id, (None,))[0] != "processing":
         _jobs[mix_id] = ("processing", None)
-        threading.Thread(
-            target=_run_mix,
-            args=(mix_id, req.song1_id, req.song2_id, req.prompt, take, rule, req.user_id),
-            # keyword-passed so the ops-only attribution can grow without disturbing the
-            # positional render arguments above
-            kwargs={"source": req.source, "user_name": req.user_name},
-            daemon=True,
-        ).start()
+        admission = _submit_render(mix_id, req, take, rule)
+        if not admission.accepted:
+            # The line is genuinely too long. Say so in plain words rather than accepting the
+            # job and letting it rot, and clear the processing flag so a later try can start.
+            _jobs.pop(mix_id, None)
+            raise HTTPException(429, admission.reason or "The grinder is busy. Try again shortly.")
 
     response.status_code = 202
-    return Mix(mix_id=mix_id, status="processing")
+    return _with_queue_state(Mix(mix_id=mix_id, status="processing"))
 
 
 @router.get("/mix/{mix_id}")
@@ -645,7 +725,7 @@ def mix_status(mix_id: str) -> Mix:
     if ready is not None:
         return ready
     status, message = _jobs.get(mix_id, ("idle", None))
-    return Mix(mix_id=mix_id, status=status, message=message)
+    return _with_queue_state(Mix(mix_id=mix_id, status=status, message=message))
 
 
 @router.get("/mix/{mix_id}/audio")

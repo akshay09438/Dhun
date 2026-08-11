@@ -290,6 +290,13 @@ class Mix(BaseModel):
     url: str | None = None
     plan: MixPlan | None = None
     message: str | None = None
+    # WHERE THIS IS IN THE LINE (2026-08-11). All optional and additive, so an older client that
+    # ignores them is unaffected. Before this, a person who pressed the button while the machine
+    # was full stared at a card that did not move for 25-30 seconds and assumed it was broken.
+    stage: str | None = None            # what is happening right now, in plain words
+    queue_position: int | None = None   # 1-based place in the line; absent once it is rendering
+    queue_waiting: int | None = None    # how many are waiting in total
+    queue_eta_secs: int | None = None   # rough wait, for "about 3 minutes". An estimate, never a promise
 
 
 class LiveOp(BaseModel):

@@ -139,9 +139,34 @@ def test_health_reasons_ranks_degradation_codes(tmp_path):
     assert {"code": "tempo_forced", "n": 1} in degradations
 
 
+def test_health_reasons_counts_WHY_things_failed_not_just_that_they_did(tmp_path):
+    """The question the 20.7% failure number could not answer: how much of it was the songs,
+    and how much was a machine with no room left? These are different problems with different
+    fixes, and before 2026-08-11 they were the same row in this table."""
+    _mix(tmp_path, "1", status="failed", fail_kind="quality")
+    _mix(tmp_path, "2", status="failed", fail_kind="resources")
+    _mix(tmp_path, "3", status="failed", fail_kind="resources")
+    _mix(tmp_path, "4", status="ok")
+
+    by_cause = {r["cause"]: r["n"] for r in events.health_reasons(tmp_path)["by_cause"]}
+    assert by_cause == {"resources": 2, "quality": 1}
+
+
+def test_failures_recorded_before_we_knew_why_read_as_unknown_not_as_a_guess(tmp_path):
+    """Every row predating fail_kind is genuinely unattributable. Bucketing those into a real
+    cause would invent history; 'unknown' is the honest answer and keeps the old rows countable."""
+    _mix(tmp_path, "1", status="failed")                       # no fail_kind - a legacy row
+    _mix(tmp_path, "2", status="failed", fail_kind="quality")
+
+    by_cause = {r["cause"]: r["n"] for r in events.health_reasons(tmp_path)["by_cause"]}
+    assert by_cause == {"unknown": 1, "quality": 1}
+
+
 def test_health_reasons_on_a_clean_log_is_empty(tmp_path):
     _mix(tmp_path, "1")
-    assert events.health_reasons(tmp_path) == {"failures": [], "degradations": []}
+    # by_cause joined this rollup on 2026-08-11 (the four failure causes). Still an exact
+    # equality, so a future key cannot be added silently either.
+    assert events.health_reasons(tmp_path) == {"failures": [], "by_cause": [], "degradations": []}
 
 
 # --- ONE PERSON view --------------------------------------------------------------------

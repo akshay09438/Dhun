@@ -89,14 +89,46 @@ def _mention(user: discord.abc.User | None) -> str:
 # --------------------------------------------------------------------------------------
 # State 1 - posted the instant somebody submits, before any rendering happens.
 # --------------------------------------------------------------------------------------
-def submit_embed(*, user: discord.abc.User | None, beat: str, vocals: str) -> discord.Embed:
+def _about_how_long(secs: int | None) -> str:
+    """A wait, in words a person reads rather than a number they have to convert. Deliberately
+    vague, because it IS vague - a false precision like '2m41s' reads as a promise."""
+    if not secs or secs <= 0:
+        return ""
+    if secs < 60:
+        return "under a minute"
+    return f"about {round(secs / 60)} min"
+
+
+def waiting_line(*, stage: str | None = None, position: int | None = None,
+                 eta_secs: int | None = None) -> str:
+    """The one line on the card that MOVES while a grind is being made.
+
+    Why this exists: the card used to say "grinding..." and then not change for 25-30 seconds
+    (longer behind a queue). A first-timer reads a frozen card as a broken bot and gives up -
+    which costs more users than any actual failure does. So it always says something true about
+    right now, and never invents progress it cannot see."""
+    if position:
+        wait = _about_how_long(eta_secs)
+        place = f"⏳  {position} ahead of you in the line"
+        return f"{place}  ·  {wait}" if wait else place
+    if stage:
+        return f"⚙️  {stage}"
+    return "grinding..."
+
+
+def submit_embed(*, user: discord.abc.User | None, beat: str, vocals: str,
+                 stage: str | None = None, position: int | None = None,
+                 eta_secs: int | None = None) -> discord.Embed:
     """Who threw what in. No prediction about how it will turn out - that is the point of the
-    whole product, and the card must not spoil the guess."""
+    whole product, and the card must not spoil the guess.
+
+    The last line is live: it is re-rendered as the grind moves through the line and through the
+    engine's own stages, so the card is never motionless for half a minute."""
     e = discord.Embed(
         description=(f"{_mention(user)} just threw two things in the grinder\n\n"
                      f"🥁  **{beat}**\n"
                      f"🎤  **{vocals}**\n\n"
-                     f"grinding..."),
+                     f"{waiting_line(stage=stage, position=position, eta_secs=eta_secs)}"),
         color=ACCENT)
     _author(e, f"{BOT_NAME}")
     return e
