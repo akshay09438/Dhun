@@ -240,3 +240,47 @@ def _flat(e) -> str:
     for f in e.fields:
         parts += [f.name or "", f.value or ""]
     return "\n".join(parts)
+
+
+# --- the first thirty seconds -------------------------------------------------------------
+# Two things a newcomer hit on 2026-08-11, both the same mistake: the interface described its own
+# mechanics instead of saying what would happen.
+
+def test_grind_takes_no_options_at_all():
+    """Typing /grind offered `beat` and `vocal` as optional fields. A first-timer sees two blanks,
+    does not know what goes in them, and cannot tell that pressing enter is the right move. The
+    command should take nothing: type it, press enter, the picker opens."""
+    import bot as botmod
+
+    cmd = next(c for c in botmod.bot.tree.get_commands() if c.name == "grind")
+    assert list(getattr(cmd, "parameters", [])) == [], \
+        "/grind should have no options; the picker is the whole interface"
+
+
+def test_the_empty_picker_says_what_stacking_actually_produces(monkeypatch):
+    """'nothing stacked yet' and 'Add another' never said WHAT you get. Nobody can guess that
+    several pairs become one continuous back-to-back set - the outcome has to be on the screen."""
+    v = _builder(monkeypatch)
+    text = (v.embed().title or "") + "\n" + (v.embed().description or "")
+    low = text.lower()
+    assert "back to back" in low or "one continuous" in low or "one long" in low, \
+        f"the empty picker never says what a stack produces:\n{text}"
+
+
+def test_controls_that_cannot_do_anything_yet_are_disabled(monkeypatch):
+    """All three buttons looked equally available with nothing picked, so the order of operations
+    had to be guessed. A greyed-out button teaches the sequence without a word of instruction."""
+    v = _builder(monkeypatch)
+    by_label = {i.label: i for i in v.children if hasattr(i, "label")}
+    assert by_label["Add another pair"].disabled is True, "nothing picked yet, so there is nothing to add"
+    assert by_label["Remove the last one"].disabled is True, "nothing stacked to take off"
+    assert by_label["Grind it"].disabled is True, "nothing to grind yet"
+
+
+def test_the_controls_wake_up_as_soon_as_a_pair_is_picked(monkeypatch):
+    v = _builder(monkeypatch)
+    v.sel_beat, v.sel_vocal = "b1", "v1"
+    v.sync_buttons()
+    by_label = {i.label: i for i in v.children if hasattr(i, "label")}
+    assert by_label["Grind it"].disabled is False
+    assert by_label["Add another pair"].disabled is False

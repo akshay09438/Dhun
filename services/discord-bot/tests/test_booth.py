@@ -192,3 +192,49 @@ def test_arrivals_are_announced_at_first_then_only_occasionally(b):
             said.append(b._arrivals)
     assert said[0] == 1
     assert len(said) < 10, "not every arrival should be announced"
+
+
+# --- the zombie voice session -------------------------------------------------------------
+def test_startup_tells_discord_it_is_not_in_a_call():
+    """Observed 2026-08-11: killing the bot while it was connected to voice left the session alive
+    on Discord's side. Every later attempt completed its handshake, found the endpoint, then had
+    the voice websocket die - five retries, every time - because it was colliding with a session
+    whose process was gone. It presents as "voice is broken" and no amount of retrying helps.
+
+    A bot that just logged in is not in a call. Saying so explicitly clears the leftover."""
+    import asyncio
+
+    import bot as botmod
+
+    cleared = []
+
+    class _G:
+        id = 1
+
+        async def change_voice_state(self, *, channel):
+            cleared.append(channel)
+
+    fake = type("S", (), {
+        "guilds": [_G()],
+        "_clear_stale_voice": botmod.PromptDJBot._clear_stale_voice,
+    })()
+    asyncio.run(fake._clear_stale_voice())
+    assert cleared == [None], "startup must declare it is in no voice channel"
+
+
+def test_a_guild_refusing_the_clear_does_not_stop_the_bot_starting():
+    import asyncio
+
+    import bot as botmod
+
+    class _G:
+        id = 1
+
+        async def change_voice_state(self, *, channel):
+            raise RuntimeError("nope")
+
+    fake = type("S", (), {
+        "guilds": [_G()],
+        "_clear_stale_voice": botmod.PromptDJBot._clear_stale_voice,
+    })()
+    asyncio.run(fake._clear_stale_voice())      # must not raise

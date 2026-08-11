@@ -99,6 +99,7 @@ class PromptDJBot(discord.Client):
 
     async def on_ready(self) -> None:
         log.info("logged in as %s (id %s)", self.user, getattr(self.user, "id", "?"))
+        await self._clear_stale_voice()
         await self._apply_brand()
         guilds = list(self.guilds)
         # Say which servers Grinder is in. Silence here used to be ambiguous — "no guilds" and
@@ -131,6 +132,24 @@ class PromptDJBot(discord.Client):
                 log.info("commands synced to guild %s", guild.id)
             except Exception as e:  # noqa: BLE001 — one guild refusing must not affect the others
                 log.warning("couldn't sync commands to guild %s: %s", guild.id, e)
+
+    async def _clear_stale_voice(self) -> None:
+        """Tell Discord we are not in any voice channel, before we try to join one.
+
+        THE BUG THIS FIXES, observed 2026-08-11: kill the bot while it is connected to voice and
+        Discord keeps the old voice session alive server-side. The next run's handshake completes
+        and finds the media endpoint, then the voice websocket dies - five times over, every time,
+        because it is colliding with a session belonging to a process that no longer exists. From
+        the outside it looks exactly like "voice is broken".
+
+        A bot that has just logged in is, by definition, not in a call. Saying so explicitly costs
+        one gateway message and clears any leftover. Safe to run always: if there is nothing stale,
+        it is a no-op."""
+        for guild in self.guilds:
+            try:
+                await guild.change_voice_state(channel=None)
+            except Exception:  # noqa: BLE001 - never let housekeeping stop the bot starting
+                log.debug("could not clear voice state in %s", guild.id, exc_info=True)
 
     async def _apply_brand(self) -> None:
         """Put the Grinder mark on the bot itself, and remember its URL for the cards.
@@ -405,6 +424,10 @@ class GrindBuilderView(discord.ui.View):
         self.vocal_select.callback = self._on_vocal
         self.add_item(self.beat_select)
         self.add_item(self.vocal_select)
+        # Consistent from birth: everything starts greyed out because nothing is picked yet.
+        # Done here rather than at the call site so no future caller can forget it and ship a
+        # picker whose buttons all look available before they can do anything.
+        self.sync_buttons()
 
     @staticmethod
     def _opts(songs, selected_id):
@@ -425,21 +448,56 @@ class GrindBuilderView(discord.ui.View):
             out.append((self.sel_beat, self.sel_vocal))
         return out
 
+    def sync_buttons(self) -> None:
+        """Grey out anything that cannot do its job yet.
+
+        This is the instruction. A newcomer looking at three equally-available buttons has to guess
+        the order of operations; a greyed-out button tells them without a word. Add is dead until a
+        pair is picked, Remove is dead with nothing stacked, and Grind is dead with nothing to grind.
+        """
+        picked = bool(self.sel_beat and self.sel_vocal)
+        room = len(self.pairs) < MAX_PAIRS_PER_GRIND
+        for item in self.children:
+            label = getattr(item, "label", None)
+            if label == "Add another pair":
+                item.disabled = not (picked and room)
+            elif label == "Remove the last one":
+                item.disabled = not self.pairs
+            elif label == "Grind it":
+                item.disabled = not self._staged()
+
     def embed(self) -> discord.Embed:
+        """Say what will HAPPEN, not what the buttons are called.
+
+        The first version described its own mechanics ("nothing stacked yet", "Add another to stack
+        more") and never once said that several pairs come back as a single continuous set. Nobody
+        can guess an outcome, so it goes on the screen, and it changes as the set grows.
+        """
+        staged = self._staged()
         lines = [f"`{i}`  **{_name_of(a)}**  ✕  **{_name_of(b)}**"
                  for i, (a, b) in enumerate(self.pairs, 1)]
-        picking = ""
-        if self.sel_beat or self.sel_vocal:
-            b = f"**{_name_of(self.sel_beat)}**" if self.sel_beat else "_pick a beat_"
-            v = f"**{_name_of(self.sel_vocal)}**" if self.sel_vocal else "_pick a vocal_"
-            picking = f"\n\nnext up: {b}  ✕  {v}"
-        body = ("\n".join(lines) or "_nothing stacked yet_") + picking
-        e = discord.Embed(
-            title="⚙️  What are we grinding?",
-            description=(f"{body}\n\nHit **➕ Add another** to stack more, or **Grind it** when "
-                         f"you are done. Up to {MAX_PAIRS_PER_GRIND}."),
-            color=ui.ACCENT)
-        return e
+        if self.sel_beat and self.sel_vocal:
+            lines.append(f"`{len(self.pairs) + 1}`  **{_name_of(self.sel_beat)}**  ✕  "
+                         f"**{_name_of(self.sel_vocal)}**")
+        elif self.sel_beat or self.sel_vocal:
+            b = f"**{_name_of(self.sel_beat)}**" if self.sel_beat else "_still need a beat_"
+            v = f"**{_name_of(self.sel_vocal)}**" if self.sel_vocal else "_still need a vocal_"
+            lines.append(f"　　{b}  ✕  {v}")
+
+        if not staged:
+            body = ("Pick a **beat** and a **vocal** below. That makes one track.\n\n"
+                    "Want a longer one? Add up to 5 pairs and they play **back to back as one "
+                    "continuous set**.")
+        elif len(staged) == 1:
+            body = ("\n".join(lines) + "\n\n"
+                    "**Grind it** makes just this one.\n"
+                    "**Add another pair** and they play back to back as one continuous set.")
+        else:
+            body = ("\n".join(lines) + "\n\n"
+                    f"These {len(staged)} play **back to back as one continuous set**.  "
+                    f"{len(staged)} of {MAX_PAIRS_PER_GRIND}.")
+
+        return discord.Embed(title="⚙️  What are we grinding?", description=body, color=ui.ACCENT)
 
     async def _guard(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id == self.owner_id:
@@ -453,6 +511,7 @@ class GrindBuilderView(discord.ui.View):
             return
         self.sel_beat = self.beat_select.values[0]
         self._refresh_options()
+        self.sync_buttons()
         await interaction.response.edit_message(embed=self.embed(), view=self)
 
     async def _on_vocal(self, interaction: discord.Interaction) -> None:
@@ -460,9 +519,10 @@ class GrindBuilderView(discord.ui.View):
             return
         self.sel_vocal = self.vocal_select.values[0]
         self._refresh_options()
+        self.sync_buttons()
         await interaction.response.edit_message(embed=self.embed(), view=self)
 
-    @discord.ui.button(label="Add another", emoji="➕",
+    @discord.ui.button(label="Add another pair", emoji="➕",
                        style=discord.ButtonStyle.secondary, row=2)
     async def add_another(self, interaction: discord.Interaction,
                           button: discord.ui.Button) -> None:
@@ -479,9 +539,10 @@ class GrindBuilderView(discord.ui.View):
         self.pairs.append((self.sel_beat, self.sel_vocal))
         self.sel_beat = self.sel_vocal = None
         self._refresh_options()
+        self.sync_buttons()
         await interaction.response.edit_message(embed=self.embed(), view=self)
 
-    @discord.ui.button(label="Take the last one off", emoji="↩️",
+    @discord.ui.button(label="Remove the last one", emoji="↩️",
                        style=discord.ButtonStyle.secondary, row=2)
     async def undo(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._guard(interaction):
@@ -526,20 +587,12 @@ async def _vocal_ac(interaction: discord.Interaction, current: str):
 
 
 @bot.tree.command(name="grind", description="Throw two songs in the grinder and find out.")
-@app_commands.describe(beat="Optional. Leave both blank to open the picker.",
-                       vocal="Optional. Leave both blank to open the picker.")
-@app_commands.autocomplete(beat=_beat_ac, vocal=_vocal_ac)
-async def grind_cmd(interaction: discord.Interaction,
-                    beat: str | None = None, vocal: str | None = None) -> None:
-    """Both ways in. Naming both songs goes straight to grinding, which is the fast path once you
-    know what you want. Typing just `/grind` opens the picker, where the + lets you stack several
-    pairs before anything is built."""
+async def grind_cmd(interaction: discord.Interaction) -> None:
+    """No options at all, on purpose. `/grind` used to offer `beat` and `vocal` as optional fields,
+    and a first-timer reading two blanks cannot tell that leaving them empty is the right move -
+    they look like something you have to fill in. Type it, press enter, the picker opens."""
     if not bot.songs:
         await bot.refresh_catalog()
-    if beat and vocal:
-        await interaction.response.defer(thinking=True)
-        await GrindContext(interaction, [(beat, vocal)]).run(first=True)
-        return
     if not bot.beats or not bot.vocals:
         await interaction.response.send_message(
             "The song library has not loaded. Make sure the engine is running, then try again.",
