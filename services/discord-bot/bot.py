@@ -12,7 +12,9 @@ Setup + run: services/discord-bot/README.md.
 """
 from __future__ import annotations
 
+import json
 import logging
+from datetime import datetime, timezone
 import tempfile
 import uuid
 from pathlib import Path
@@ -23,7 +25,10 @@ from discord import app_commands
 import brand
 import media
 import server_setup
+import showcase
+import store
 import voice_player
+from booth import booth
 from api_client import EngineError, PromptDJClient, Song
 from botconfig import load_config
 import ui
@@ -94,12 +99,15 @@ class PromptDJBot(discord.Client):
 
     async def on_ready(self) -> None:
         log.info("logged in as %s (id %s)", self.user, getattr(self.user, "id", "?"))
+        await self._clear_stale_voice()
         await self._apply_brand()
         guilds = list(self.guilds)
         # Say which servers Grinder is in. Silence here used to be ambiguous — "no guilds" and
         # "already synced" looked identical in the log, which hid whether /setup would appear.
         log.info("in %d server(s): %s", len(guilds),
                  ", ".join(f"{g.name} ({g.id})" for g in guilds) or "none")
+        for g in guilds:
+            booth.check_config(g)     # say so loudly if a configured channel has been deleted
         await self.sync_to_guilds(guilds)
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
@@ -126,6 +134,24 @@ class PromptDJBot(discord.Client):
                 log.info("commands synced to guild %s", guild.id)
             except Exception as e:  # noqa: BLE001 — one guild refusing must not affect the others
                 log.warning("couldn't sync commands to guild %s: %s", guild.id, e)
+
+    async def _clear_stale_voice(self) -> None:
+        """Tell Discord we are not in any voice channel, before we try to join one.
+
+        THE BUG THIS FIXES, observed 2026-08-11: kill the bot while it is connected to voice and
+        Discord keeps the old voice session alive server-side. The next run's handshake completes
+        and finds the media endpoint, then the voice websocket dies - five times over, every time,
+        because it is colliding with a session belonging to a process that no longer exists. From
+        the outside it looks exactly like "voice is broken".
+
+        A bot that has just logged in is, by definition, not in a call. Saying so explicitly costs
+        one gateway message and clears any leftover. Safe to run always: if there is nothing stale,
+        it is a no-op."""
+        for guild in self.guilds:
+            try:
+                await guild.change_voice_state(channel=None)
+            except Exception:  # noqa: BLE001 - never let housekeeping stop the bot starting
+                log.debug("could not clear voice state in %s", guild.id, exc_info=True)
 
     async def _apply_brand(self) -> None:
         """Put the Grinder mark on the bot itself, and remember its URL for the cards.
@@ -188,6 +214,13 @@ class PromptDJBot(discord.Client):
 bot = PromptDJBot()
 
 
+def _now() -> str:
+    """UTC, timezone-aware. The engine learned this lesson the hard way: a naive stamp
+    means a different instant on a cloud box than on this machine, with nothing in the row
+    to tell them apart."""
+    return datetime.now(timezone.utc).isoformat()
+
+
 def _name_of(song_id: str) -> str:
     for s in bot.songs:
         if s.id == song_id:
@@ -200,118 +233,373 @@ def _error_embed(msg: str) -> discord.Embed:
 
 
 # --------------------------------------------------------------------------------------
-# One mix's lifecycle: a "cooking…" message that becomes the finished clip + buttons.
+# A grind's lifecycle: a "grinding..." card that becomes the finished audio + buttons.
+#
+# ONE class covers both shapes. A grind starts as a single pair and GROWS through the ➕ button
+# into a "long grind" of up to five. That is deliberate: nobody opens Discord meaning to build a
+# five-track set - they make one, it goes hard, and THEN they want more. There is no /set command
+# any more, because the button catches that impulse at the moment it appears.
+#
+# NOTHING on a card evaluates the grind. See the rule at the top of ui.py.
 # --------------------------------------------------------------------------------------
-class MixContext:
-    def __init__(self, interaction: discord.Interaction, song1_id: str, song2_id: str,
-                 generation: int = 0) -> None:
+MAX_PAIRS_PER_GRIND = 5            # the core rule, one constant, matches the engine's set cap
+CLIP_SIZE_LIMIT_BYTES = 9_000_000  # Discord's non-Nitro upload limit, with headroom
+
+
+class GrindContext:
+    """Owns one grind card from submit to finished, through however many pairs it grows to."""
+
+    def __init__(self, interaction: discord.Interaction, pairs: list[tuple[str, str]],
+                 *, generation: int = 0) -> None:
         self.interaction = interaction
-        self.song1_id = song1_id
-        self.song2_id = song2_id
+        self.pairs = pairs                       # [(beat_id, vocal_id), ...]
         self.generation = generation
+        self.owner_id = interaction.user.id      # only the owner may append or re-roll
         self.user_id = str(interaction.user.id)
-        # The name the operator would actually recognise in their own server (a nickname if the
-        # member set one, otherwise the account name). Sent for the ops dashboard only.
         self.user_name = getattr(interaction.user, "display_name", None) or interaction.user.name
-        self.name1 = _name_of(song1_id)
-        self.name2 = _name_of(song2_id)
         self.message: discord.Message | None = None
-        self.audio_path: Path | None = None   # the WAV, kept for voice playback
+        self.audio_path: Path | None = None      # the WAV, kept for The Booth
+        self.number: int | None = None
+        self.duration: float = 0.0
 
-    def _cooking_embed(self) -> discord.Embed:
-        return ui.cooking_embed(self.name1, self.name2)
+    # -- naming -------------------------------------------------------------------------
+    def named_pairs(self) -> list[tuple[str, str]]:
+        return [(_name_of(a), _name_of(b)) for a, b in self.pairs]
 
-    async def run(self, *, first: bool) -> None:
-        cooking = self._cooking_embed()
+    def _store_pairs(self) -> list:
+        return [[a, b, _name_of(a), _name_of(b)] for a, b in self.pairs]
+
+    def label(self) -> str:
+        named = self.named_pairs()
+        if len(named) == 1:
+            return f"{named[0][0]} x {named[0][1]}"
+        return f"long grind, {len(named)} tracks"
+
+    # -- the card -----------------------------------------------------------------------
+    def _submit_embed(self) -> discord.Embed:
+        beat, vocals = self.named_pairs()[-1]
+        return ui.submit_embed(user=self.interaction.user, beat=beat, vocals=vocals)
+
+    async def _post_submit_card(self, *, first: bool) -> None:
+        """State 1, posted BEFORE any rendering starts. The grind number is claimed here so the
+        number on the 'grinding...' card is the number the finished grind keeps."""
+        e = self._submit_embed()
         if first:
-            self.message = await self.interaction.followup.send(embed=cooking)
+            self.number = store.new_grind(
+                user_id=self.owner_id, user_name=self.user_name,
+                pairs=self._store_pairs(), created_at=_now(),
+                guild_id=getattr(self.interaction.guild, "id", None),
+                channel_id=getattr(self.interaction.channel, "id", None))
+            self.message = await self.interaction.followup.send(embed=e)
+            store.attach_message(self.number, self.message.id)
         elif self.message is not None:
-            await self.message.edit(embed=cooking, view=None, attachments=[])
+            await self.message.edit(embed=e, view=None, attachments=[])
 
+    # -- rendering ----------------------------------------------------------------------
+    async def _render(self) -> tuple[Path, float] | None:
+        """Ask the engine for the audio. One pair goes through the mix route; two or more go
+        through the set route, which joins them on the beat. Returns (wav, seconds) or None.
+
+        Appending re-runs the JOIN, not the individual mixes - each mix is cached by its own
+        content id, so only the seam work is repeated. That is why ➕ stays quick after the first.
+        """
+        stem = Path(tempfile.gettempdir()) / f"grind_{uuid.uuid4().hex[:10]}"
+        wav = stem.with_suffix(".wav")
         try:
-            mix_id = await bot.api.start_mix(self.song1_id, self.song2_id,
-                                             self.user_id, self.generation,
-                                             user_name=self.user_name)
+            if len(self.pairs) == 1:
+                a, b = self.pairs[0]
+                mix_id = await bot.api.start_mix(a, b, self.user_id, self.generation,
+                                                 user_name=self.user_name)
+                res = await bot.api.wait_for_mix(mix_id)
+                if res.status != "ready":
+                    await self._fail(res.message or "That pair did not come out. Try another.")
+                    return None
+                await bot.api.fetch_audio(mix_id, wav)
+                store.set_pairs(self.number, self._store_pairs(), ref_id=mix_id)
+            else:
+                set_id = await bot.api.start_set(self.pairs, self.user_id, set_index=0,
+                                                 user_name=self.user_name)
+                res = await bot.api.wait_for_set(set_id)
+                if res.status != "ready":
+                    await self._fail(res.message or "That did not come out. Try another pair.")
+                    return None
+                await bot.api.fetch_set_audio(set_id, wav)
+                store.set_pairs(self.number, self._store_pairs(), ref_id=set_id)
         except EngineError as e:
             await self._fail(str(e))
-            return
-
-        async def on_progress(elapsed: float) -> None:
-            if elapsed and int(elapsed) % 10 == 0 and self.message is not None:
-                cooking.set_footer(text=f"still mixing… {int(elapsed)}s")
-                try:
-                    await self.message.edit(embed=cooking)
-                except discord.HTTPException:
-                    pass
-
-        res = await bot.api.wait_for_mix(mix_id, on_progress=on_progress)
-        if res.status != "ready":
-            await self._fail(res.message or "Couldn't build this mix. Try another pair.")
-            return
-
-        # Fetch the finished audio, keep the WAV for voice, post an MP3 clip everyone can play.
-        stem = Path(tempfile.gettempdir()) / f"promptdj_{mix_id[:12]}_{uuid.uuid4().hex[:6]}"
-        wav, mp3 = stem.with_suffix(".wav"), stem.with_suffix(".mp3")
-        try:
-            await bot.api.fetch_audio(mix_id, wav)
-            self.audio_path = wav
-            await media.to_mp3(wav, mp3)
+            return None
         except Exception as e:  # noqa: BLE001
-            log.exception("audio fetch/transcode failed")
-            await self._fail(f"The mix rendered, but sending it failed: {e}")
-            return
+            log.exception("grind render failed")
+            await self._fail(f"Something broke on the way back: {e}")
+            return None
+        return wav, ui.wav_duration(wav)
 
-        name = await bot.api.mix_name(self.name1, self.name2) or f"{self.name1} × {self.name2}"
-        embed = ui.now_playing_embed(
-            name=name, beat=self.name1, vocals=self.name2,
-            total_secs=ui.wav_duration(wav), user=self.interaction.user)
-        clip = discord.File(str(mp3), filename=f"{safe_filename(name)}.mp3")
-        if self.message is not None:
-            await self.message.edit(embed=embed, attachments=[clip], view=MixView(self))
+    async def _attach(self, wav: Path) -> discord.File | None:
+        """Transcode at the best bitrate that still fits Discord's limit, so a long grind always
+        attaches something audible rather than nothing."""
+        mp3 = wav.with_suffix(".mp3")
+        for br in ("160k", "128k", "96k", "64k"):
+            await media.to_mp3(wav, mp3, bitrate=br)
+            if mp3.stat().st_size <= CLIP_SIZE_LIMIT_BYTES:
+                return discord.File(str(mp3), filename=f"grind-{self.number}.mp3")
+        return None
+
+    async def run(self, *, first: bool) -> None:
+        await self._post_submit_card(first=first)
+        rendered = await self._render()
+        if rendered is None:
+            return
+        wav, secs = rendered
+        self.audio_path = wav
+        self.duration = secs
+
+        clip = await self._attach(wav)
+        embed = ui.grind_embed(number=self.number, user=self.interaction.user,
+                               pairs=self.named_pairs(), total_secs=secs)
+        if clip is None:
+            embed.add_field(
+                name="Too long to attach",
+                value="Play it in 🔊 The Booth, or hit ✅ Done and start a fresh one.",
+                inline=False)
+        if self.message is None:
+            return
+        await self.message.edit(embed=embed,
+                                attachments=[clip] if clip else [],
+                                view=GrindView(self))
+        await _seed_reactions(self.message)
+        await booth.on_grind_finished(self)
 
     async def _fail(self, msg: str) -> None:
         if self.message is not None:
-            await self.message.edit(embed=_error_embed(msg), view=None, attachments=[])
+            await self.message.edit(embed=ui.error_embed(msg), view=None, attachments=[])
+
+
+async def _seed_reactions(message: discord.Message) -> None:
+    """Put 🔥 💀 😐 on the card so reacting is one tap rather than a search.
+
+    Reactions rather than buttons on purpose: a Discord view stops responding after its timeout,
+    so buttons would go dead on yesterday's grinds - and yesterday's grinds are exactly the ones
+    a newcomer scrolls. A reaction keeps working forever and survives a bot restart."""
+    for emoji in ui.REACTIONS:
+        try:
+            await message.add_reaction(emoji)
+        except discord.HTTPException:
+            pass          # a missing permission must never break the card itself
 
 
 # --------------------------------------------------------------------------------------
-# The buttons under a finished mix.
+# The buttons under a finished grind.
+#
+# THERE IS NO "ADD ANOTHER PAIR" HERE, deliberately (founder, 2026-08-11). There used to be, and
+# it was a lie: the engine cannot stitch a new pair onto something that already exists. Pressing it
+# rebuilt the entire set from scratch and swapped the audio out - which, if the grind was playing
+# in The Booth at the time, replaced the thing people were listening to.
+#
+# So the model is honest instead: you choose every pair UP FRONT in the picker, the bot stitches
+# them, and what comes back is the finished set. A grind is done when it arrives.
 # --------------------------------------------------------------------------------------
-class MixView(discord.ui.View):
-    def __init__(self, ctx: MixContext) -> None:
+class GrindView(discord.ui.View):
+    def __init__(self, ctx: GrindContext) -> None:
         super().__init__(timeout=1800)
         self.ctx = ctx
-        for item in self.children:                       # disable "Another take" at the cap
-            if getattr(item, "custom_id", None) == "another_take" and ctx.generation + 1 >= MAX_TAKES:
-                item.disabled = True
 
-    @discord.ui.button(label="Regenerate", emoji="🔄",
-                       style=discord.ButtonStyle.primary, custom_id="another_take")
-    async def another(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    async def _owner_only(self, interaction: discord.Interaction) -> bool:
+        """Anyone may react to and pin a grind. Only its owner may re-roll it."""
+        if interaction.user.id == self.ctx.owner_id:
+            return True
+        await interaction.response.send_message(
+            "That is someone else's grind. React to it, pin it, or start your own with `/grind`.",
+            ephemeral=True)
+        return False
+
+    @discord.ui.button(label="Again", emoji="🔁",
+                       style=discord.ButtonStyle.primary, custom_id="again")
+    async def again(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        """Re-roll the same line-up. Every pair stays; what changes is how they are mixed."""
+        if not await self._owner_only(interaction):
+            return
         await interaction.response.defer()
         self.ctx.generation += 1
         await self.ctx.run(first=False)
 
-    @discord.ui.button(label="Play in voice", emoji="🔊",
-                       style=discord.ButtonStyle.secondary, custom_id="play_voice")
-    async def play_voice(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+    @discord.ui.button(label="Pin it", emoji="📌",
+                       style=discord.ButtonStyle.secondary, custom_id="pin_it")
+    async def pin_it(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.defer(ephemeral=True)
-        if self.ctx.audio_path is None:
-            await interaction.followup.send("Give it a second, the mix is still arriving.", ephemeral=True)
-            return
-        msg = await voice_player.play_in_channel(interaction, self.ctx.audio_path)
-        await interaction.followup.send(msg, ephemeral=True)
-
-    @discord.ui.button(label="Leave voice", emoji="⏹️",
-                       style=discord.ButtonStyle.secondary, custom_id="leave_voice")
-    async def leave_voice(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.defer(ephemeral=True)
-        msg = await voice_player.leave(interaction)
-        await interaction.followup.send(msg, ephemeral=True)
+        await interaction.followup.send(await showcase.pin(self.ctx, interaction), ephemeral=True)
 
 
 # --------------------------------------------------------------------------------------
-# The commands.
+# The picker `/grind` opens: beat, vocal, and a + to stack another pair BEFORE building.
+#
+# Why this exists as well as the + on a finished card (founder, 2026-08-11): stacking pairs
+# up front is how you sketch a set on the go, deciding the whole shape before hearing any of
+# it. The + on the finished card catches the other impulse - you heard one, it went hard, now
+# you want more. Both are real; they happen at different moments.
+# --------------------------------------------------------------------------------------
+class GrindBuilderView(discord.ui.View):
+    def __init__(self, user_id: int) -> None:
+        super().__init__(timeout=600)
+        self.owner_id = user_id
+        self.pairs: list[tuple[str, str]] = []
+        self.sel_beat: str | None = None
+        self.sel_vocal: str | None = None
+
+        self.beat_select = discord.ui.Select(placeholder="Pick a beat...", row=0,
+                                             options=self._opts(bot.beats, None))
+        self.beat_select.callback = self._on_beat
+        self.vocal_select = discord.ui.Select(placeholder="Pick a vocal...", row=1,
+                                              options=self._opts(bot.vocals, None))
+        self.vocal_select.callback = self._on_vocal
+        self.add_item(self.beat_select)
+        self.add_item(self.vocal_select)
+        # Consistent from birth: everything starts greyed out because nothing is picked yet.
+        # Done here rather than at the call site so no future caller can forget it and ship a
+        # picker whose buttons all look available before they can do anything.
+        self.sync_buttons()
+
+    @staticmethod
+    def _opts(songs, selected_id):
+        return [discord.SelectOption(label=lbl, value=val, default=dflt)
+                for lbl, val, dflt in select_option_specs(songs, selected_id)]
+
+    def _refresh_options(self) -> None:
+        # NOT _refresh: discord.ui.View owns that name and calls it with the message components.
+        self.beat_select.options = self._opts(bot.beats, self.sel_beat)
+        self.vocal_select.options = self._opts(bot.vocals, self.sel_vocal)
+
+    def _staged(self) -> list[tuple[str, str]]:
+        """Everything that would be built right now, including a pair that is picked but not yet
+        added. Hitting Grind it with a pair sitting in the dropdowns should just work rather than
+        silently dropping it."""
+        out = list(self.pairs)
+        if self.sel_beat and self.sel_vocal:
+            out.append((self.sel_beat, self.sel_vocal))
+        return out
+
+    def sync_buttons(self) -> None:
+        """Grey out anything that cannot do its job yet.
+
+        This is the instruction. A newcomer looking at three equally-available buttons has to guess
+        the order of operations; a greyed-out button tells them without a word. Add is dead until a
+        pair is picked, Remove is dead with nothing stacked, and Grind is dead with nothing to grind.
+        """
+        picked = bool(self.sel_beat and self.sel_vocal)
+        room = len(self.pairs) < MAX_PAIRS_PER_GRIND
+        for item in self.children:
+            label = getattr(item, "label", None)
+            if label == "Add another pair":
+                item.disabled = not (picked and room)
+            elif label == "Remove the last one":
+                item.disabled = not self.pairs
+            elif label == "Grind it":
+                item.disabled = not self._staged()
+
+    def embed(self) -> discord.Embed:
+        """Say what will HAPPEN, not what the buttons are called.
+
+        The first version described its own mechanics ("nothing stacked yet", "Add another to stack
+        more") and never once said that several pairs come back as a single continuous set. Nobody
+        can guess an outcome, so it goes on the screen, and it changes as the set grows.
+        """
+        staged = self._staged()
+        lines = [f"`{i}`  **{_name_of(a)}**  ✕  **{_name_of(b)}**"
+                 for i, (a, b) in enumerate(self.pairs, 1)]
+        if self.sel_beat and self.sel_vocal:
+            lines.append(f"`{len(self.pairs) + 1}`  **{_name_of(self.sel_beat)}**  ✕  "
+                         f"**{_name_of(self.sel_vocal)}**")
+        elif self.sel_beat or self.sel_vocal:
+            b = f"**{_name_of(self.sel_beat)}**" if self.sel_beat else "_still need a beat_"
+            v = f"**{_name_of(self.sel_vocal)}**" if self.sel_vocal else "_still need a vocal_"
+            lines.append(f"　　{b}  ✕  {v}")
+
+        if not staged:
+            body = ("Pick a **beat** and a **vocal** below. That makes one track.\n\n"
+                    "Want a longer one? Add up to 5 pairs and they play **back to back as one "
+                    "continuous set**.")
+        elif len(staged) == 1:
+            body = ("\n".join(lines) + "\n\n"
+                    "**Grind it** makes just this one.\n"
+                    "**Add another pair** and they play back to back as one continuous set.")
+        else:
+            body = ("\n".join(lines) + "\n\n"
+                    f"These {len(staged)} play **back to back as one continuous set**.  "
+                    f"{len(staged)} of {MAX_PAIRS_PER_GRIND}.")
+
+        return discord.Embed(title="⚙️  What are we grinding?", description=body, color=ui.ACCENT)
+
+    async def _guard(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.owner_id:
+            return True
+        await interaction.response.send_message(
+            "That is someone else's. Type `/grind` to start your own.", ephemeral=True)
+        return False
+
+    async def _on_beat(self, interaction: discord.Interaction) -> None:
+        if not await self._guard(interaction):
+            return
+        self.sel_beat = self.beat_select.values[0]
+        self._refresh_options()
+        self.sync_buttons()
+        await interaction.response.edit_message(embed=self.embed(), view=self)
+
+    async def _on_vocal(self, interaction: discord.Interaction) -> None:
+        if not await self._guard(interaction):
+            return
+        self.sel_vocal = self.vocal_select.values[0]
+        self._refresh_options()
+        self.sync_buttons()
+        await interaction.response.edit_message(embed=self.embed(), view=self)
+
+    @discord.ui.button(label="Add another pair", emoji="➕",
+                       style=discord.ButtonStyle.secondary, row=2)
+    async def add_another(self, interaction: discord.Interaction,
+                          button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+        if not (self.sel_beat and self.sel_vocal):
+            await interaction.response.send_message("Pick a beat and a vocal first.",
+                                                    ephemeral=True)
+            return
+        if len(self.pairs) >= MAX_PAIRS_PER_GRIND:
+            await interaction.response.send_message(
+                f"That is the limit, {MAX_PAIRS_PER_GRIND}. Hit **Grind it**.", ephemeral=True)
+            return
+        self.pairs.append((self.sel_beat, self.sel_vocal))
+        self.sel_beat = self.sel_vocal = None
+        self._refresh_options()
+        self.sync_buttons()
+        await interaction.response.edit_message(embed=self.embed(), view=self)
+
+    @discord.ui.button(label="Remove the last one", emoji="↩️",
+                       style=discord.ButtonStyle.secondary, row=2)
+    async def undo(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+        if self.pairs:
+            self.pairs.pop()
+        await interaction.response.edit_message(embed=self.embed(), view=self)
+
+    @discord.ui.button(label="Grind it", emoji="⚙️",
+                       style=discord.ButtonStyle.primary, row=2)
+    async def go(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if not await self._guard(interaction):
+            return
+        pairs = self._staged()
+        if not pairs:
+            await interaction.response.send_message("Pick a beat and a vocal first.",
+                                                    ephemeral=True)
+            return
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(view=self)      # freeze the picker
+        await GrindContext(interaction, pairs[:MAX_PAIRS_PER_GRIND]).run(first=True)
+        self.stop()
+
+
+# --------------------------------------------------------------------------------------
+# The commands. Three, on purpose: nobody explores slash-command parameters, they click buttons.
+# Everything else lives on the card.
 # --------------------------------------------------------------------------------------
 async def _beat_ac(interaction: discord.Interaction, current: str):
     if not bot.songs:                      # self-heal if the engine wasn't ready at startup
@@ -327,16 +615,115 @@ async def _vocal_ac(interaction: discord.Interaction, current: str):
             for s in match_songs(bot.vocals, current)]
 
 
-@bot.tree.command(name="mix", description="Make a mashup: one song's beat, another song's vocals.")
-@app_commands.describe(beat="The song you want the beat from",
-                       vocals="The song you want the singing from")
-@app_commands.autocomplete(beat=_beat_ac, vocals=_vocal_ac)
-async def mix_cmd(interaction: discord.Interaction, beat: str, vocals: str) -> None:
-    await interaction.response.defer(thinking=True)
+def _grinding_allowed_here(interaction: discord.Interaction) -> str | None:
+    """None if `/grind` may run here, otherwise the sentence to send back.
+
+    Grinding is confined to the grind category on purpose (founder, 2026-08-11). The whole point is
+    that generation happens in public, in the same few channels, where people scroll past what
+    everyone else is throwing together. Allowed anywhere, it scatters across the server and nobody
+    sees anyone else's - at which point being in a server buys you nothing over using the app alone.
+
+    Sitting in one of the listening rooms also counts, because Discord treats a voice channel's
+    built-in chat as its own channel and somebody in a room should not have to leave it to grind.
+    """
+    if not CFG.grind_category_id:
+        return None                     # not configured: allow everywhere rather than block everything
+
+    channel = interaction.channel
+    cat_id = getattr(getattr(channel, "category", None), "id", None) \
+        or getattr(channel, "category_id", None)
+    if cat_id == CFG.grind_category_id:
+        return None
+    if booth.room_of(interaction.user) is not None:
+        return None                     # they are in a listening room; let them grind from there
+
+    guild = interaction.guild
+    allowed = []
+    if guild is not None:
+        allowed = [f"<#{c.id}>" for c in guild.text_channels
+                   if (getattr(getattr(c, "category", None), "id", None)
+                       or getattr(c, "category_id", None)) == CFG.grind_category_id]
+    where = " or ".join(allowed) if allowed else "the grind channels"
+    return (f"Not here. Everyone grinds in {where}, out in the open, so you can see what other "
+            f"people are throwing together.\n"
+            f"You can also grind from inside a listening room while the music is on.")
+
+
+@bot.tree.command(name="grind", description="Throw two songs in the grinder and find out.")
+async def grind_cmd(interaction: discord.Interaction) -> None:
+    """No options at all, on purpose. `/grind` used to offer `beat` and `vocal` as optional fields,
+    and a first-timer reading two blanks cannot tell that leaving them empty is the right move -
+    they look like something you have to fill in. Type it, press enter, the picker opens."""
+    where = _grinding_allowed_here(interaction)
+    if where is not None:
+        await interaction.response.send_message(where, ephemeral=True)
+        return
     if not bot.songs:
         await bot.refresh_catalog()
-    ctx = MixContext(interaction, song1_id=beat, song2_id=vocals, generation=0)
-    await ctx.run(first=True)
+    if not bot.beats or not bot.vocals:
+        await interaction.response.send_message(
+            "The song library has not loaded. Make sure the engine is running, then try again.",
+            ephemeral=True)
+        return
+    view = GrindBuilderView(interaction.user.id)
+    await interaction.response.send_message(embed=view.embed(), view=view)
+
+
+@bot.tree.command(name="mygrinds", description="Everything you have made.")
+async def mygrinds_cmd(interaction: discord.Interaction) -> None:
+    rows = []
+    for r in store.recent_for_user(interaction.user.id, limit=10):
+        pairs = json.loads(r["pairs"])
+        label = (f"{pairs[0][2]} x {pairs[0][3]}" if len(pairs) == 1
+                 else f"long grind, {len(pairs)} tracks")
+        url = None
+        if r["guild_id"] and r["channel_id"] and r["message_id"]:
+            url = (f"https://discord.com/channels/{r['guild_id']}"
+                   f"/{r['channel_id']}/{r['message_id']}")
+        rows.append((r["number"], label, url))
+    await interaction.response.send_message(
+        embed=ui.mygrinds_embed(user=interaction.user,
+                                total=store.count_for_user(interaction.user.id), rows=rows),
+        ephemeral=True)
+
+
+# --------------------------------------------------------------------------------------
+# Reactions - the actual product signal.
+#
+# RAW events, not the cooked ones: the cooked handler only fires for messages the bot happens to
+# have cached, so a reaction on yesterday's grind (exactly the ones a newcomer scrolls) would be
+# silently dropped after any restart. Raw events always fire.
+# --------------------------------------------------------------------------------------
+@bot.event
+async def on_raw_reaction_add(payload: discord.RawReactionActionEvent) -> None:
+    if payload.user_id == getattr(bot.user, "id", None):
+        return                                   # the bot seeding 🔥 💀 😐 is not a vote
+    emoji = str(payload.emoji)
+    if emoji not in ui.REACTIONS:
+        return
+    row = store.by_message(payload.message_id)
+    if row is None:
+        return
+    store.add_reaction(grind_number=row["number"], user_id=payload.user_id,
+                       emoji=emoji, when=_now())
+    log.info("reaction: %s on grind #%s by %s", emoji, row["number"], payload.user_id)
+
+
+@bot.event
+async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent) -> None:
+    emoji = str(payload.emoji)
+    if emoji not in ui.REACTIONS:
+        return
+    row = store.by_message(payload.message_id)
+    if row is None:
+        return
+    # A changed mind must not be counted twice, so a removal really removes.
+    store.remove_reaction(grind_number=row["number"], user_id=payload.user_id, emoji=emoji)
+
+
+@bot.event
+async def on_voice_state_update(member, before, after) -> None:
+    await booth.on_voice_state_update(member, before, after)
 
 
 @bot.tree.command(name="help", description="What Grinder does and how to use it.")
@@ -384,241 +771,6 @@ async def setup_error(interaction: discord.Interaction, error: app_commands.AppC
     send = (interaction.followup.send if interaction.response.is_done()
             else interaction.response.send_message)
     await send(embed=ui.error_embed(msg), ephemeral=True)
-
-
-@bot.tree.command(name="songs", description="See every song you can pick.")
-async def songs_cmd(interaction: discord.Interaction) -> None:
-    if not bot.songs:
-        await bot.refresh_catalog()
-    beats = "\n".join(f"• {s.name}" for s in bot.beats) or "-"
-    vocals = "\n".join(f"• {s.name}" for s in bot.vocals) or "-"
-    embed = discord.Embed(title=f"🎵 {BOT_NAME} song library", color=VIOLET)
-    embed.add_field(name="Beats (Song 1)", value=beats[:1024], inline=True)
-    embed.add_field(name="Vocals (Song 2)", value=vocals[:1024], inline=True)
-    embed.set_footer(text="Use /mix and start typing a name. It autocompletes.")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-# --------------------------------------------------------------------------------------
-# /set — a continuous back-to-back set of 2–5 mixes.
-# --------------------------------------------------------------------------------------
-MAX_MIXES_PER_SET = 5
-SET_SIZE_LIMIT_BYTES = 9_000_000   # keep set clips under Discord's non-Nitro upload limit
-
-
-def _mmss(seconds: float) -> str:
-    s = int(seconds or 0)
-    return f"{s // 60}:{s % 60:02d}"
-
-
-def _member_line(m: dict) -> str:
-    idx = m.get("index", "?")
-    n1, n2 = _name_of(m.get("song1_id", "")), _name_of(m.get("song2_id", ""))
-    if not m.get("kept", True):
-        return f"~~Set {idx}: {n1} × {n2}~~ skipped ({m.get('reason', 'couldn’t be mixed')})"
-    seam = m.get("seam_at")
-    when = f" · joins at {_mmss(seam)}" if seam else ""
-    return f"**Set {idx}:** {n1} × {n2}{when}"
-
-
-class SetView(discord.ui.View):
-    def __init__(self, ctx: "SetContext") -> None:
-        super().__init__(timeout=1800)
-        self.ctx = ctx
-
-    @discord.ui.button(label="Play in voice", emoji="🔊",
-                       style=discord.ButtonStyle.secondary, custom_id="set_play")
-    async def play_voice(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.defer(ephemeral=True)
-        if self.ctx.audio_path is None:
-            await interaction.followup.send("Give it a second, the set is still arriving.", ephemeral=True)
-            return
-        await interaction.followup.send(
-            await voice_player.play_in_channel(interaction, self.ctx.audio_path), ephemeral=True)
-
-    @discord.ui.button(label="Leave voice", emoji="⏹️",
-                       style=discord.ButtonStyle.secondary, custom_id="set_leave")
-    async def leave_voice(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.defer(ephemeral=True)
-        await interaction.followup.send(await voice_player.leave(interaction), ephemeral=True)
-
-
-class SetContext:
-    def __init__(self, interaction: discord.Interaction, pairs: list[tuple[str, str]]) -> None:
-        self.interaction = interaction
-        self.pairs = pairs                       # list[(beat_id, vocals_id)]
-        self.user_id = str(interaction.user.id)
-        self.user_name = getattr(interaction.user, "display_name", None) or interaction.user.name
-        self.message: discord.Message | None = None
-        self.audio_path: Path | None = None
-
-    def _building_embed(self) -> discord.Embed:
-        lines = "\n".join(f"{i}. {_name_of(a)} × {_name_of(b)}"
-                          for i, (a, b) in enumerate(self.pairs, 1))
-        return ui.building_embed(lines, len(self.pairs))
-
-    async def _fit_mp3(self, wav: Path, mp3: Path) -> None:
-        """Transcode at the highest bitrate that still fits Discord's upload limit, so even a
-        long set always attaches something audible."""
-        for br in ("160k", "128k", "96k", "64k"):
-            await media.to_mp3(wav, mp3, bitrate=br)
-            if mp3.stat().st_size <= SET_SIZE_LIMIT_BYTES:
-                return
-
-    async def run(self) -> None:
-        building = self._building_embed()
-        self.message = await self.interaction.followup.send(embed=building)
-        try:
-            set_id = await bot.api.start_set(self.pairs, self.user_id, set_index=0,
-                                             user_name=self.user_name)
-        except EngineError as e:
-            await self.message.edit(embed=_error_embed(str(e)))
-            return
-
-        async def on_progress(elapsed: float) -> None:
-            if elapsed and int(elapsed) % 15 == 0 and self.message is not None:
-                building.set_footer(text=f"still building… {int(elapsed)}s")
-                try:
-                    await self.message.edit(embed=building)
-                except discord.HTTPException:
-                    pass
-
-        res = await bot.api.wait_for_set(set_id, on_progress=on_progress)
-        if res.status != "ready":
-            await self.message.edit(embed=_error_embed(res.message or "Couldn't build this set."))
-            return
-
-        stem = Path(tempfile.gettempdir()) / f"promptdj_set_{set_id[:12]}_{uuid.uuid4().hex[:6]}"
-        wav, mp3 = stem.with_suffix(".wav"), stem.with_suffix(".mp3")
-        try:
-            await bot.api.fetch_set_audio(set_id, wav)
-            self.audio_path = wav
-            await self._fit_mp3(wav, mp3)
-        except Exception as e:  # noqa: BLE001
-            log.exception("set fetch/transcode failed")
-            await self.message.edit(embed=_error_embed(f"The set rendered, but sending it failed: {e}"))
-            return
-
-        members = res.members or []
-        kept = [m for m in members if m.get("kept", True)]
-        lines = "\n".join(_member_line(m) for m in members) or "-"
-        embed = ui.set_lineup_embed(lines, res.duration or 0, len(kept), self.interaction.user)
-
-        size = mp3.stat().st_size if mp3.exists() else 0
-        if 0 < size <= SET_SIZE_LIMIT_BYTES:
-            f = discord.File(str(mp3), filename="grinder-set.mp3")
-            await self.message.edit(embed=embed, attachments=[f], view=SetView(self))
-        else:
-            embed.add_field(
-                name="Heads up",
-                value="This set is a bit long to attach here. Tap 🔊 **Play in voice**, or build a shorter set.",
-                inline=False)
-            await self.message.edit(embed=embed, view=SetView(self))
-
-
-class SetBuilderView(discord.ui.View):
-    """A step-by-step set builder: pick a beat + a vocal from dropdowns, ➕ Add mix, repeat
-    (2–5), then ✅ Build set. Far more convenient than one command with ten fields — and since
-    the catalog is small, dropdowns fit (no typing)."""
-
-    def __init__(self) -> None:
-        super().__init__(timeout=600)
-        self.pairs: list[tuple[str, str]] = []
-        self.sel_beat: str | None = None
-        self.sel_vocal: str | None = None
-        self.message: discord.Message | None = None
-
-        self.beat_select = discord.ui.Select(
-            placeholder="1) Pick a beat…", min_values=1, max_values=1, row=0,
-            options=self._opts(bot.beats, None))
-        self.beat_select.callback = self._on_beat
-        self.vocal_select = discord.ui.Select(
-            placeholder="2) Pick a vocal…", min_values=1, max_values=1, row=1,
-            options=self._opts(bot.vocals, None))
-        self.vocal_select.callback = self._on_vocal
-        self.add_item(self.beat_select)
-        self.add_item(self.vocal_select)
-
-    @staticmethod
-    def _opts(songs, selected_id):
-        return [discord.SelectOption(label=lbl, value=val, default=dflt)
-                for lbl, val, dflt in select_option_specs(songs, selected_id)]
-
-    def _refresh_selects(self) -> None:
-        """Rebuild both dropdowns so the picked song shows as selected, not the placeholder."""
-        self.beat_select.options = self._opts(bot.beats, self.sel_beat)
-        self.vocal_select.options = self._opts(bot.vocals, self.sel_vocal)
-
-    def embed(self) -> discord.Embed:
-        lineup = ("\n".join(f"{i}. **{_name_of(a)}** × **{_name_of(b)}**"
-                            for i, (a, b) in enumerate(self.pairs, 1))
-                  if self.pairs else "_No mixes yet._")
-        picking = ""
-        if self.sel_beat or self.sel_vocal:
-            b = _name_of(self.sel_beat) if self.sel_beat else "-"
-            v = _name_of(self.sel_vocal) if self.sel_vocal else "-"
-            picking = f"\n\n**Selecting:** {b} × {v}  → tap ➕ Add mix"
-        e = discord.Embed(
-            title="🎚️ Build a DJ set",
-            description=f"**Line-up ({len(self.pairs)}/{MAX_MIXES_PER_SET}):**\n{lineup}{picking}",
-            color=VIOLET)
-        e.set_footer(text="Pick a beat and a vocal, then ➕ Add mix. Repeat up to 5, then ✅ Build set.")
-        return e
-
-    async def _on_beat(self, interaction: discord.Interaction) -> None:
-        self.sel_beat = self.beat_select.values[0]
-        self._refresh_selects()
-        await interaction.response.edit_message(embed=self.embed(), view=self)
-
-    async def _on_vocal(self, interaction: discord.Interaction) -> None:
-        self.sel_vocal = self.vocal_select.values[0]
-        self._refresh_selects()
-        await interaction.response.edit_message(embed=self.embed(), view=self)
-
-    @discord.ui.button(label="Add mix", emoji="➕", style=discord.ButtonStyle.secondary, row=2)
-    async def add_mix(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not (self.sel_beat and self.sel_vocal):
-            await interaction.response.send_message("Pick a beat *and* a vocal first.", ephemeral=True)
-            return
-        if len(self.pairs) >= MAX_MIXES_PER_SET:
-            await interaction.response.send_message(
-                f"A set holds up to {MAX_MIXES_PER_SET} mixes.", ephemeral=True)
-            return
-        self.pairs.append((self.sel_beat, self.sel_vocal))
-        self.sel_beat = self.sel_vocal = None
-        self._refresh_selects()
-        await interaction.response.edit_message(embed=self.embed(), view=self)
-
-    @discord.ui.button(label="Remove last", emoji="↩️", style=discord.ButtonStyle.secondary, row=2)
-    async def remove_last(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if self.pairs:
-            self.pairs.pop()
-        await interaction.response.edit_message(embed=self.embed(), view=self)
-
-    @discord.ui.button(label="Build set", emoji="✅", style=discord.ButtonStyle.primary, row=2)
-    async def build(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if len(self.pairs) < 2:
-            await interaction.response.send_message("Add at least **2** mixes first.", ephemeral=True)
-            return
-        for item in self.children:
-            item.disabled = True
-        await interaction.response.edit_message(view=self)   # freeze the builder
-        await SetContext(interaction, list(self.pairs)).run()
-        self.stop()
-
-
-@bot.tree.command(name="set", description="Join 2 to 5 mixes into one continuous set.")
-async def set_cmd(interaction: discord.Interaction) -> None:
-    if not bot.songs:
-        await bot.refresh_catalog()
-    if not bot.beats or not bot.vocals:
-        await interaction.response.send_message(
-            "The song library isn't loaded yet. Make sure the engine is running, then try again.",
-            ephemeral=True)
-        return
-    view = SetBuilderView()
-    await interaction.response.send_message(embed=view.embed(), view=view)
-    view.message = await interaction.original_response()
 
 
 def main() -> None:

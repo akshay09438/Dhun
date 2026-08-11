@@ -47,6 +47,39 @@ async def play_in_channel(interaction: "discord.Interaction", audio_path) -> str
     return f"▶️ Playing in **{channel.name}**. Tap **Leave voice** to stop."
 
 
+async def play_in(channel, audio_path, *, on_finished=None) -> None:
+    """Play into ONE named channel, and call `on_finished` when the audio ends.
+
+    Different from `play_in_channel` above in the two ways that matter for The Booth: it targets a
+    fixed room rather than following whoever pressed a button, and it tells the caller when the
+    track finishes so the next one can start. Without that callback the room would go quiet after
+    one grind and stay quiet with the bot still sitting in it.
+    """
+    import asyncio
+
+    if not voice_supported():
+        raise RuntimeError("voice playback is unavailable (PyNaCl did not load)")
+
+    guild = channel.guild
+    vc = guild.voice_client
+    if vc is None:
+        vc = await channel.connect()
+    elif vc.channel != channel:
+        await vc.move_to(channel)
+    if vc.is_playing():
+        vc.stop()
+
+    loop = asyncio.get_running_loop()
+
+    def _after(err: Exception | None) -> None:
+        # discord.py calls this from a worker thread, so hop back onto the event loop before
+        # touching anything async. Doing the work here directly would be a race.
+        if on_finished is not None:
+            asyncio.run_coroutine_threadsafe(on_finished(), loop)
+
+    vc.play(discord.FFmpegPCMAudio(str(audio_path)), after=_after)
+
+
 async def leave(interaction: "discord.Interaction") -> str:
     guild = interaction.guild
     vc = guild.voice_client if guild else None

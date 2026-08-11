@@ -42,3 +42,6 @@ services/api/_candidate_preload.py
 # A pattern, not one filename: the avatar was the only slot until the profile banner was added,
 # and a new marker silently showing up as untracked is easy to commit by accident.
 services/discord-bot/assets/.applied-*
+
+# The bot's own small database (grind numbers, reactions). Local state, not source.
+services/discord-bot/data/
