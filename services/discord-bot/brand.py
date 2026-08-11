@@ -32,6 +32,18 @@ LOGO = ASSETS / "logo.png"        # the GRINDER wordmark disc: welcome post + /h
 BANNER = ASSETS / "banner.png"    # glow banner — needs server boost level 2 before it can be set
 EMOJI_DIR = ASSETS / "emojis"
 
+# The strip behind the bot's picture on its PROFILE card. A DIFFERENT setting from BANNER above,
+# which is the SERVER header — that one Discord locks behind boost level 2, this one it does not,
+# so this applies today. Left flat purple, Discord invents a colour from the avatar and the profile
+# looks unfinished.
+#
+# 1360x480 is 2x the 680x240 Discord renders, so it stays sharp on a high-DPI screen. JPEG, not
+# PNG, is deliberate: the artwork's film grain is nearly incompressible as PNG (1426 KB vs 102 KB
+# for a visually identical JPEG at quality 94), and a 14x file for no visible gain is not worth it.
+# The layout is avatar-aware — the avatar covers the bottom-left, so the wordmark sits top-left and
+# the tagline bottom-RIGHT. Re-exporting the art without honouring that will bury the tagline.
+PROFILE_BANNER = ASSETS / "profile-banner.jpg"
+
 # The custom emojis, and what each one is FOR. The bot uploads these to the server on /setup and
 # then refers to them by name, falling back to a plain unicode glyph if a server has not got them
 # (so every message still renders in a server where /setup was never run).
@@ -60,35 +72,61 @@ def image_bytes(path: Path) -> bytes | None:
     return data
 
 
-# Which avatar art was last uploaded, so a NEW export gets applied on the next start while an
-# unchanged one doesn't burn Discord's avatar rate limit. Per-installation state, not source.
-_APPLIED_MARKER = ASSETS / ".applied-avatar"
+# Which art was last uploaded for each slot, so a NEW export gets applied on the next start while
+# an unchanged one doesn't burn Discord's rate limit (strict on both the avatar and the banner —
+# they share one /users/@me budget). Per-installation state, not source.
+def _marker_for(path: Path) -> Path:
+    return ASSETS / f".applied-{path.stem}"
 
 
-def icon_fingerprint() -> str | None:
-    """A short hash of the avatar art, or None if it's missing."""
-    data = image_bytes(ICON)
+def art_fingerprint(path: Path) -> str | None:
+    """A short hash of an artwork file, or None if it's missing."""
+    data = image_bytes(path)
     return hashlib.sha256(data).hexdigest()[:16] if data else None
 
 
-def avatar_needs_upload() -> bool:
-    """True when the shipped avatar art differs from whatever was last uploaded. Comparing against
-    Discord's copy is not viable — it re-encodes uploads, so the bytes never match — hence a local
-    marker of what we last sent."""
-    fp = icon_fingerprint()
+def art_needs_upload(path: Path) -> bool:
+    """True when the shipped art differs from whatever was last uploaded for that slot. Comparing
+    against Discord's copy is not viable — it re-encodes uploads, so the bytes never match — hence
+    a local marker of what we last sent."""
+    fp = art_fingerprint(path)
     if fp is None:
         return False
     try:
-        return _APPLIED_MARKER.read_text(encoding="utf-8").strip() != fp
+        return _marker_for(path).read_text(encoding="utf-8").strip() != fp
     except OSError:
         return True          # no marker yet -> never uploaded from this checkout
 
 
-def mark_avatar_applied() -> None:
+def mark_art_applied(path: Path) -> None:
     try:
-        _APPLIED_MARKER.write_text(icon_fingerprint() or "", encoding="utf-8")
+        _marker_for(path).write_text(art_fingerprint(path) or "", encoding="utf-8")
     except OSError:
         pass                 # cosmetic bookkeeping; never worth failing a startup over
+
+
+# The avatar's own marker predates the generic ones above and is named `.applied-avatar` rather
+# than `.applied-icon`. Kept as-is: renaming it would read as "the art changed" on every existing
+# install and re-upload an identical avatar against a strict rate limit, for no gain.
+def icon_fingerprint() -> str | None:
+    return art_fingerprint(ICON)
+
+
+def avatar_needs_upload() -> bool:
+    fp = icon_fingerprint()
+    if fp is None:
+        return False
+    try:
+        return (ASSETS / ".applied-avatar").read_text(encoding="utf-8").strip() != fp
+    except OSError:
+        return True
+
+
+def mark_avatar_applied() -> None:
+    try:
+        (ASSETS / ".applied-avatar").write_text(icon_fingerprint() or "", encoding="utf-8")
+    except OSError:
+        pass
 
 
 def emoji_files() -> list[tuple[str, Path]]:
