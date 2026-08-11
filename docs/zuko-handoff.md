@@ -4,98 +4,102 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
-2026-08-11 (**session 2 — the Grinder Discord community becomes a real place**) — **All suites green. One PR open and NOT merged: [#29](https://github.com/akshay09438/Dhun/pull/29), 9 commits, conflicts already resolved.** Nothing is uncommitted and nothing is unpushed. **One thing is blocked and will not resolve on this machine: voice playback.**
+2026-08-11 (**sessions 3 and 4 — the Discord channel copy, then a concurrency diagnosis that overturned what we believed about scale**). **All suites green.** PR #30 is **merged**. One branch is open and pushed: `diag/concurrency-500-users` (2 commits, docs only, no code). **Nothing is uncommitted and nothing is unpushed.** The next session is expected to run **`/zuko:goodnight` on jobs 1–8 below**, overnight.
 
 ---
 
 ## Where things stand
 
-The Discord bot stopped being a command you type and became somewhere to hang out. Everything below is on `feat/grinder-experience` and is live on the founder's server already — the server restructure was applied for real, so **Discord looks like this now whether or not #29 merges.**
+**Session 3 — the Discord copy was wrong on the live server, and now cannot go wrong again.** MERGED via PR #30 and applied to the real server.
 
-- **`/grind` takes no options.** Type it, press enter, a picker opens: choose a beat, choose a vocal, **➕ Add another pair** up to five, **Grind it** stitches them into one continuous set. Controls are greyed out until they can do something, which teaches the order without instructions.
-- **Three commands total:** `/grind`, `/mygrinds`, `/help`. `/set` and `/songs` deleted.
-- **The bot never judges a mix.** No flavour line, no verdict, no tempo or key. A test reads every card and fails on evaluative or technical wording.
-- **🔥 💀 😐 recorded per person per grind** — reactions, not buttons, so they keep working on old grinds and across restarts. Un-reacting really removes the vote.
-- **📌 Pin it** carries any grind to `#best-mixes`; pressing twice cannot post twice.
-- **The server is rebuilt** — START HERE / GRIND / TALK, every channel's copy written and pinned, `@Session Crew` deleted.
-- **`/grind` only works** in the grind category or for someone sitting in a listening room.
-- **Listening rooms are a category**, so new rooms work with no config change.
+- `#read-this-first` had been showing a post from **two versions earlier** — it advertised `/mix`, `/set` and `/songs` (all deleted), pointed at `#make-a-mix` and `#i-made-this` (neither exists) and told people to grab `@Session Crew` (deleted). Root cause: the copy step **skipped any channel that already had a message**, which made `server_setup.py` write-only.
+- Copy now **refreshes in place** — it edits Grinder's own earlier post. Discord will not let a bot edit anyone else's message, so nobody's words can be lost.
+- Channel names are **live `<#id>` mentions**, so renaming a room re-labels every signpost. (The founder had renamed everything: `the-grinder` → `#get-shit-done`, `fresh-grinds` → `#best-mixes`, one Booth → `Bollywood_House` + `Hollywood_Blends`.)
+- `#read-this-first` cut to **one embed** with the "Remix anything." banner; `#rules` cut to **three lines** ending "F\*\*k around and find out." (censored, founder's call); **both voice rooms got their first intro ever**; `/help` stopped promising a `/grind beat: ... vocal: ...` shortcut that does not exist.
+- Verified live afterwards: **9 of 9 rooms carry exactly one intro, zero references to a deleted command, channel or role.**
 
-**Catalog: 30 songs** (12 beats, 18 vocals), unchanged. **The engine was not touched** — `render.py`, `validate.py`, `storage.py`, `config.py` and the whole web app are untouched by this session. Nothing about how a mix sounds changed.
+**Session 4 — concurrency diagnosis. READ-ONLY; no engine code was changed.** Full report: [concurrency-diagnosis.md](concurrency-diagnosis.md).
 
----
-
-## In flight
-
-**PR [#29](https://github.com/akshay09438/Dhun/pull/29) — open, mergeable, not merged.** 9 commits, 16 files. Merge conflicts with `main` were resolved in-session (both branches had widened the same `.gitignore` rule). The PR body on GitHub says "No description provided" — the commit messages carry the detail.
-
-The profile banner shipped separately as **PR #28, already merged to `main`.**
+- **"The engine makes one mix at a time" is FALSE.** There is no queue in the render path at all. Measured on ten identical pairs: **288s one-at-a-time became 52.4s together — ~5.5x parallel**, 10/10 succeeded.
+- **A cold mix is ~25–30s** (not 80s). **A repeat is 0.03s.**
+- **The real 10–15 minute problem is VOICE, and it was blamed on rendering.** One voice connection per **server**, median mix **189s**, so the 10th queued grind **starts at 28 minutes**.
+- **There is no admission control anywhere**, and it causes real failures: a sweep run at 89.5% memory with the disk near 2 GB produced 20.7% failures; the **same pairs at the same concurrency passed 10/10 and 6/6 with headroom**.
+- **Every failure reports the same sentence**, so a bad pair and a starved machine are indistinguishable — to the user and in `events.db`.
 
 ---
 
-## BLOCKED — voice playback cannot work on this machine
+## Do first next session — the `/zuko:goodnight` batch (jobs 1–8)
 
-Not a bug and not a config mistake. **Both available paths are closed on Windows ARM64:**
+The founder has approved running these overnight. **All are free (code only), and none change how a mix sounds.** Ordered; 1 and 2 are the blocking pair.
 
-|                      |                                                                                                                                                                                                                                                                                                                                                  |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **discord.py 2.5.x** | Requests voice gateway `?v=4`, which Discord has **retired**. The handshake completes, finds the media endpoint, then the socket is closed with **code 4017** — a code that version does not even recognise. Rolled out per voice server, which is why it worked once on the `bom03` endpoint and failed on every attempt afterwards on `bom06`. |
-| **discord.py 2.6+**  | Speaks `?v=8` and would work, but raises `RuntimeError: davey library needed in order to use voice` on connect. `davey` is Discord's audio E2EE and has **no distribution for win-arm64 at all** (`pip: from versions: none`); building it needs a Rust toolchain this machine lacks.                                                            |
+| #   | Job                                                                                                                             | Acceptance check                                                                                           | Risk                                      |
+| --- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| 1   | **Record WHY a mix failed** — distinguish a quality rejection from out-of-resources from a crash, in the log and in `events.db` | Force a known quality failure and a simulated resource failure; the two produce different recorded reasons | light                                     |
+| 2   | **Cap concurrent renders (~6–8) + a real queue**                                                                                | 20 simultaneous requests: all 20 eventually succeed, at most 8 render at once, none fail                   | light                                     |
+| 3   | **Show queue position** ("7th, ~3 min")                                                                                         | A request made while 8 are running reports a position, and it counts down                                  | light                                     |
+| 4   | **Per-person limit** on queued renders                                                                                          | One user firing 10 requests cannot occupy more than N slots                                                | light                                     |
+| 5   | **Auto-delete old renders**                                                                                                     | Renders past an age are removed; a fresh request re-creates on demand                                      | light                                     |
+| 6   | **Keep the mp3, drop the wav** once a mix settles                                                                               | Disk per mix drops ~20x; **sets and Regenerate still work** (they read the full render — verify carefully) | light, but see caveat                     |
+| 7   | **2–3 Grinder bots for 2–3 rooms**                                                                                              | Two bots hold two different rooms at the same time                                                         | light (needs founder's clicks for tokens) |
+| 8   | **Profile the render** — where do the 25–30s go?                                                                                | A written breakdown per stage. Measurement only                                                            | light                                     |
 
-A `try/except ImportError` around `davey` in `voice_state.py` only decides whether E2EE is offered. **It is not a soft dependency for connecting** — I read it as one, upgraded on that basis, and was proven wrong by the runtime error. Corrected in `requirements.txt` so nobody re-litigates it.
+**Ordering note for whoever runs the batch:** job 3 depends on job 2 — without the cap there is no queue to report a position in. Job 6 has the sharpest edge: the full `.wav` is what Regenerate and set-joining build from, so deleting it must not break either.
 
-**Now pinned to `discord.py>=2.7`** anyway: everything non-voice is current, and voice fails instantly with a clear message instead of thirty seconds of doomed retries.
-
-**Voice needs an x86 host.** Everything else in the Discord experience works without it.
-
----
-
-## Do first next session
-
-1. **Merge PR #29**, then `git pull` on `main` (local `main` is behind).
-2. **Decide the voice host.** A small cloud box or any x86 machine unblocks listening rooms, the live status message and arrival notes in one move. Until then treat all four as unproven.
-3. **Show reactions on the ops dashboard.** They are the product signal and currently land in the bot's own database, which the dashboard does not read. Either the bot posts them to an engine endpoint, or the dashboard reads both.
-4. **Clear the test rows from `events.db`** — the `aaaaaaaa`/`bbbbbbbb` placeholder rows still pollute real numbers before launch.
+**Nothing in jobs 1–8 is expected to touch a dangerous-path file.** If any does — `workers/render.py`, `services/api/**/planner/validate.py`, `config.py`, `storage.py`, `routes/songs.py`, any test harness — it must be **STAGED, not applied**, per the goodnight hard gate.
 
 ---
 
 ## Verification evidence
 
-Every check below was **run at session close** on the merged branch. Real output:
+Every check below was **run at session close**, on `diag/concurrency-500-users`. Real output:
 
-| Check       | Command                                                           | Result                                          |
-| ----------- | ----------------------------------------------------------------- | ----------------------------------------------- |
-| Discord bot | `services/discord-bot/.venv/Scripts/python.exe -m pytest -q`      | **148 passed** in 3.19s _(75 at session start)_ |
-| Backend     | `services/api/.venv/Scripts/python.exe -m pytest services/api -q` | **720 passed** in 192.63s                       |
-| Web         | `npm test`                                                        | **78 passed**, 9 files                          |
-| Typecheck   | `npm run typecheck`                                               | clean, no output                                |
-| Lint        | `npm run lint`                                                    | clean, no output                                |
+| Check       | Command                                                           | Result                                           |
+| ----------- | ----------------------------------------------------------------- | ------------------------------------------------ |
+| Discord bot | `services/discord-bot/.venv/Scripts/python.exe -m pytest -q`      | **171 passed** in 7.07s _(148 at session start)_ |
+| Backend     | `services/api/.venv/Scripts/python.exe -m pytest services/api -q` | **720 passed** in 260.47s                        |
+| Web         | `npm test`                                                        | **78 passed**, 9 files                           |
+| Typecheck   | `npm run typecheck`                                               | clean, no output                                 |
+| Lint        | `npm run lint`                                                    | clean, no output                                 |
 
-**Note on running the backend suite:** it must be scoped to `services/api`. From the repo root, pytest also collects the Discord bot's tests, which need the bot's own virtualenv and fail at collection with 5 errors. That is a harness quirk, not a broken suite.
+**Note on the backend suite:** it must be scoped to `services/api`. From the repo root pytest also collects the Discord bot's tests, which need the bot's own virtualenv and fail at collection. Harness quirk, not a broken suite.
+
+### Measured facts (session 4), each re-runnable via `scripts/loadtest/`
+
+| Measurement                | Value                                                      |
+| -------------------------- | ---------------------------------------------------------- |
+| Cold render, alone         | 22.6s / 28.3s; re-measured pairs 11.8–30.1s                |
+| Cached repeat              | **0.03s**                                                  |
+| 10 pairs one at a time     | ~288s                                                      |
+| The same 10 fired together | **52.4s**, 10/10 succeeded, 11.5 mixes/min                 |
+| CPU during ONE render      | peak 100%, all 10 of 10 cores >50% busy                    |
+| Engine RAM                 | 1.26 GB at 1 concurrent → 5.15 GB at 10                    |
+| Median finished mix length | **189s** (min 162, max 265) across 40 real files           |
+| Machine                    | Snapdragon X, 10 logical cores, 16.8 GB RAM, Windows ARM64 |
 
 ### Verified against the real world, not a fake
 
-- **The server restructure ran live** and is idempotent — a second run created nothing. Both retired channels were confirmed **empty before deletion**.
-- **`/grind`, `/mygrinds` and `/help` are the only commands registered**, checked by querying Discord's API directly.
-- **Grinder left the `merrygo` server** and is now in exactly one server.
-- **Voice worked exactly once** (grind #1, a card reading "PLAYING LIVE IN THE BOOTH · 2 listening" with audio at 0:57/3:08) and never again. See BLOCKED above.
+- The channel copy was **applied to the live server** and then **re-read**: 9 of 9 rooms carry exactly one intro; zero dead command/channel/role references.
+- The failing-pair error was captured from the engine's **own log**, not inferred: `workers.render.RenderError: vocal chain collapsed the crest factor 10.76 -> 5.33`.
+- The "songs are broken" conclusion was **overturned by re-testing** — see the corrections below.
 
-### Three bugs that only real use exposed
+---
 
-Each now has a regression test that was **confirmed to fail against the old code**:
+## Corrections made in-session (do not re-litigate)
 
-1. A view method named `_refresh` shadowed `discord.ui.View._refresh(components)` and **took the whole bot down** the moment a dropdown was touched. A test now walks every View subclass and fails on any single-underscore method whose signature disagrees with the library's.
-2. The "PLAYING LIVE" banner was posted **before** the connection was attempted, so a card claimed a room was listening while the handshake was failing five times over.
-3. Force-killing the bot left a **zombie voice session** alive on Discord's side, blocking every later attempt. Startup now declares it is in no voice channel first.
+- **"Innerbloom and Rapture are broken" was WRONG.** Re-test: Innerbloom × Dooriyan 6/6, Rapture × Panda 6/6, Rapture × Uff Teri Ada 6/6, Innerbloom × 10 vocals at once 10/10. They failed only on a starved machine. **Do not withdraw them.**
+- **"Khuda Jaane cannot be mixed with anything" is UNPROVEN.** It failed 0/6 with Father Ocean and also with I Adore You, Innerbloom and Rapture — but the **founder reports it sounds good with Anchor Point and Lean On**, and those two beats were among the **8 of 12 the sweep never reached**. Treat as open.
+- **The 20.7% catalog failure rate is an UPPER BOUND** measured on a starved machine, not a property of the catalog. Re-measure with headroom before believing any number.
+- **The first parallel-speedup figure (8.7x) was wrong**; two anomalous readings inflated it. **5.5x** is the corrected figure.
 
 ---
 
 ## Open escalations and things to RE-VERIFY (claims, not facts)
 
-- **`.env` was edited three times this session** with the founder's explicit approval each time, recorded via `.zuko/approve.js` and cleared after: the three channel ids, the corrected `DISCORD_GUILD_ID` (it still pointed at `merrygo`), and the two category ids. **Claim to re-verify:** the file holds only the token plus those settings and no secret was logged. A backup sits outside the repo in the session scratchpad.
-- **The live pinned status message and arrival notes have never been seen working.** They are built and their decisions are unit-tested, but they ride the same voice-state path that could not be exercised. **Treat as unverified.**
-- **`⚙️ Rougher` does not exist.** The spec asked for it; the engine exposes no aggression control and the mixing rule is auto-assigned. Building a button that silently re-rolled would have put a second lie on the card. **Needs a decision about changing the engine.**
-- **Onboarding, the auto-awarded `First Grind` role, and the weekly `Head Grinder` rotation are not built.** The first is a server setting only the founder can reach; the other two need a scheduler and a week of reaction data.
-- **Disk: 9.7 GB free**, `services/api/data` is most of it. A 100-song catalog needs roughly 32 GB and will not fit.
-- **The GitHub CLI is not installed**, so PRs cannot be opened from the terminal. Installing it would still need an interactive browser login.
-- **Two dev processes were left running** by this session: the engine on port 8000, and the Grinder bot. Both are the founder's normal local setup.
+- **The engine and the Grinder bot are BOTH STOPPED.** No process is listening on 8000. The founder's normal setup has them running; **jobs 1–6 need the engine up to verify anything.**
+- **Voice still cannot work on this machine.** Windows ARM64: discord.py 2.5.x speaks a retired voice protocol (closes with code 4017), 2.6+ needs `davey`, which has no win-arm64 build. **Unchanged, still blocking, needs an x86 host.** Everything voice-shaped remains **unverified**, including the live pinned status message and arrival notes.
+- **Grinder is missing the "Manage Messages" permission**, so 8 of the 9 channel intros are unpinned. Harmless; fixed in Server Settings → Roles → Grinder whenever convenient.
+- **Disk: 10.13 GB free, `services/api/data` is 6.7 GB.** During this session it fell to **2.01 GB** and I stopped work to reclaim it. **I deleted ~4 GB of derived render files that my own tests created** (`*.mix.wav`, `*.set.wav`, `*.bestparts.wav` modified within the test window). No original song, stem or analysis was touched. **Claim to re-verify:** nothing the founder made was lost — mixes are content-addressed and regenerate on demand, but this has not been checked against a specific expected mix.
+- **`events.db` still holds the `aaaaaaaa`/`bbbbbbbb` placeholder rows** from earlier testing, plus **~160 rows from this session's load tests**, which will skew any real usage numbers. Should be cleared before launch.
+- **The catalog sweep is INCOMPLETE** — 82 of 216 pairs. 8 of 12 beats untested: Anchor Point, Merrygo, Wake Me Up, Faded, Lean On, Closer, Hey Brother, Silence. Finishing it needs ~16 GB free disk, or job 5/6 first.
+- **The GitHub CLI is still not installed**, so PRs are opened by hand from the link git prints on push.
+- **`diag/concurrency-500-users` is pushed but has no PR yet** — docs only, safe to merge.
