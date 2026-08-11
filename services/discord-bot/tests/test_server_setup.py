@@ -431,7 +431,7 @@ def test_welcome_embeds_tell_a_first_timer_what_to_do():
         for e in server_setup.welcome_embeds(g)
     )
     for expected in ("/grind", "The Booth", "#the-grinder", "#fresh-grinds",
-                     "Keep going"):
+                     "Add another", "Grind it"):
         assert expected in text, f"the welcome post never mentions {expected}"
 
 

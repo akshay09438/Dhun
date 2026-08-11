@@ -211,7 +211,6 @@ class GrindContext:
         self.user_name = getattr(interaction.user, "display_name", None) or interaction.user.name
         self.message: discord.Message | None = None
         self.audio_path: Path | None = None      # the WAV, kept for The Booth
-        self.done = False                        # ✅ Done pressed, or the cap reached
         self.number: int | None = None
         self.duration: float = 0.0
 
@@ -297,7 +296,7 @@ class GrindContext:
                 return discord.File(str(mp3), filename=f"grind-{self.number}.mp3")
         return None
 
-    async def run(self, *, first: bool, just_landed: bool = False) -> None:
+    async def run(self, *, first: bool) -> None:
         await self._post_submit_card(first=first)
         rendered = await self._render()
         if rendered is None:
@@ -308,8 +307,7 @@ class GrindContext:
 
         clip = await self._attach(wav)
         embed = ui.grind_embed(number=self.number, user=self.interaction.user,
-                               pairs=self.named_pairs(), total_secs=secs,
-                               just_landed=just_landed)
+                               pairs=self.named_pairs(), total_secs=secs)
         if clip is None:
             embed.add_field(
                 name="Too long to attach",
@@ -342,94 +340,23 @@ async def _seed_reactions(message: discord.Message) -> None:
 
 
 # --------------------------------------------------------------------------------------
-# The picker that ➕ Keep going opens.
-# --------------------------------------------------------------------------------------
-class AddPairView(discord.ui.View):
-    """Pick one more beat + vocal to stitch onto the end of an existing grind."""
-
-    def __init__(self, ctx: GrindContext) -> None:
-        super().__init__(timeout=300)
-        self.ctx = ctx
-        self.sel_beat: str | None = None
-        self.sel_vocal: str | None = None
-
-        self.beat_select = discord.ui.Select(placeholder="Pick a beat...", row=0,
-                                             options=self._opts(bot.beats, None))
-        self.beat_select.callback = self._on_beat
-        self.vocal_select = discord.ui.Select(placeholder="Pick a vocal...", row=1,
-                                              options=self._opts(bot.vocals, None))
-        self.vocal_select.callback = self._on_vocal
-        self.add_item(self.beat_select)
-        self.add_item(self.vocal_select)
-
-    @staticmethod
-    def _opts(songs, selected_id):
-        return [discord.SelectOption(label=lbl, value=val, default=dflt)
-                for lbl, val, dflt in select_option_specs(songs, selected_id)]
-
-    def _refresh_options(self) -> None:
-        """Rebuild both dropdowns so a picked song shows as selected rather than the placeholder.
-
-        NOT called _refresh: discord.ui.View already has a _refresh(components) that the library
-        calls whenever Discord sends a message update. Shadowing it took the whole bot down with a
-        TypeError the first time somebody edited a message."""
-        self.beat_select.options = self._opts(bot.beats, self.sel_beat)
-        self.vocal_select.options = self._opts(bot.vocals, self.sel_vocal)
-
-    def embed(self) -> discord.Embed:
-        b = _name_of(self.sel_beat) if self.sel_beat else "-"
-        v = _name_of(self.sel_vocal) if self.sel_vocal else "-"
-        return discord.Embed(
-            title="➕  What goes on the end?",
-            description=f"🥁  {b}\n🎤  {v}\n\nPick both, then hit **Stitch it on**.",
-            color=ui.ACCENT)
-
-    async def _on_beat(self, interaction: discord.Interaction) -> None:
-        self.sel_beat = self.beat_select.values[0]
-        self._refresh_options()
-        await interaction.response.edit_message(embed=self.embed(), view=self)
-
-    async def _on_vocal(self, interaction: discord.Interaction) -> None:
-        self.sel_vocal = self.vocal_select.values[0]
-        self._refresh_options()
-        await interaction.response.edit_message(embed=self.embed(), view=self)
-
-    @discord.ui.button(label="Stitch it on", emoji="➕",
-                       style=discord.ButtonStyle.primary, row=2)
-    async def stitch(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not (self.sel_beat and self.sel_vocal):
-            await interaction.response.send_message("Pick a beat and a vocal first.",
-                                                    ephemeral=True)
-            return
-        for item in self.children:
-            item.disabled = True
-        await interaction.response.edit_message(
-            embed=discord.Embed(description="Stitching it on...", color=ui.ACCENT), view=self)
-        self.ctx.pairs.append((self.sel_beat, self.sel_vocal))
-        if len(self.ctx.pairs) >= MAX_PAIRS_PER_GRIND:
-            self.ctx.done = True
-        await self.ctx.run(first=False, just_landed=True)
-        self.stop()
-
-
-# --------------------------------------------------------------------------------------
 # The buttons under a finished grind.
+#
+# THERE IS NO "ADD ANOTHER PAIR" HERE, deliberately (founder, 2026-08-11). There used to be, and
+# it was a lie: the engine cannot stitch a new pair onto something that already exists. Pressing it
+# rebuilt the entire set from scratch and swapped the audio out - which, if the grind was playing
+# in The Booth at the time, replaced the thing people were listening to.
+#
+# So the model is honest instead: you choose every pair UP FRONT in the picker, the bot stitches
+# them, and what comes back is the finished set. A grind is done when it arrives.
 # --------------------------------------------------------------------------------------
 class GrindView(discord.ui.View):
     def __init__(self, ctx: GrindContext) -> None:
         super().__init__(timeout=1800)
         self.ctx = ctx
-        # At the cap, or once they have said they are finished, ➕ goes away and the grind settles
-        # into its final shape. Anyone can still react and anyone can still pin it.
-        if ctx.done or len(ctx.pairs) >= MAX_PAIRS_PER_GRIND:
-            self.remove_item(self.keep_going)
-            self.remove_item(self.finish)
-        else:
-            self.remove_item(self.again)
 
     async def _owner_only(self, interaction: discord.Interaction) -> bool:
-        """Anyone may react to and pin a grind. Only its owner may change it - otherwise a busy
-        channel turns every grind into a free-for-all."""
+        """Anyone may react to and pin a grind. Only its owner may re-roll it."""
         if interaction.user.id == self.ctx.owner_id:
             return True
         await interaction.response.send_message(
@@ -437,25 +364,10 @@ class GrindView(discord.ui.View):
             ephemeral=True)
         return False
 
-    @discord.ui.button(label="Keep going", emoji="➕",
-                       style=discord.ButtonStyle.primary, custom_id="keep_going")
-    async def keep_going(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not await self._owner_only(interaction):
-            return
-        view = AddPairView(self.ctx)
-        await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True)
-
-    @discord.ui.button(label="Done", emoji="✅",
-                       style=discord.ButtonStyle.secondary, custom_id="finish")
-    async def finish(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if not await self._owner_only(interaction):
-            return
-        self.ctx.done = True
-        await interaction.response.edit_message(view=GrindView(self.ctx))
-
     @discord.ui.button(label="Again", emoji="🔁",
-                       style=discord.ButtonStyle.secondary, custom_id="again")
+                       style=discord.ButtonStyle.primary, custom_id="again")
     async def again(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        """Re-roll the same line-up. Every pair stays; what changes is how they are mixed."""
         if not await self._owner_only(interaction):
             return
         await interaction.response.defer()

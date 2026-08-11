@@ -442,15 +442,14 @@ def welcome_embeds(guild: discord.Guild) -> list[discord.Embed]:
         name="the four steps",
         value=("1. Go to #the-grinder\n"
                "2. Type `/grind`\n"
-               "3. Pick a beat and a vocal\n"
-               "4. Find out what you've done"),
+               "3. Pick a beat and a vocal. Want something longer? Hit **➕ Add another** and "
+               "stack up to 5 pairs before you build anything.\n"
+               "4. Hit **Grind it** and find out what you've done"),
         inline=False)
     how.add_field(
         name="then what",
         value=("React to it. 🔥 if it goes hard, 💀 if it's a disaster, 😐 if it's mid.\n"
-               "**➕ Keep going** is the good one. Hit it and pick another pair and it gets "
-               "stitched onto the end. Do it up to 5 times and you've built a whole set without "
-               "meaning to.\n"
+               "🔁 **Again** gives you the same songs mixed a different way.\n"
                "📌 sends it to #fresh-grinds if it deserves to live."),
         inline=False)
     how.add_field(

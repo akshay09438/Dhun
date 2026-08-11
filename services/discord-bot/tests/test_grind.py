@@ -199,3 +199,44 @@ def test_the_picker_respects_the_five_pair_cap(monkeypatch):
     v.sel_beat, v.sel_vocal = "b2", "v2"
     # _staged can exceed the cap; the command truncates, so the cap holds either way
     assert len(v._staged()[:botmod.MAX_PAIRS_PER_GRIND]) == botmod.MAX_PAIRS_PER_GRIND
+
+
+def test_a_finished_grind_offers_no_way_to_add_another_pair():
+    """It used to, and it was a lie: the engine cannot stitch a pair onto an existing set. Pressing
+    it rebuilt everything and swapped the audio out - which, mid-playback in The Booth, replaced
+    what people were listening to. Pairs are chosen up front now; a grind is done when it arrives."""
+    import bot as botmod
+
+    class _Ctx:
+        owner_id = 1
+
+    async def make():
+        return botmod.GrindView(_Ctx())
+
+    labels = [i.label for i in asyncio.run(make()).children]
+    assert labels == ["Again", "Pin it"]
+    assert not hasattr(botmod, "AddPairView"), "the append flow should be gone entirely"
+
+
+def test_no_user_facing_text_promises_stitching_onto_an_existing_grind():
+    """The copy said 'hit it and pick another pair and it gets stitched onto the end'. It never
+    did that. This is the guard against the promise creeping back in."""
+    import server_setup
+    import ui
+
+    class _G:
+        name = "Grinder"
+
+    texts = [_flat(ui.help_embed())]
+    texts += [_flat(e) for e in server_setup.welcome_embeds(_G())]
+    texts += [body for _, body in server_setup.CHANNEL_COPY.values()]
+    blob = "\n".join(texts).lower()
+    for phrase in ("keep going", "stitched onto", "stitch it on", "onto the end"):
+        assert phrase not in blob, f"user-facing copy still promises appending: {phrase!r}"
+
+
+def _flat(e) -> str:
+    parts = [e.title or "", e.description or ""]
+    for f in e.fields:
+        parts += [f.name or "", f.value or ""]
+    return "\n".join(parts)

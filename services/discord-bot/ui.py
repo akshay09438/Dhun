@@ -106,21 +106,21 @@ def submit_embed(*, user: discord.abc.User | None, beat: str, vocals: str) -> di
 # State 2 - the finished grind.
 # --------------------------------------------------------------------------------------
 def grind_embed(*, number: int, user: discord.abc.User | None, pairs: list[tuple[str, str]],
-                total_secs: float, just_landed: bool = False,
+                total_secs: float,
                 booth_listeners: int | None = None, queued_behind: int = 0) -> discord.Embed:
     """One card for both shapes. A single pair reads as one line; two or more become a long grind
-    with a numbered running order, because that is the thing the ➕ button builds."""
+    with a numbered running order.
+
+    There is no "just landed" marker any more, because nothing lands after the fact: every pair is
+    chosen up front and the whole set arrives at once."""
     long_grind = len(pairs) > 1
     title = f"GRIND #{number}  ·  by {_who(user)}"
     if long_grind:
         title += f"  ·  long grind  ·  {len(pairs)} tracks"
 
     if long_grind:
-        lines = []
-        for i, (beat, vocals) in enumerate(pairs, start=1):
-            tail = "   ← just landed" if (just_landed and i == len(pairs)) else ""
-            lines.append(f"`{i}`  **{beat}**  ✕  **{vocals}**{tail}")
-        body = "\n".join(lines)
+        body = "\n".join(f"`{i}`  **{beat}**  ✕  **{vocals}**"
+                         for i, (beat, vocals) in enumerate(pairs, start=1))
     else:
         beat, vocals = pairs[0]
         body = f"**{beat}**  ✕  **{vocals}**"
@@ -204,13 +204,14 @@ def help_embed() -> discord.Embed:
     e.set_thumbnail(url="attachment://logo.png")
     e.add_field(
         name="⚙️  /grind",
-        value=("Pick a beat and a vocal, both autocomplete. About 30 seconds later you find out "
-               "what you have done."),
+        value=("Type it on its own and you get a picker: choose a beat, choose a vocal, and hit "
+               "**➕ Add another** to stack up to 5 pairs. Then **Grind it** and the whole lot "
+               "comes back as one continuous set.\n"
+               "In a hurry? `/grind beat: ... vocal: ...` skips the picker."),
         inline=False)
     e.add_field(
-        name="➕  Keep going",
-        value=("The good one. Hit it on any grind and pick another pair, and it gets stitched onto "
-               "the end. Up to 5 and you have built a whole set without meaning to."),
+        name="🔁  Again",
+        value=("Same songs, mixed differently. The line-up stays exactly as you built it."),
         inline=False)
     e.add_field(
         name="🔥 💀 😐",

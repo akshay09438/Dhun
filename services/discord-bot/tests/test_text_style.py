@@ -54,8 +54,7 @@ def _all_card_text() -> list[tuple[str, str]]:
         ("grind_embed", ui.grind_embed(
             number=147, user=None, pairs=[("Father Ocean", "Der Lagi")], total_secs=185)),
         ("grind_embed long", ui.grind_embed(
-            number=148, user=None, pairs=[("A", "B"), ("C", "D")], total_secs=400,
-            just_landed=True)),
+            number=148, user=None, pairs=[("A", "B"), ("C", "D")], total_secs=400)),
         ("grind_embed in booth", ui.grind_embed(
             number=149, user=None, pairs=[("A", "B")], total_secs=200, booth_listeners=4)),
         ("grind_embed queued", ui.grind_embed(

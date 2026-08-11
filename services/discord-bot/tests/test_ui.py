@@ -69,14 +69,16 @@ def test_the_grind_card_hides_the_style_and_the_take():
     assert "take" not in blob and "style" not in blob
 
 
-def test_a_long_grind_numbers_its_running_order_and_flags_the_new_one():
-    e = ui.grind_embed(number=9, user=None, pairs=[("A", "B"), ("C", "D")],
-                       total_secs=400, just_landed=True)
+def test_a_long_grind_numbers_its_running_order():
+    """The running order is the whole point of a long grind: it says what you built, in order.
+    There is no "just landed" marker any more - nothing lands after the fact, because every pair
+    is chosen up front and the set arrives complete."""
+    e = ui.grind_embed(number=9, user=None, pairs=[("A", "B"), ("C", "D")], total_secs=400)
     assert "long grind" in e.title and "2 tracks" in e.title
-    assert "just landed" in e.description
-    # the marker belongs to the pair that just arrived, not the one already there
     first, second = e.description.splitlines()[0], e.description.splitlines()[1]
-    assert "just landed" not in first and "just landed" in second
+    assert "A" in first and "B" in first and first.startswith("`1`")
+    assert "C" in second and "D" in second and second.startswith("`2`")
+    assert "just landed" not in e.description
 
 
 def test_the_booth_banner_says_how_many_are_listening():
@@ -121,7 +123,7 @@ def _every_card():
         ui.submit_embed(user=None, beat="A", vocals="B"),
         ui.grind_embed(number=1, user=None, pairs=[("A", "B")], total_secs=200),
         ui.grind_embed(number=2, user=None, pairs=[("A", "B"), ("C", "D")], total_secs=400,
-                       just_landed=True),
+                       ),
         ui.grind_embed(number=3, user=None, pairs=[("A", "B")], total_secs=200,
                        booth_listeners=4),
         ui.grind_embed(number=4, user=None, pairs=[("A", "B")], total_secs=200, queued_behind=1),
