@@ -71,6 +71,9 @@ _ADDED_COLUMNS = (
     # replay costs no download and writes no new file - and when the disk janitor sweeps an old
     # render, that mix simply drops out of rotation instead of erroring.
     ("grinds", "audio_path", "TEXT"),
+    # Track boundaries inside a SET, as a JSON list of seconds. A set is one continuous file, so
+    # without these a skip could only abandon all five members instead of moving to the next.
+    ("grinds", "seams", "TEXT"),
 )
 
 
@@ -219,6 +222,16 @@ def set_audio_path(number: int, path: str) -> None:
     with _lock:
         c = connect()
         c.execute("UPDATE grinds SET audio_path=? WHERE number=?", (str(path), number))
+        c.commit()
+
+
+def set_seams(number: int, seams: list) -> None:
+    """Remember where each member of a set starts, so /skip can move between them later."""
+    import json
+    with _lock:
+        c = connect()
+        c.execute("UPDATE grinds SET seams=? WHERE number=?",
+                  (json.dumps([round(float(s), 3) for s in seams if s]), number))
         c.commit()
 
 

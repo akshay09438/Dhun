@@ -262,6 +262,9 @@ class GrindContext:
         self.audio_path: Path | None = None      # the WAV, kept for The Booth
         self.number: int | None = None
         self.duration: float = 0.0
+        # Track boundaries inside a SET, filled in when one renders. Empty for a single mix, which
+        # has nothing to skip between.
+        self.seams: list[float] = []
         self._last_line: str | None = None       # the live "what's happening" line, so we only edit on a change
 
     # -- naming -------------------------------------------------------------------------
@@ -361,6 +364,14 @@ class GrindContext:
                     return None
                 await bot.api.fetch_set_audio(set_id, wav)
                 store.set_pairs(self.number, self._store_pairs(), ref_id=set_id)
+                # A set is ONE continuous file. `seam_at` is where each member's crossfade begins,
+                # which is what a listener hears as "the next track" - so /skip can move BETWEEN
+                # the five instead of only abandoning all of them. Some members legitimately have
+                # no seam (no crossfade was created), so the Nones are dropped rather than faked.
+                self.seams = [m.get("seam_at") for m in (res.members or [])
+                              if isinstance(m, dict) and m.get("seam_at")]
+                if self.seams:
+                    store.set_seams(self.number, self.seams)
         except EngineError as e:
             await self._fail(str(e))
             return None
@@ -730,7 +741,14 @@ async def mygrinds_cmd(interaction: discord.Interaction) -> None:
         ephemeral=True)
 
 
-@bot.tree.command(name="skip", description="Skip whatever is playing in your listening room.")
+@bot.tree.command(name="play", description="Start the music in your listening room, or pick up where you stopped.")
+async def play_cmd(interaction: discord.Interaction) -> None:
+    """The command that was missing. Before this, the ONLY way to get Grinder into a room was to
+    finish a grind while sitting in one - somebody who just wanted music had nothing to type."""
+    await interaction.response.send_message(await booth.play(interaction.user), ephemeral=True)
+
+
+@bot.tree.command(name="skip", description="Skip to the next track in your listening room.")
 async def skip_cmd(interaction: discord.Interaction) -> None:
     """ANYONE IN THE ROOM MAY SKIP (founder decision 2026-08-12).
 
@@ -794,10 +812,16 @@ async def on_voice_state_update(member, before, after) -> None:
 
 @bot.tree.command(name="help", description="What Grinder does and how to use it.")
 async def help_cmd(interaction: discord.Interaction) -> None:
-    # The wordmark rides along as an attachment; the embed references it as attachment://logo.png.
-    logo = brand.image_bytes(brand.LOGO)
-    files = [discord.File(brand.LOGO, filename="logo.png")] if logo else []
-    await interaction.response.send_message(embed=ui.help_embed(), files=files, ephemeral=True)
+    """The "Remix anything." banner, not the wordmark disc - the same image #read-this-first uses,
+    so a newcomer sees one identity rather than two. Rooms are passed in as real channels so they
+    render as live links that survive a rename."""
+    name = "remix-banner.jpg"
+    files = ([discord.File(brand.REMIX_BANNER, filename=name)]
+             if brand.image_bytes(brand.REMIX_BANNER) is not None else [])
+    await interaction.response.send_message(
+        embed=ui.help_embed(rooms=booth.rooms(interaction.guild),
+                            banner_name=name if files else None),
+        files=files, ephemeral=True)
 
 
 def configured_channel_ids() -> dict:
@@ -806,6 +830,13 @@ def configured_channel_ids() -> dict:
     return {"grind": CFG.grinder_channel_id, "showcase": CFG.fresh_grinds_channel_id}
 
 
+# ADMINS ONLY, AND HIDDEN FROM EVERYONE ELSE (founder-reported 2026-08-12: "remove /setup from the
+# user interface, otherwise users will play with it"). `default_permissions` makes Discord itself
+# omit the command from the picker for members without the permission - it is not merely a check
+# that fires after they run it, so ordinary members never see it exists. `guild_only` because it
+# restructures a server and is meaningless in a DM.
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.guild_only()
 @bot.tree.command(name="setup", description="Set up this server: channels, roles, emojis and branding.")
 @app_commands.describe(
     refresh_branding="Replace the server icon with Grinder's current artwork (default: leave it alone).")

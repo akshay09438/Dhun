@@ -187,7 +187,7 @@ def test_stop_parks_the_station_so_it_does_not_restart_itself(booth, tmp_path, m
     monkeypatch.setattr(booth_mod.voice_player, "play_in", fake_play_in)
 
     msg = asyncio.run(booth.stop_playback(member))
-    assert "quiet" in msg.lower()
+    assert "/play" in msg, "stopping must tell people how to start it again"
     asyncio.run(booth._play_station(guild))
     assert played == [], "/stop must not be undone by the station starting itself again"
 
@@ -248,3 +248,128 @@ def test_a_departure_with_no_arrival_is_ignored_rather_than_invented():
     assert store.listening_summary()["sessions"] == 0
 
 
+
+
+# --- skipping INSIDE a set, and picking up where you stopped -------------------------------------
+# A set is ONE continuous audio file. Before 2026-08-12 a skip could only abandon all five members,
+# because nothing knew where one track ended and the next began. The engine already records that
+# (`seam_at` per member); these prove the booth uses it.
+
+def _room_with(booth, member_id=2):
+    guild = FakeGuild()
+    room = FakeChannel(10, "Bollywood_House", guild)
+    member = FakeMember(member_id, guild, channel=room)
+    room.members = [member]
+    guild.voice_channels = [room]
+    guild.voice_client = FakeVoiceClient()
+    return guild, room, member
+
+
+def test_skip_moves_to_the_next_track_inside_a_set(booth, tmp_path, monkeypatch):
+    """THE FOUNDER'S CASE: five tracks, half way through, skip should land on the next one - not
+    throw the whole set away."""
+    guild, room, member = _room_with(booth)
+    audio = tmp_path / "set.wav"; audio.write_bytes(b"RIFF")
+    seeks = []
+
+    async def fake_play_in(ch, path, on_finished=None, start_at=0.0):
+        seeks.append(start_at)
+    monkeypatch.setattr(booth_mod.voice_player, "play_in", fake_play_in)
+
+    booth._mark_playing(str(audio), offset=0.0, seams=[160.0, 336.0, 512.0, 701.0])
+    booth._now_started = booth._now_started - 200          # pretend 200s have played
+
+    msg = asyncio.run(booth.skip(member))
+    assert seeks == [336.0], "should seek to the NEXT seam after 200s, not restart or abandon"
+    assert "track 3" in msg
+    assert guild.voice_client.stops == 0, "seeking must not stop playback - that would end the set"
+
+
+def test_skip_past_the_last_track_moves_on_properly(booth, tmp_path, monkeypatch):
+    """At the end of the set there is no next seam, so skip must fall back to ending the track and
+    letting the queue or the station take over."""
+    guild, room, member = _room_with(booth)
+    audio = tmp_path / "set.wav"; audio.write_bytes(b"RIFF")
+    monkeypatch.setattr(booth_mod.voice_player, "play_in",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not seek")))
+    booth._mark_playing(str(audio), offset=0.0, seams=[160.0])
+    booth._now_started = booth._now_started - 300          # past the only seam
+
+    assert asyncio.run(booth.skip(member)) == "Skipped."
+    assert guild.voice_client.stops == 1
+
+
+def test_a_single_mix_has_no_seams_so_skip_just_moves_on(booth, tmp_path, monkeypatch):
+    guild, room, member = _room_with(booth)
+    audio = tmp_path / "mix.wav"; audio.write_bytes(b"RIFF")
+    booth._mark_playing(str(audio), seams=[])
+    assert asyncio.run(booth.skip(member)) == "Skipped."
+    assert guild.voice_client.stops == 1
+
+
+def test_double_skip_does_not_land_back_on_the_seam_just_crossed(booth, tmp_path, monkeypatch):
+    """Without a guard, seeking to 160.0 and immediately skipping again finds 160.0 still 'ahead'
+    and sticks there forever."""
+    guild, room, member = _room_with(booth)
+    audio = tmp_path / "set.wav"; audio.write_bytes(b"RIFF")
+    seeks = []
+
+    async def fake_play_in(ch, path, on_finished=None, start_at=0.0):
+        seeks.append(start_at)
+    monkeypatch.setattr(booth_mod.voice_player, "play_in", fake_play_in)
+
+    booth._mark_playing(str(audio), offset=0.0, seams=[160.0, 336.0])
+    booth._now_started = booth._now_started - 100
+    asyncio.run(booth.skip(member))        # -> 160.0
+    asyncio.run(booth.skip(member))        # must go on to 336.0, not stick at 160.0
+    assert seeks == [160.0, 336.0]
+
+
+def test_stop_remembers_the_position_and_play_resumes_there(booth, tmp_path, monkeypatch):
+    guild, room, member = _room_with(booth)
+    audio = tmp_path / "set.wav"; audio.write_bytes(b"RIFF")
+    resumed = []
+
+    async def fake_play_in(ch, path, on_finished=None, start_at=0.0):
+        resumed.append(start_at)
+    monkeypatch.setattr(booth_mod.voice_player, "play_in", fake_play_in)
+
+    booth._mark_playing(str(audio), offset=0.0, seams=[])
+    booth._now_started = booth._now_started - 90           # 90s in
+
+    asyncio.run(booth.stop_playback(member))
+    guild.voice_client.playing = False                     # the room really is quiet now
+    asyncio.run(booth.play(member))
+
+    assert resumed and 89 <= resumed[0] <= 92, f"should resume near 90s, got {resumed}"
+
+
+def test_stop_no_longer_bins_everybody_elses_queued_grinds(booth, tmp_path):
+    """It used to clear the queue, so one person could discard everyone else's waiting mixes with
+    nobody being told why - a much bigger hammer than 'anyone in the room can stop' implies."""
+    guild, room, member = _room_with(booth)
+    booth.queue.extend(["someone-elses-grind", "and-another"])
+    asyncio.run(booth.stop_playback(member))
+    assert len(booth.queue) == 2
+
+
+def test_play_needs_you_to_be_in_a_room(booth):
+    guild = FakeGuild()
+    assert "join a listening room" in asyncio.run(booth.play(FakeMember(9, guild))).lower()
+
+
+def test_play_on_a_swept_file_falls_back_to_the_station_instead_of_failing(booth, tmp_path,
+                                                                          monkeypatch):
+    """The disk janitor can sweep a mix while the room is paused. /play must not error at somebody
+    - it should just put something else on."""
+    guild, room, member = _room_with(booth)
+    _grind_on_disk(tmp_path, "alive", fires=1)
+    booth._paused_at = (str(tmp_path / "gone.wav"), 42.0, [])    # never existed
+
+    async def fake_play_in(ch, path, on_finished=None, start_at=0.0):
+        pass
+    monkeypatch.setattr(booth_mod.voice_player, "play_in", fake_play_in)
+    guild.voice_client.playing = False
+
+    assert asyncio.run(booth.play(member)) == "Playing."
+    assert booth.station_number is not None

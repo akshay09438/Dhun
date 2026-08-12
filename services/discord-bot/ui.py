@@ -233,38 +233,67 @@ def mygrinds_embed(*, user: discord.abc.User | None, total: int,
     return e
 
 
-def help_embed() -> discord.Embed:
+def help_embed(rooms: list | None = None, banner_name: str | None = None) -> discord.Embed:
+    """What Grinder does, in the fewest fields that still answer a newcomer.
+
+    TWO THINGS THIS GOT WRONG BEFORE (fixed 2026-08-12, founder-reported):
+
+    1. It talked about "The Booth" - a single voice channel that has not existed since the rooms
+       were split into Bollywood_House and Hollywood_Blends. `rooms` is passed in so the real
+       rooms appear as LIVE CHANNEL LINKS that follow a rename, rather than as typed names that
+       rot the moment the founder renames something. This is the same failure mode that left
+       #read-this-first advertising three deleted commands for two versions.
+    2. It never mentioned the listening-room controls, so nobody could discover them.
+
+    Kept deliberately short. The previous version had six fields and read as a wall.
+    """
     e = discord.Embed(
         title=f"🎧  {BOT_NAME}",
         description=("Grinder mashes two songs together. You pick a **beat**. You pick a **vocal**. "
                      "It works out how to make them one track.\n\n"
                      "Sometimes it is incredible. Sometimes it is a war crime. That is the fun part."),
         color=ACCENT)
-    e.set_thumbnail(url="attachment://logo.png")
+    if banner_name:
+        e.set_image(url=f"attachment://{banner_name}")
     e.add_field(
         name="⚙️  /grind",
         # No option form here on purpose: /grind takes no arguments. It used to, and this line
         # outlived the change, so /help was teaching a shortcut that silently does nothing.
-        value=("Type it and a picker opens: choose a beat, choose a vocal, and hit "
-               "**➕ Add another** to stack up to 5 pairs. Then **Grind it** and the whole lot "
-               "comes back as one continuous set."),
-        inline=False)
-    e.add_field(
-        name="🔁  Again",
-        value=("Same songs, mixed differently. The line-up stays exactly as you built it."),
+        value=("Type it and a picker opens: pick a beat, pick a vocal, hit **➕ Add another** to "
+               "stack up to 5 pairs, then **Grind it**.\n"
+               "🔁 **Again** remixes the same songs differently. 🎛️ **/mygrinds** is everything "
+               "you have made."),
         inline=False)
     e.add_field(
         name="🔥 💀 😐",
-        value="React to grinds. Yours and everyone else's. That is how the good ones get found.",
+        value="React to grinds - yours and everyone else's. That is how the good ones get found.",
+        inline=False)
+
+    where = _room_links(rooms) or "a listening room"
+    e.add_field(
+        name="🔊  Listening rooms",
+        value=(f"Sit in {where} and the music plays out loud to everyone in there. "
+               "Grind while you are in one and everybody hears it at the same second.\n"
+               "When nothing is queued the room keeps playing past grinds by itself."),
         inline=False)
     e.add_field(
-        name="🎛️  /mygrinds",
-        value="Everything you have made.",
-        inline=False)
-    e.add_field(
-        name="🔊  The Booth",
-        value=("Grind while you are sitting in The Booth and it plays out loud to everyone in "
-               "there. Ten people finding out together is a better time than doing it alone."),
+        name="⏭️  While the music is on",
+        value=("**/skip** - next track\n"
+               "**/stop** - pause it\n"
+               "**/play** - start it up, or pick up where you stopped\n"
+               "_Anyone in the room can use these._"),
         inline=False)
     e.set_footer(text=f"{BOT_NAME} · go break something")
     return e
+
+
+def _room_links(rooms: list | None) -> str:
+    """Real channel mentions, so a renamed room keeps working. Never typed names."""
+    if not rooms:
+        return ""
+    links = [f"<#{getattr(r, 'id', 0)}>" for r in rooms if getattr(r, "id", None)]
+    if not links:
+        return ""
+    if len(links) == 1:
+        return links[0]
+    return " or ".join([", ".join(links[:-1]), links[-1]])

@@ -22,7 +22,9 @@ what the sign says - and the real playback needs a real room.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -49,6 +51,27 @@ ANNOUNCE_EVERY = 3
 # fall silent, and the rotation resets once everything known has aired.
 STATION_MEMORY = 10
 
+# Pressing skip twice quickly must not land back on the boundary just crossed. Small enough that a
+# deliberate double-skip still moves two tracks.
+_SEAM_GUARD_SECS = 2.0
+
+
+def _seams_of(row) -> list:
+    """Track boundaries stored with a past grind, or none. Tolerant by design: a row written
+    before the column existed, or holding junk, must simply mean "no seams" rather than break the
+    station."""
+    try:
+        raw = row["seams"]
+    except (KeyError, IndexError, TypeError):
+        return []
+    if not raw:
+        return []
+    try:
+        vals = json.loads(raw)
+        return [float(v) for v in vals if isinstance(v, (int, float))]
+    except (TypeError, ValueError):
+        return []
+
 
 class Booth:
     """All Booth state in one object so nothing is a module-level global that a test cannot reset."""
@@ -67,6 +90,13 @@ class Booth:
         self._recently_aired: list[int] = []
         self.station_number: int | None = None
         self._station_paused = False
+        # Where we are in the file that is playing, and where /stop left off. discord.py tracks
+        # neither, so the booth keeps both itself.
+        self._now_path: str | None = None
+        self._now_offset = 0.0
+        self._now_started: float | None = None
+        self._now_seams: list[float] = []
+        self._paused_at: tuple[str, float, list] | None = None
 
     # -- the rooms ------------------------------------------------------------------------
     def is_a_room(self, channel) -> bool:
@@ -162,6 +192,10 @@ class Booth:
         # never do.
         try:
             await voice_player.play_in(room, ctx.audio_path, on_finished=self._advance)
+            # A SET is one continuous file; its seams are where each member's crossfade begins,
+            # which is what a listener hears as "the next track". Without them /skip could only
+            # throw away all five.
+            self._mark_playing(ctx.audio_path, seams=getattr(ctx, "seams", None))
         except Exception:  # noqa: BLE001 - the room going quiet must never kill the bot
             log.exception("booth: could not play grind #%s in %s", ctx.number, room.name)
             await self._say_it_did_not_play(ctx)
@@ -253,6 +287,7 @@ class Booth:
         self.station_number = row["number"]
         try:
             await voice_player.play_in(room, path, on_finished=self._advance)
+            self._mark_playing(path, seams=_seams_of(row))
             log.info("booth: station aired grind #%s in %s", row["number"], room.name)
         except Exception:  # noqa: BLE001 - a failed replay must not end the station
             log.exception("booth: station could not air grind #%s", row["number"])
@@ -268,8 +303,39 @@ class Booth:
         return best
 
     # -- controls ------------------------------------------------------------------------------
+    # -- where we are in the current track ------------------------------------------------------
+    # discord.py has no notion of a playback position, so the booth keeps its own: where in the
+    # file this playback STARTED, and when. Everything below - skipping inside a set, and picking
+    # up where /stop left off - is arithmetic on those two numbers.
+
+    def _mark_playing(self, path: str, *, offset: float = 0.0, seams: list | None = None) -> None:
+        self._now_path = str(path)
+        self._now_offset = float(offset)
+        self._now_started = time.monotonic()
+        self._now_seams = sorted(float(s) for s in (seams or []) if s)
+
+    def elapsed(self) -> float:
+        """How far into the current file we are, in seconds."""
+        if self._now_started is None:
+            return 0.0
+        return self._now_offset + max(0.0, time.monotonic() - self._now_started)
+
+    def _next_seam_after(self, secs: float) -> float | None:
+        """The start of the NEXT track inside the set that is playing, if there is one.
+
+        A set is ONE continuous audio file, so without these boundaries a skip could only throw
+        away the whole set. `seam_at` from the engine's set manifest is where each member's
+        crossfade begins, which is exactly the boundary a listener perceives as 'the next track'.
+
+        A small guard so pressing skip twice quickly does not land back on the seam just passed.
+        """
+        for s in self._now_seams:
+            if s > secs + _SEAM_GUARD_SECS:
+                return s
+        return None
+
     async def skip(self, member) -> str:
-        """Skip whatever is playing in the room this person is sitting in.
+        """Next track. Inside a set that means the NEXT MEMBER of the set, not abandoning all five.
 
         ANYONE IN THE ROOM MAY SKIP (founder decision 2026-08-12). Deliberately not owner-only: a
         bad mix whose owner has wandered off would otherwise hold the room for three minutes. At
@@ -281,23 +347,85 @@ class Booth:
         vc = getattr(room.guild, "voice_client", None)
         if vc is None or not vc.is_playing():
             return "Nothing is playing right now."
-        vc.stop()          # fires the finish callback, which moves to the next one or the station
+
+        seam = self._next_seam_after(self.elapsed())
+        if seam is not None and self._now_path:
+            # Seek forward inside the same file. Stopping and restarting would fire the finish
+            # callback and hand the room to the next grind, losing the rest of the set.
+            path, seams = self._now_path, list(self._now_seams)
+            place = self._now_seams.index(seam) + 2      # human numbering: seam 0 starts track 2
+            try:
+                await voice_player.play_in(room, path, on_finished=self._advance, start_at=seam)
+            except Exception:  # noqa: BLE001
+                log.exception("booth: could not seek to %.2fs", seam)
+                return "Couldn't skip that one."
+            self._mark_playing(path, offset=seam, seams=seams)
+            return f"Skipped to track {place}."
+
+        vc.stop()          # end of the set (or not a set) - the callback takes the next thing
         return "Skipped."
 
     async def stop_playback(self, member) -> str:
-        """Stop the music and clear the room's queue. Also anyone in the room."""
+        """Pause, and REMEMBER WHERE. `/play` picks up from exactly here.
+
+        Deliberately does NOT clear the queue any more. It used to, which meant one person could
+        bin everybody else's waiting grinds without anyone being told why - a much bigger hammer
+        than the founder was choosing when they said 'anyone in the room can stop'.
+        """
         room = self.room_of(member)
         if room is None:
             return "Join a listening room first, then stop."
         async with self._lock:
-            self.queue.clear()
-            self.now_playing = None
+            if self._now_path:
+                self._paused_at = (self._now_path, self.elapsed(), list(self._now_seams))
             self.station_number = None
-            self._station_paused = True   # do not immediately restart the station on the callback
+            self._station_paused = True   # do not let the finish callback restart the station
         vc = getattr(room.guild, "voice_client", None)
         if vc is not None and vc.is_playing():
             vc.stop()
-        return "Stopped. The room is quiet - grind something to start it up again."
+        self._now_started = None
+        where = f" at {int(self._paused_at[1]) // 60}:{int(self._paused_at[1]) % 60:02d}" \
+            if self._paused_at else ""
+        return f"Stopped{where}. Use **/play** to pick up where you left off."
+
+    async def play(self, member) -> str:
+        """Start the music in the room this person is sitting in - and bring Grinder in if it is
+        not already there.
+
+        This is the command that was missing: before it, the ONLY way to get Grinder into a room
+        was to finish a grind while sitting in one. Somebody who just wanted music had nothing to
+        type.
+        """
+        room = self.room_of(member)
+        if room is None:
+            return "Join a listening room first, then play."
+
+        vc = getattr(room.guild, "voice_client", None)
+        if vc is not None and vc.is_playing():
+            return "Already playing."
+
+        self._station_paused = False
+
+        if self._paused_at:
+            path, offset, seams = self._paused_at
+            if Path(path).exists():
+                try:
+                    await voice_player.play_in(room, path, on_finished=self._advance,
+                                               start_at=offset)
+                except Exception:  # noqa: BLE001
+                    log.exception("booth: could not resume")
+                    return "Couldn't start it again."
+                self._mark_playing(path, offset=offset, seams=seams)
+                self._paused_at = None
+                return f"Picking up at {int(offset) // 60}:{int(offset) % 60:02d}."
+            # Swept by the disk janitor while it was paused. Say so plainly and move on rather
+            # than failing - the mix is gone from disk, not from the world.
+            self._paused_at = None
+
+        await self._play_station(room.guild)
+        if self.station_number is None:
+            return "Nothing to play yet. Grind something."
+        return "Playing."
 
     # -- the card banner -----------------------------------------------------------------
     async def _show_live_banner(self, ctx, heard: int, room) -> None:
