@@ -60,18 +60,32 @@ class SpeakerPool:
     most one speaker. Both halves matter: two speakers in the same room would play two different
     grinds over each other, which is worse than silence."""
 
-    def __init__(self, tokens: list[str] | None = None) -> None:
+    def __init__(self, tokens: list[str] | None = None, main_token: str | None = None) -> None:
         # Deduplicated, because pasting the same token twice is an easy mistake and the second
         # copy is not a second identity - it is the SAME login, and Discord would simply move the
         # one connection, silently killing the first room mid-grind.
+        #
+        # `main_token` closes the same hole one step wider, and it is the worse mistake of the two:
+        # pasting the MAIN Grinder's token as an extra. Nothing about it looks wrong - the token is
+        # valid, the login succeeds - but it is the same identity, so the moment the "second" room
+        # started, the FIRST room would go silent mid-song. That reads as a much worse bug than the
+        # one this whole feature fixes, so it is refused here rather than discovered live.
         seen: set[str] = set()
+        main = (main_token or "").strip()
         self.speakers: list[Speaker] = []
         for tok in tokens or []:
             tok = tok.strip()
-            if not tok or tok in seen:
-                if tok:
-                    log.warning("speakers: ignoring a duplicate token - it is the same identity, "
-                                "not a second one, and would steal the first room's connection")
+            if not tok:
+                continue
+            if main and tok == main:
+                log.warning("speakers: ignoring a token that is the MAIN Grinder's own - it is the "
+                            "same identity, not a second one, so it would pull the first room's "
+                            "connection away mid-song. Create a NEW application in the Developer "
+                            "Portal for each extra room.")
+                continue
+            if tok in seen:
+                log.warning("speakers: ignoring a duplicate token - it is the same identity, "
+                            "not a second one, and would steal the first room's connection")
                 continue
             seen.add(tok)
             self.speakers.append(Speaker(len(self.speakers) + 1, tok))

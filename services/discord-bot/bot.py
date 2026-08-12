@@ -159,7 +159,7 @@ class PromptDJBot(discord.Client):
         Runs in `setup_hook` rather than `on_ready` deliberately: on_ready fires again on every
         reconnect, and logging the extras in again each time would burn Discord's identify budget for
         no gain."""
-        pool = speakers_mod.SpeakerPool(CFG.room_tokens)
+        pool = speakers_mod.SpeakerPool(CFG.room_tokens, main_token=CFG.token)
         if len(pool):
             await speakers_mod.bring_online(
                 pool,
