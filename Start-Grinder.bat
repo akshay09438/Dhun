@@ -58,7 +58,11 @@ if exist ".venv-x64\Scripts\python.exe" (
     python -m venv .venv
     ".venv\Scripts\python.exe" -m pip install --quiet --upgrade pip
     ".venv\Scripts\python.exe" -m pip install --quiet -r requirements.txt
-    echo  Installing voice support (best-effort)...
+    REM Parentheses MUST be escaped as ^( ^) inside an if/else block. cmd parses the whole
+    REM block before running any of it, so a bare ) here kills the launcher outright - even
+    REM though this branch never runs on a machine that already has a venv. That is exactly
+    REM how this file silently stopped starting the bot on 2026-08-12.
+    echo  Installing voice support ^(best-effort^)...
     ".venv\Scripts\python.exe" -m pip install --quiet PyNaCl
   ) else (
     echo  [2/3] Bot environment ready ^(ARM build - grinds work, voice will not^).
@@ -69,7 +73,7 @@ echo.
 echo  [3/3] Connecting Grinder to Discord...
 echo  ----------------------------------------------------------------------
 echo   When you see "logged in as Grinder", go to your Discord server and
-echo   type  /mix  - pick a beat and a vocal, and the mix comes right back.
+echo   type  /grind  - pick a beat and a vocal, and the mix comes right back.
 echo   Keep this window open. Close it to take Grinder offline.
 echo  ----------------------------------------------------------------------
 echo.
