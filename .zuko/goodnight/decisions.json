@@ -1,44 +1,41 @@
 {
-  "session": "2026-08-12-goodnight-the-station-and-the-janitor",
+  "session": "2026-08-12-goodnight-the-second-voice",
   "invoked": "/zuko:goodnight",
-  "kickoff_context": "Ran immediately after the session where voice became FOUNDER-CONFIRMED for the first time (a real mix played in #Bollywood_House), and after the launcher bug that had stopped the bot starting at all was found and fixed. The listening rooms are real as of today, which is what unblocks most of tonight's bundle.",
-  "founder_lenses": [
-    "DEVELOPER: build it properly.",
-    "CONSUMER: a person arrives in Discord wanting an INSTANT mix. Two places to make one - the #get-shit-done text channel, and the listening (voice) rooms. Judge every change by what that person feels.",
-    "FOUNDER: maximum convenience for the user, but ZERO money to spend. At every blockage, reason from first principles to a FREE solution."
+  "kickoff_context": "The founder asked for a second Discord bot identity so Bollywood_House and Hollywood_Blends can BOTH have sound at the same time. Established during kickoff, in their words: a Discord bot holds ONE voice connection per SERVER, so today the bot ping-pongs between rooms - every ~3 minutes it walks out of the room it is in, leaving those people in silence, to serve one person next door. Rendering is NOT the bottleneck (measured ~5.5x parallel, ten mixes in 52s). The founder explicitly understood and confirmed that a second identity adds ZERO mix-making capacity - it is a second seat, not a second kitchen. The engine's own ceiling (~8-10 at once, no queue, failures instead of waiting) is a separate job they have parked for later.",
+  "decisions": [
+    {
+      "id": "D1",
+      "question": "What can the second room do?",
+      "answer": "A FULL, EQUAL ROOM.",
+      "detail": "A mix made by someone sitting in Room 2 plays in Room 2 immediately. Its own waiting list, its own /skip, /stop and /play, its own station when it falls quiet. Nobody can tell which room is the 'real' one. Explicitly rejected: making room 2 a replay-only background station, because a mix made there would still wait for room 1's voice and /skip behaving differently per room reads as broken."
+    },
+    {
+      "id": "D2",
+      "question": "What is the second identity called and what does it look like?",
+      "answer": "AN IDENTICAL TWIN - same name 'Grinder', same '# GRINDER' disc.",
+      "detail": "From a listener's side there is simply Grinder, in both rooms; the community never learns there are two. Accepted cost: the server member list shows 'Grinder' twice. The avatar is applied FROM CODE on the speaker's own login, so the founder never opens an image editor or the Developer Portal for artwork."
+    },
+    {
+      "id": "D3",
+      "question": "What does a person see when every voice is busy?",
+      "answer": "TELL THEM WHERE THEY ARE IN LINE.",
+      "detail": "The grind card says the mix is ready and waiting for a free room voice, with a position ('2nd in line'). Grounded in docs/concurrency-diagnosis.md, which ranked 'no queue position shown' as problem #5: people stare at 'grinding...', assume it broke, and press again, which genuinely makes it worse. This is the only case where the app admits out loud that voices are finite."
+    },
+    {
+      "id": "D4",
+      "question": "How fast does a voice leave a room everybody has walked out of?",
+      "answer": "HOLD IT FOR ABOUT 60 SECONDS FIRST.",
+      "detail": "A grace period, deliberately chosen over releasing immediately: stepping out for twenty seconds should not kill the music you were listening to. Accepted cost: for up to a minute a seat is held by an empty room, so another room could be briefly silent while a voice waits. If somebody returns within the grace period the music must still be playing - it is a HOLD, not a stop-and-restart."
+    }
   ],
-  "decisions": {
-    "the_station": "RE-PLAY PAST MIXES, BEST-FIRST. When a room's queue empties it must NOT go silent - it becomes a radio of what the community has already made, ordered favouring mixes people reacted to with fire. Costs no Replicate credit and no new disk, and it makes the reaction data load-bearing. Explicitly NOT auto-grinding fresh pairs on idle (burns credits and disk with nobody necessarily listening).",
-    "the_station_hard_constraint": "THE BOT STILL NEVER JUDGES A MIX. Ordering by human reactions is allowed because those are the community's votes, not Grinder's opinion. But the station must NEVER announce a ranking, call a mix good, show a score, or say anything that reads as a verdict. Silent ordering only. Violating this prejudices the fire/skull/neutral reaction data, which is the real product signal.",
-    "playback_controls": "ANYONE IN THE ROOM can skip or stop. Matches how small friendly Discord rooms actually behave, and at validation scale social pressure handles abuse. Deliberately NOT a skip-vote (fiddly and silly with two people) and NOT owner-only (a bad mix whose owner has left would hold the room for three minutes).",
-    "hosting_research": "HARD ZERO BUDGET. Research genuinely FREE always-on options only, and report honestly on what they can and cannot run - including a straight answer on whether free is possible at all for an always-on bot + engine. No paid comparison shopping. Research only; NO code, NO migration, NO signing up for anything.",
-    "windows_disk_reclaim": "YES - reclaim Windows Update's 7.81 GB download cache plus our own temp/scratch junk, using Windows' own supported cleanup. Found at kickoff: free disk fell 9.28 -> 5.86 GB during the session and Prompt-DJ was NOT the cause (its data folder was unchanged; the founder's test grinds added only 0.51 GB).",
-    "listening_data": "RECORD WHO, WHEN, AND HOW LONG. Discord user id, join time, leave time, and which mix was playing. This is the founder's own server and own members, and it is the minimum that answers 'do people actually listen, and when do they drop off' - the two data gaps recorded as blocking the Discord community phase. Deliberately NOT also linking reactions to individuals this round (more personal data than the question needs).",
-    "catalog_sweep": "RUN IT LAST, CLEAN-AS-YOU-GO. 134 pairs remain of 216. Each render is deleted once judged so disk never accumulates. If it runs out of time or space it PARKS HONESTLY with partial results - partial coverage is still useful, a disk-starved machine reporting false 'bad pair' verdicts is not.",
-    "events_db_cleanup": "YES - clear the placeholder and load-test rows so real numbers are not polluted. Back the file up first and report exactly how many rows went."
-  },
-  "hard_constraints": [
-    "DANGEROUS surfaces are STAGED, never self-applied overnight (ZUKO_OVERNIGHT). Nothing in tonight's bundle is expected to need one - the janitor was deliberately REDESIGNED to leave services/api/app/storage.py byte-identical.",
-    "services/api/app/storage.py MUST NOT be modified. The janitor is a NEW file that calls the existing sweep(target_free_gb=...) and sweep(dry_run=True), both of which already exist. If a task appears to require editing storage.py, STOP and stage it instead.",
-    "workers/render.py and services/api/app/planner/validate.py must NOT be modified. Nothing tonight changes how a mix SOUNDS.",
-    "Never weaken, skip or delete a test to make code pass.",
-    "The 0.03s cache hit is a protected product property - no change may regress it.",
-    "Free only. No paid service, no cloud spend, no new subscription, no sign-ups.",
-    "The bot never judges a mix - see the_station_hard_constraint.",
-    "Nothing merges to main. One integration branch, one morning PR."
+  "standing_rules_that_apply_tonight": [
+    "The founder's Discord server is hand-tuned and OFF LIMITS. Never run /setup, with any flag. Do not touch channels, categories, roles or the server icon.",
+    "The bot NEVER judges a mix - no rating, score, verdict, tempo or key, anywhere, including anything new built tonight.",
+    "Nothing merges to main overnight. One branch, one PR in the morning.",
+    "The founder must paste the second token themselves (it lives behind their Discord login). Until they do, behaviour must be IDENTICAL to today."
   ],
-  "known_state_at_kickoff": {
-    "voice": "FOUNDER-CONFIRMED - a real mix played in #Bollywood_House. No longer a claim.",
-    "launcher": "fixed and merged (PR #32). Was dying on an unescaped bracket before reaching the line that starts the bot.",
-    "disk_free_gb": 5.86,
-    "windows_update_cache_gb": 7.81,
-    "promptdj_data_gb": 12.66,
-    "evictable_renders_gb": 3.54,
-    "protected_songs_stems_analyses_gb": 4.03,
-    "real_render_time_secs": "queue's own rolling average reads 67.4s, against the 25.68s the previous night's profile reported. The profile measured only the mixing stages, not the whole wait. Re-measuring is task 5.",
-    "failures_ever_recorded": "329 events, exactly ONE failure (kind=bug). The declined/quality/resources messages have never fired in reality.",
-    "catalog_coverage": "82 of 216 pairs swept; 8 of 12 beats untested.",
-    "speakers_py": "built and tested, still NOT wired to playback. Multi-room needs founder-created bot identities (GRINDER_ROOM_TOKENS absent from .env)."
-  },
-  "acceptance_owner": "founder (ear + eyes). The agent may not self-certify anything that has to SOUND right, or anything whose proof is 'a person heard it'."
+  "not_tonight": [
+    "The engine's render ceiling / admission control (the 'kitchen waiting list') - the founder chose the second voice first, and agreed this is the next job.",
+    "The leftover staged card 'disk-sweep-floors-and-age' on services/api/app/storage.py from a previous night - still unapplied, surfaced to the founder at kickoff, deliberately left alone."
+  ]
 }
