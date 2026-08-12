@@ -141,16 +141,30 @@ class Deck:
         self.voice = None
 
     def voice_client(self, room):
-        """The connection actually carrying this room's audio, or None.
+        """The connection actually carrying THIS ROOM's audio, or None.
 
-        Read through the holding identity rather than off the room we were handed, for the same
-        reason as `_channel_to_play_into`: `guild.voice_client` differs per client, and reading the
-        main bot's while an extra voice is playing would report 'nothing is playing' in a room that
-        is very much playing."""
+        Two separate ways to read the wrong room's connection, and the founder hit the second one
+        within ten minutes of the feature going live.
+
+        1. Read through the holding identity, not off the room we were handed: `guild.voice_client`
+           differs per client, so the main bot's would report "nothing is playing" in a room an extra
+           voice is very much playing.
+        2. AND CHECK THE CONNECTION IS ACTUALLY IN THIS ROOM. A room with no identity of its own
+           still has a `guild`, and that guild's `voice_client` is whatever the main bot is doing
+           somewhere else. So Hollywood_Blends would look at Bollywood_House's connection, see it
+           busy, and answer "Already playing" - about a room that was silent. One room's controls
+           must never be able to see another room's turntable.
+        """
         voice = self.voice or self.booth.voices.holder_of(self.room_id)
         channel = voice.resolve(room) if voice is not None else room
         guild = getattr(channel, "guild", None) if channel is not None else None
-        return getattr(guild, "voice_client", None)
+        vc = getattr(guild, "voice_client", None)
+        if vc is None:
+            return None
+        where = getattr(getattr(vc, "channel", None), "id", None)
+        if where is not None and where != self.room_id:
+            return None                 # that connection belongs to a different room
+        return vc
 
     # -- playing ------------------------------------------------------------------------------------
     async def play_grind(self, ctx, room) -> None:

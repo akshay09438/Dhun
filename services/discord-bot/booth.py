@@ -152,6 +152,12 @@ class Booth:
         """Said out loud when there is genuinely no identity left to give. Never a shrug: a person
         told 'waiting' will wait, a person told nothing assumes it broke and presses again."""
         n = self.voices.rooms_with_sound
+        # Say WHO holds WHAT at the moment of refusal. The founder hit a refusal saying "one room"
+        # ten minutes after the startup log had said two, and nothing recorded enough to tell which
+        # of them was wrong. A refusal that cannot be explained afterwards is a refusal that gets
+        # guessed at.
+        log.warning("booth: refusing - the box holds %d identities (%s)", n,
+                    ", ".join(f"{v.label} -> room {v.room_id}" for v in self.voices.all_voices))
         rooms = "one room" if n == 1 else f"{n} rooms"
         return (f"Grinder can only have sound in {rooms} at once, and they are all busy. "
                 "This room gets music the moment one frees up.")

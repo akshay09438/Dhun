@@ -316,6 +316,60 @@ def test_a_waiting_grind_outranks_a_replay_in_another_room(plays, tmp_path):
     assert "old" not in [p[1] for p in plays], "a replay must not jump the queue"
 
 
+# --- one room must never read another room's turntable -----------------------------------------------
+# FOUND BY THE FOUNDER, within ten minutes of the feature going live: a room with no identity of its
+# own still has a `guild`, and that guild's `voice_client` is whatever the MAIN bot is doing
+# somewhere else. So the second room looked at the first room's connection, saw it busy, and
+# answered "Already playing" about a room that was completely silent.
+
+class _VCInRoom(FakeVC):
+    """A connection that knows which channel it is actually in - like the real one, and unlike the
+    bare double, which is exactly why this slipped through."""
+
+    def __init__(self, room_id):
+        super().__init__()
+        self.channel = type("Ch", (), {"id": room_id})()
+
+
+def test_a_room_with_no_voice_does_not_see_the_other_rooms_connection(plays):
+    s = Server(extras=1)
+    ana, ben = s.sit(1, s.a), s.sit(2, s.b)
+    asyncio.run(s.booth.on_grind_finished(Ctx(1, ana)))          # room A is playing
+    s.main_guild.voice_client = _VCInRoom(A_ID)                  # ...through the main bot, in room A
+
+    deck_b = s.booth.deck(s.b)
+    s.booth.voices.release(B_ID)                                 # room B holds nothing
+    deck_b.voice = None
+
+    assert deck_b.voice_client(s.b) is None, \
+        "room B must not be handed room A's connection just because they share a guild"
+
+
+def test_play_in_a_silent_room_does_not_answer_already_playing(plays):
+    """THE REPORTED SYMPTOM. /play in the second room replied about the first room's music."""
+    s = Server(extras=1)
+    ana, ben = s.sit(1, s.a), s.sit(2, s.b)
+    asyncio.run(s.booth.on_grind_finished(Ctx(1, ana)))
+    s.main_guild.voice_client = _VCInRoom(A_ID)
+    s.booth.voices.release(B_ID)
+    s.booth.deck(s.b).voice = None
+
+    assert asyncio.run(s.booth.play(ben)) != "Already playing.", \
+        "room B is silent; it must not report the state of room A"
+
+
+def test_skipping_in_a_silent_room_says_so_rather_than_moving_the_other(plays):
+    s = Server(extras=1)
+    ana, ben = s.sit(1, s.a), s.sit(2, s.b)
+    asyncio.run(s.booth.on_grind_finished(Ctx(1, ana)))
+    s.main_guild.voice_client = _VCInRoom(A_ID)
+    s.booth.voices.release(B_ID)
+    s.booth.deck(s.b).voice = None
+
+    assert "nothing is playing" in asyncio.run(s.booth.skip(ben)).lower()
+    assert s.main_guild.voice_client.stops == 0, "room A's track must not have been skipped"
+
+
 # --- an identity that cannot do its job ------------------------------------------------------------
 def test_an_identity_that_cannot_see_the_room_does_not_swallow_it(plays):
     """BY FAR the likeliest real-world misconfiguration: the second bot was invited to the server
