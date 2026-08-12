@@ -266,10 +266,18 @@ def _room_with(booth, member_id=2):
     return guild, room, member
 
 
+# Position, seams and the playback token belong to ONE ROOM - they moved onto its deck when a
+# second room became able to have sound at the same time. The assertions below are unchanged; only
+# the thing being poked at is now named per-room, which is the whole point of the change.
+def _deck(booth, room):
+    return booth.deck(room)
+
+
 def test_skip_moves_to_the_next_track_inside_a_set(booth, tmp_path, monkeypatch):
     """THE FOUNDER'S CASE: five tracks, half way through, skip should land on the next one - not
     throw the whole set away."""
     guild, room, member = _room_with(booth)
+    d = _deck(booth, room)
     audio = tmp_path / "set.wav"; audio.write_bytes(b"RIFF")
     seeks = []
 
@@ -277,8 +285,8 @@ def test_skip_moves_to_the_next_track_inside_a_set(booth, tmp_path, monkeypatch)
         seeks.append(start_at)
     monkeypatch.setattr(booth_mod.voice_player, "play_in", fake_play_in)
 
-    booth._mark_playing(str(audio), offset=0.0, seams=[160.0, 336.0, 512.0, 701.0])
-    booth._now_started = booth._now_started - 200          # pretend 200s have played
+    d._mark_playing(str(audio), offset=0.0, seams=[160.0, 336.0, 512.0, 701.0])
+    d._now_started = d._now_started - 200          # pretend 200s have played
 
     msg = asyncio.run(booth.skip(member))
     assert seeks == [336.0], "should seek to the NEXT seam after 200s, not restart or abandon"
@@ -290,11 +298,12 @@ def test_skip_past_the_last_track_moves_on_properly(booth, tmp_path, monkeypatch
     """At the end of the set there is no next seam, so skip must fall back to ending the track and
     letting the queue or the station take over."""
     guild, room, member = _room_with(booth)
+    d = _deck(booth, room)
     audio = tmp_path / "set.wav"; audio.write_bytes(b"RIFF")
     monkeypatch.setattr(booth_mod.voice_player, "play_in",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not seek")))
-    booth._mark_playing(str(audio), offset=0.0, seams=[160.0])
-    booth._now_started = booth._now_started - 300          # past the only seam
+    d._mark_playing(str(audio), offset=0.0, seams=[160.0])
+    d._now_started = d._now_started - 300          # past the only seam
 
     assert asyncio.run(booth.skip(member)) == "Skipped."
     assert guild.voice_client.stops == 1
@@ -302,8 +311,9 @@ def test_skip_past_the_last_track_moves_on_properly(booth, tmp_path, monkeypatch
 
 def test_a_single_mix_has_no_seams_so_skip_just_moves_on(booth, tmp_path, monkeypatch):
     guild, room, member = _room_with(booth)
+    d = _deck(booth, room)
     audio = tmp_path / "mix.wav"; audio.write_bytes(b"RIFF")
-    booth._mark_playing(str(audio), seams=[])
+    d._mark_playing(str(audio), seams=[])
     assert asyncio.run(booth.skip(member)) == "Skipped."
     assert guild.voice_client.stops == 1
 
@@ -312,6 +322,7 @@ def test_double_skip_does_not_land_back_on_the_seam_just_crossed(booth, tmp_path
     """Without a guard, seeking to 160.0 and immediately skipping again finds 160.0 still 'ahead'
     and sticks there forever."""
     guild, room, member = _room_with(booth)
+    d = _deck(booth, room)
     audio = tmp_path / "set.wav"; audio.write_bytes(b"RIFF")
     seeks = []
 
@@ -319,8 +330,8 @@ def test_double_skip_does_not_land_back_on_the_seam_just_crossed(booth, tmp_path
         seeks.append(start_at)
     monkeypatch.setattr(booth_mod.voice_player, "play_in", fake_play_in)
 
-    booth._mark_playing(str(audio), offset=0.0, seams=[160.0, 336.0])
-    booth._now_started = booth._now_started - 100
+    d._mark_playing(str(audio), offset=0.0, seams=[160.0, 336.0])
+    d._now_started = d._now_started - 100
     asyncio.run(booth.skip(member))        # -> 160.0
     asyncio.run(booth.skip(member))        # must go on to 336.0, not stick at 160.0
     assert seeks == [160.0, 336.0]
@@ -328,6 +339,7 @@ def test_double_skip_does_not_land_back_on_the_seam_just_crossed(booth, tmp_path
 
 def test_stop_remembers_the_position_and_play_resumes_there(booth, tmp_path, monkeypatch):
     guild, room, member = _room_with(booth)
+    d = _deck(booth, room)
     audio = tmp_path / "set.wav"; audio.write_bytes(b"RIFF")
     resumed = []
 
@@ -335,8 +347,8 @@ def test_stop_remembers_the_position_and_play_resumes_there(booth, tmp_path, mon
         resumed.append(start_at)
     monkeypatch.setattr(booth_mod.voice_player, "play_in", fake_play_in)
 
-    booth._mark_playing(str(audio), offset=0.0, seams=[])
-    booth._now_started = booth._now_started - 90           # 90s in
+    d._mark_playing(str(audio), offset=0.0, seams=[])
+    d._now_started = d._now_started - 90           # 90s in
 
     asyncio.run(booth.stop_playback(member))
     guild.voice_client.playing = False                     # the room really is quiet now
@@ -349,6 +361,7 @@ def test_stop_no_longer_bins_everybody_elses_queued_grinds(booth, tmp_path):
     """It used to clear the queue, so one person could discard everyone else's waiting mixes with
     nobody being told why - a much bigger hammer than 'anyone in the room can stop' implies."""
     guild, room, member = _room_with(booth)
+    d = _deck(booth, room)
     booth.queue.extend(["someone-elses-grind", "and-another"])
     asyncio.run(booth.stop_playback(member))
     assert len(booth.queue) == 2
@@ -364,8 +377,9 @@ def test_play_on_a_swept_file_falls_back_to_the_station_instead_of_failing(booth
     """The disk janitor can sweep a mix while the room is paused. /play must not error at somebody
     - it should just put something else on."""
     guild, room, member = _room_with(booth)
+    d = _deck(booth, room)
     _grind_on_disk(tmp_path, "alive", fires=1)
-    booth._paused_at = (str(tmp_path / "gone.wav"), 42.0, [])    # never existed
+    d._paused_at = (str(tmp_path / "gone.wav"), 42.0, [])    # never existed
 
     async def fake_play_in(ch, path, on_finished=None, start_at=0.0):
         pass
@@ -384,6 +398,7 @@ def test_skip_looks_up_seams_when_they_were_never_stored(booth, tmp_path, monkey
     """THE REPORTED BUG. A set made before seams existed must still be skippable, by asking the
     engine rather than depending on when the grind happened to be made."""
     guild, room, member = _room_with(booth)
+    d = _deck(booth, room)
     audio = tmp_path / "oldset.wav"; audio.write_bytes(b"RIFF")
 
     asked = []
@@ -408,15 +423,16 @@ def test_skip_looks_up_seams_when_they_were_never_stored(booth, tmp_path, monkey
 
     asyncio.run(booth._air(room, Row(row), str(audio)))
     assert asked == ["set-abc"], "it must ask the engine when nothing was stored"
-    assert booth._now_seams == [173.12]
+    assert d._now_seams == [173.12]
 
-    booth._now_started = booth._now_started - 100
+    d._now_started = d._now_started - 100
     asyncio.run(booth.skip(member))
     assert seeks[-1] == 173.12, "skip must now seek to the real boundary instead of stopping"
 
 
 def test_a_looked_up_seam_is_written_back_so_it_is_asked_once(booth, tmp_path, monkeypatch):
     guild, room, member = _room_with(booth)
+    d = _deck(booth, room)
     audio = tmp_path / "s.wav"; audio.write_bytes(b"RIFF")
     calls = []
 
@@ -439,6 +455,7 @@ def test_the_station_can_still_advance_after_a_station_track_ends(booth, tmp_pat
     interaction - but while the STATION is on air `now_playing` is None, so the guild came out
     None, rooms(None) returned [], and the room went silent permanently."""
     guild, room, member = _room_with(booth)
+    d = _deck(booth, room)
     a = _grind_on_disk(tmp_path, "a", fires=2)
     b = _grind_on_disk(tmp_path, "b", fires=1)
 
@@ -450,7 +467,7 @@ def test_the_station_can_still_advance_after_a_station_track_ends(booth, tmp_pat
     first = booth.station_number
     assert first is not None
 
-    asyncio.run(booth._advance())               # the track ends
+    asyncio.run(d.advance())               # the track ends
     assert booth.station_number is not None and booth.station_number != first, \
         "the room must keep playing after a station track ends, not fall silent"
 
@@ -465,6 +482,7 @@ def test_a_seek_is_not_undone_by_the_callback_from_the_track_it_replaced(booth, 
     """THE REPORTED BUG. /skip said "Skipped to track 2" and track 2 did not play, because the
     stopped track's finish-callback ran a moment later and started something else."""
     guild, room, member = _room_with(booth)
+    d = _deck(booth, room)
     _grind_on_disk(tmp_path, "other", fires=5)          # what the station would stomp on with
     audio = tmp_path / "set.wav"; audio.write_bytes(b"RIFF")
 
@@ -476,12 +494,12 @@ def test_a_seek_is_not_undone_by_the_callback_from_the_track_it_replaced(booth, 
         captured["cb"] = on_finished                    # the CURRENT track's callback
     monkeypatch.setattr(booth_mod.voice_player, "play_in", fake_play_in)
 
-    booth._mark_playing(str(audio), offset=0.0, seams=[160.0], guild=guild)
-    booth._now_started = booth._now_started - 100
+    d._mark_playing(str(audio), offset=0.0, seams=[160.0], guild=guild)
+    d._now_started = d._now_started - 100
     # The callback the OLD track holds. The token must be captured NOW, by value - reading it
     # later would read the token of whatever replaced it, which is the whole thing being guarded.
-    old_token = booth._play_token
-    stale_cb = lambda: booth._advance(old_token)
+    old_token = d._play_token
+    stale_cb = lambda: d.advance(old_token)
 
     asyncio.run(booth.skip(member))
     assert started[-1] == ("set", 160.0), "the seek itself must happen"
@@ -499,6 +517,7 @@ def test_a_genuine_track_ending_still_advances(booth, tmp_path, monkeypatch):
     """The guard must not make the room deaf to real endings - that would trade one silent-room
     bug for another."""
     guild, room, member = _room_with(booth)
+    d = _deck(booth, room)
     _grind_on_disk(tmp_path, "next", fires=1)
     audio = tmp_path / "cur.wav"; audio.write_bytes(b"RIFF")
 
@@ -506,7 +525,7 @@ def test_a_genuine_track_ending_still_advances(booth, tmp_path, monkeypatch):
         pass
     monkeypatch.setattr(booth_mod.voice_player, "play_in", fake_play_in)
 
-    booth._mark_playing(str(audio), guild=guild)
-    tok = booth._begin_playback()          # the token the CURRENT playback holds
-    asyncio.run(booth._advance(tok))       # it really finished
+    d._mark_playing(str(audio), guild=guild)
+    tok = d._begin_playback()          # the token the CURRENT playback holds
+    asyncio.run(d.advance(tok))       # it really finished
     assert booth.station_number is not None, "a real ending must still hand over to the station"

@@ -127,7 +127,7 @@ class _Ctx:
     def __init__(self, number, room=None):
         self.number = number
         self.message = None
-        self.audio_path = "x.wav"
+        self.audio_path = f"{number}.wav"
         self.duration = 10.0
         user = _Member(in_channel=room)
         self.interaction = type("I", (), {"user": user, "guild": None})()
@@ -139,17 +139,24 @@ class _Ctx:
         return f"grind {self.number}"
 
 
-def test_a_second_grind_waits_rather_than_cutting_in(b, monkeypatch):
-    """A bot holds ONE voice connection per server, so two busy rooms cannot both be served. Even
-    within one room, being interrupted mid-listen spoils the surprise for everyone already in."""
+def _records_what_played(monkeypatch):
+    """Let the REAL playback path run - claiming a voice and all - and record what reached the
+    audio player. Faking `_play` used to be enough; it is not any more, because whether a second
+    room can be served now depends on whether an identity was actually claimed for the first."""
     played = []
 
-    async def fake_play(ctx):
-        played.append(ctx.number)
-        b.now_playing = ctx
+    async def fake_play_in(channel, path, on_finished=None, start_at=0.0):
+        played.append(int(str(path).split(".")[0]))
 
-    monkeypatch.setattr(b, "_play", fake_play)
-    monkeypatch.setattr(b, "_mark_queued", lambda ctx: asyncio.sleep(0))
+    monkeypatch.setattr(boothmod.voice_player, "play_in", fake_play_in)
+    return played
+
+
+def test_a_second_grind_waits_rather_than_cutting_in(b, monkeypatch):
+    """One room, one mix at a time (founder decision 2026-08-11). Being interrupted mid-listen
+    spoils the surprise for everyone already in the room."""
+    played = _records_what_played(monkeypatch)
+    monkeypatch.setattr(b, "_mark_queued", lambda ctx, **kw: asyncio.sleep(0))
 
     room = _Room()
     asyncio.run(b.on_grind_finished(_Ctx(1, room)))
@@ -158,16 +165,12 @@ def test_a_second_grind_waits_rather_than_cutting_in(b, monkeypatch):
     assert [c.number for c in b.queue] == [2]
 
 
-def test_a_grind_from_another_room_also_waits(b, monkeypatch):
-    """Two rooms, one connection. The second waits rather than yanking the bot out of the first."""
-    played = []
-
-    async def fake_play(ctx):
-        played.append(ctx.number)
-        b.now_playing = ctx
-
-    monkeypatch.setattr(b, "_play", fake_play)
-    monkeypatch.setattr(b, "_mark_queued", lambda ctx: asyncio.sleep(0))
+def test_with_one_identity_a_grind_from_another_room_still_waits(b, monkeypatch):
+    """THE REGRESSION THAT MATTERS MOST. A bot application holds ONE voice connection per SERVER,
+    so with nothing extra configured two busy rooms still cannot both be served - and the app must
+    behave exactly as it did before any of the multi-room work existed."""
+    played = _records_what_played(monkeypatch)
+    monkeypatch.setattr(b, "_mark_queued", lambda ctx, **kw: asyncio.sleep(0))
 
     asyncio.run(b.on_grind_finished(_Ctx(1, _Room("one", cid=1))))
     asyncio.run(b.on_grind_finished(_Ctx(2, _Room("two", cid=2))))
@@ -176,19 +179,13 @@ def test_a_grind_from_another_room_also_waits(b, monkeypatch):
 
 
 def test_the_queue_advances_when_a_grind_finishes(b, monkeypatch):
-    played = []
-
-    async def fake_play(ctx):
-        played.append(ctx.number)
-        b.now_playing = ctx
-
-    monkeypatch.setattr(b, "_play", fake_play)
-    monkeypatch.setattr(b, "_mark_queued", lambda ctx: asyncio.sleep(0))
+    played = _records_what_played(monkeypatch)
+    monkeypatch.setattr(b, "_mark_queued", lambda ctx, **kw: asyncio.sleep(0))
 
     room = _Room()
     asyncio.run(b.on_grind_finished(_Ctx(1, room)))
     asyncio.run(b.on_grind_finished(_Ctx(2, room)))
-    asyncio.run(b._advance())
+    asyncio.run(b.deck(room).advance())
     assert played == [1, 2]
     assert b.queue == []
 
@@ -196,8 +193,7 @@ def test_the_queue_advances_when_a_grind_finishes(b, monkeypatch):
 def test_a_grind_made_outside_every_room_never_seizes_the_speakers(b, monkeypatch):
     """Somebody grinding from a text channel is doing a private thing. It must not take over a
     room they are not even in."""
-    played = []
-    monkeypatch.setattr(b, "_play", lambda ctx: played.append(ctx.number))
+    played = _records_what_played(monkeypatch)
     asyncio.run(b.on_grind_finished(_Ctx(1, room=None)))
     assert played == [] and b.queue == []
 
@@ -207,8 +203,9 @@ def test_a_queued_grind_whose_owner_wandered_off_is_skipped(b, monkeypatch):
     is worse than not playing, and it would strand everything queued behind it."""
     monkeypatch.setattr(boothmod.voice_player, "play_in",
                         lambda *a, **k: pytest.fail("must not connect"))
-    asyncio.run(b._play(_Ctx(1, room=None)))
-    assert b.now_playing is None
+    d = b.deck(_Room())
+    asyncio.run(d.play_grind(_Ctx(1, room=None), None))
+    assert d.now_playing is None
 
 
 # --- going to sleep -----------------------------------------------------------------------
@@ -221,13 +218,15 @@ def test_all_rooms_empty_clears_the_queue_and_disconnects(b):
         async def disconnect(self, force=False):
             self.gone = True
 
-    guild = _Guild([_Room()])
+    room = _Room()
+    guild = _Guild([room])
     guild.voice_client = _VC()
     b.queue = [_Ctx(1), _Ctx(2)]
-    b.now_playing = _Ctx(0)
+    d = b.deck(room)
+    d.now_playing = _Ctx(0)
 
     asyncio.run(b._room_empty(guild))
-    assert b.queue == [] and b.now_playing is None
+    assert b.queue == [] and d.now_playing is None
     assert guild.voice_client.gone is True
 
 
@@ -328,7 +327,8 @@ def test_the_live_banner_only_goes_up_after_the_connection_succeeds(b, monkeypat
         raise RuntimeError("voice websocket closed with 4017")
 
     monkeypatch.setattr(boothmod.voice_player, "play_in", boom)
-    asyncio.run(b._play(_Ctx2(1, _Room())))
+    room = _Room()
+    asyncio.run(b.deck(room).play_grind(_Ctx2(1, room), room))
 
     blob = " ".join((e["embed"].description or "") for e in edits if "embed" in e)
     assert "PLAYING LIVE" not in blob, "a failed connection must never claim to be playing"
@@ -342,5 +342,6 @@ def test_a_failed_playout_does_not_count_as_a_session_grind(b, monkeypatch):
 
     monkeypatch.setattr(boothmod.voice_player, "play_in", boom)
     monkeypatch.setattr(b, "_say_it_did_not_play", lambda ctx: asyncio.sleep(0))
-    asyncio.run(b._play(_Ctx(1, _Room())))
+    room = _Room()
+    asyncio.run(b.deck(room).play_grind(_Ctx(1, room), room))
     assert b.grinds_this_session == 0

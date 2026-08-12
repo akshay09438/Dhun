@@ -140,7 +140,8 @@ def submit_embed(*, user: discord.abc.User | None, beat: str, vocals: str,
 def grind_embed(*, number: int, user: discord.abc.User | None, pairs: list[tuple[str, str]],
                 total_secs: float,
                 booth_listeners: int | None = None, room_name: str | None = None,
-                queued_behind: int = 0, voice_failed: bool = False) -> discord.Embed:
+                queued_behind: int = 0, voice_failed: bool = False,
+                waiting_for_voice: bool = False) -> discord.Embed:
     """One card for both shapes. A single pair reads as one line; two or more become a long grind
     with a numbered running order.
 
@@ -167,10 +168,13 @@ def grind_embed(*, number: int, user: discord.abc.User | None, pairs: list[tuple
         where = f"IN {room_name.upper()}" if room_name else "IN VOICE"
         body = f"🔊  **PLAYING LIVE {where}**  ·  {listening}\n\n{body}"
     elif queued_behind > 0:
-        # A statement of position, not a judgement. A bot can hold only one voice connection per
-        # server, so a grind finishing while another is playing waits rather than interrupting.
+        # A statement of position, not a judgement. Two different reasons to wait, and telling them
+        # apart matters: "the room is busy" is a queue you are in, and "every voice is busy" is a
+        # limit on how many rooms can have sound at once. Somebody staring at "grinding..." with no
+        # explanation assumes it broke and presses the button again, which genuinely makes it worse.
         nxt = "next up" if queued_behind == 1 else f"{queued_behind} ahead of it"
-        body = f"🔊  waiting for the room  ·  {nxt}\n\n{body}"
+        why = "waiting for a free voice" if waiting_for_voice else "waiting for the room"
+        body = f"🔊  {why}  ·  {nxt}\n\n{body}"
 
     e = discord.Embed(title=f"🎧  {title}", description=body, color=ACCENT)
     _author(e, BOT_NAME)
