@@ -156,3 +156,24 @@ made about a change that reshapes exactly what those tests poke at.
 | Mutation check: re-inject the shared-connection bug     | **6 tests fail**, as they should                          |
 | Mutation check: re-inject the settings-wiping behaviour | **4 tests fail**, as they should                          |
 | Sound out of a second identity                          | **unproven — needs your ears**                            |
+
+---
+
+## How this was reviewed, honestly
+
+The overnight process normally puts a dangerous change in front of a panel of fresh reviewers before
+anything is applied. **That panel was not run here, and it was not meant to be**: it exists for
+changes that touch the handle-with-care files, and this bundle touched none of them.
+
+What was done instead is arguably harder evidence: **mutation testing.** I deliberately re-broke the
+two things most likely to be wrong and confirmed the tests catch them.
+
+- Made every identity reuse the main bot's channel object — the bug where both rooms quietly share
+  one connection and the log still looks healthy. **6 tests failed.** Reverted.
+- Restored the old "overwrite the whole settings file" behaviour. **4 tests failed.** Reverted.
+
+A test that has never been seen to fail is a guess. Those two have now been seen to fail for the
+right reason.
+
+**What that still does not cover:** any of it coming out of a real speaker. That is the one thing
+only you can check.
