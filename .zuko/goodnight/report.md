@@ -1,179 +1,150 @@
-# Morning report — the second voice
+# Morning report — the hygiene batch, the Panda question, and your costing
 
-_Overnight run of 2026-08-12 night 3. Branch `feat/second-grinder-voice`. Nothing was merged to `main`._
-
----
-
-## The short version
-
-**Everything I said I would build is built, tested and on a branch.** Nothing was staged for your
-approval, because this whole job touched **none** of the handle-with-care files — the mixing engine,
-the quality referee and the file-deleter were never opened.
-
-**But the second room will still be silent when you wake up**, and that is expected, not a failure.
-The one step I cannot do is create the second bot's token — that lives behind your Discord login.
-It takes about two minutes and it is step 2 of the test sheet below.
-
-**One thing genuinely unproven:** that sound actually comes out of a second identity. I can prove
-every _decision_ it makes — 58 new tests do — but a fake voice client is always more forgiving than
-Discord, which is exactly how seven bugs shipped past a green suite on 2026-08-11. **The status of
-that one line is "built, reviewed, unheard."** Your ears settle it.
+_Overnight run of 2026-08-12, after you confirmed two rooms playing at once. Branch
+`feat/second-grinder-voice`. Nothing merged to `main`. Nothing staged for your approval — this batch
+touched none of the handle-with-care files._
 
 ---
 
-## What is done
+## First, the thing that matters
 
-|                                                      |                                                                                                                                           |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| **Two rooms can hold sound at once**                 | Each room has its own everything now — what is playing, its own waiting list, its own position, its own station.                          |
-| **`/skip`, `/stop`, `/play` are per-room**           | Skipping in Hollywood_Blends cannot touch Bollywood_House. It has no way to name it.                                                      |
-| **The extra Grinder is an identical twin**           | Same name, same "# GRINDER" disc, applied from code. It never speaks, never posts, never takes a command.                                 |
-| **Waiting people are told where they are**           | "waiting for a free voice · 2nd in line" instead of a silent "grinding…".                                                                 |
-| **An empty room keeps its voice ~60s**               | Step out for twenty seconds and the music is still playing when you come back.                                                            |
-| **Nothing changes until you paste a token**          | With none configured there is exactly one voice and the app behaves precisely as it did before. Its own regression tests hold it to that. |
-| **Saving a token no longer wipes your settings**     | See below — this was the nastiest thing I found.                                                                                          |
-| **A bad second token cannot hurt the first Grinder** | If it will not log in, one honest line in the log and the community carries on with the rooms that work.                                  |
-
-### The nasty one, fixed before it could bite you
-
-`Set-Grinder-Token.bat` wrote your settings file with a single `>`, which **overwrites the whole
-file**. Running it a second time — the obvious thing to do after resetting a token — would have
-silently thrown away your server id and all four channel ids. The bot would have come back up with
-no rooms, no status message and no showcase, **and nothing in the log saying why**, because from its
-point of view those settings simply were not configured any more.
-
-This was recorded as a known, unfixed hazard in the last handoff. It is fixed now, with tests, and
-I re-injected the old behaviour to confirm the tests actually catch it (they do — four of them fail).
-
-Both scripts also now genuinely **hide the token as you type it**. The old one promised that while
-using a command that echoes every character.
-
-And pasting the _main_ Grinder's own token as an extra is now refused outright. It would have looked
-completely fine — valid token, successful login — but it is the same identity, so the moment the
-"second" room started, **the first room would have gone silent mid-song**. That would have read as a
-far worse bug than the one being fixed.
+**Two rooms play at the same time, you heard it, and nothing starts on its own any more.** That is
+the wall that was structurally impossible this morning, broken and confirmed by your own ears. The
+rest of this is tidying up around it.
 
 ---
 
-## Your test sheet
+## 1. Your question: do both bots follow the same rules?
 
-Do these in order. Steps 1 and 2 are the only ones that need anything from you.
+**Yes — and not because the second one was written carefully. Because it has no rules in it.**
 
-**1. Check nothing broke, before adding anything.**
-Run `Start-Grinder.bat` as normal. Everything should work exactly as it does today. In the Grinder
-window you should see:
+I grepped every single thing the extra identity is ever asked to do. The complete list is four calls:
+look up its own copy of a room, clear its voice state at startup, read its own user to set its
+picture, and store its login. **There is no fifth.**
 
-> `voices: one Grinder - ONE room can have sound at a time.`
+It cannot post, so it cannot judge a mix. It cannot render, so it cannot bypass the quality referee.
+It cannot pick songs, plan an arrangement, or read a command. It is handed a finished file and plays
+it.
 
-**Expected:** `/grind`, `/play`, `/skip`, `/stop` all behave exactly as they did yesterday.
+Written up with the evidence in **`docs/second-voice-hygiene-audit.md`**, including the one-line grep
+so you can re-run it yourself any time.
 
-**2. Create the second identity.** (~2 minutes, in your browser.)
-Discord Developer Portal → you already have a spare application, `1535993733269684334`, that is not
-in the server — use it, or make a new one. Then: **Bot → Reset Token → Copy.** Invite it to your
-server with the same permissions as Grinder, and make sure it can **See** and **Connect to** your
-listening-rooms category. _(You do not need to set its picture — Grinder does that itself.)_
+## 2. Your question: why wasn't Panda sung?
 
-**3. Paste it in.**
-Double-click **`Add-Grinder-Rooms.bat`**. Paste the token, press Enter, then press Enter again on the
-empty line to finish.
+**It is not the arrangement's fault — and I can prove that much.**
 
-**Expected:** nothing appears on screen as you paste, and it ends with
+The plan puts Panda's vocal into the mix three times. Two of those land fully inside the clip you
+actually heard: **87 seconds of Panda in a 220-second clip, 40% of it.** For contrast, Father Ocean's
+own vocal appears for 6.3 seconds. So the mix didn't forget him and the crop didn't skip him.
 
-> `Saved. Grinder can now have sound in 2 rooms at the same time.`
+The engine also flagged that pair as awkward at the time, in its own words: _122 BPM beat against a
+72 BPM vocal — about twice apart._ Panda was squeezed to 85% of his length and pitched down a
+semitone. That is right on the recorded warble threshold.
 
-**4. Check your other settings survived.**
-Run `Start-Grinder.bat` again.
+**What I could not finish:** proving whether the vocal actually survived into the finished audio. Two
+suspects with opposite fixes — either it's there and buried (a known, parked issue where vocals sit
+6–8 dB under the beat on _every_ mix), or it never made it into the render. The measurement that
+tells them apart needs the mix file, and **it was deleted off the disk by tonight's catalog sweep**
+before I got to it.
 
-**Expected:** the log does **not** complain that any channel id is missing, and it now says:
+That costs almost nothing to recover: a mix's id is a hash of its inputs, so re-running that pair
+regenerates a byte-identical file. **Re-render, run the probe, get a verdict — about a minute.**
 
-> `voices: 1 extra identities - up to 2 rooms can have sound at the same time`
+**I did not touch the vocal chain.** A loudness fix applied to a render bug changes nothing, and that
+file is handle-with-care.
 
-**5. Look at the server.**
-**Expected:** a second Grinder in the member list, wearing the same "# GRINDER" disc.
+One thing worth your seeing: my _first_ attempt at that measurement gave an answer that looked
+convincing and was wrong — the arrangement's own energy arc swamped it. It's written up as a
+discarded method, not dressed up as a finding.
 
-**6. The real test — two rooms at once.**
-Easiest with two people (or your phone as the second). One person sits in `#Bollywood_House`, the
-other in `#Hollywood_Blends`. Both `/grind`.
+## 3. Your ask: make every song play
 
-**Expected:** both rooms play **at the same time**. The first room's music does **not** stop when the
-second one starts.
+The never-decline rule already means no pair is refused for tempo or key. The only thing that can
+still stop a mix is the referee catching a render that genuinely sounds bad — **and I didn't disable
+that**, because it's the guard that stops the app quietly shipping mush.
 
-**On your own instead:** `/grind` in `#Bollywood_House` and let it start playing. Then move yourself
-to `#Hollywood_Blends` and type `/play`. **Expected:** music starts in Hollywood_Blends, and if you
-look at the channel list, **both** Grinders are sitting in **both** rooms at once with the speaker
-icon lit. You can only hear one, but you can see both.
+Instead I swept the catalog for real and, for the first time, **recorded WHY each failure failed.**
+The engine's own log already knew; nothing was reading it.
 
-**7. Skip in one room only.**
-While both rooms are playing, `/skip` in one.
-**Expected:** that room moves on; the other one carries on undisturbed.
+**Result so far (77 pairs, sweep still running):**
 
-**8. Stop in one room only.**
-`/stop` in one room.
-**Expected:** that room stops; the other one keeps playing.
+|                                         |                    |
+| --------------------------------------- | ------------------ |
+| Failed                                  | 10 of 77 — **13%** |
+| ...of which the machine was simply full | 4                  |
+| **Genuine pair failures**               | **6 of 77 — 7.8%** |
 
-**9. The minute of grace.**
-Leave a playing room and come back within a minute.
-**Expected:** the music is still going — it never paused.
+**That 29.6% figure you were told before was wrong**, exactly as suspected — it counted a starved
+machine as broken songs. The real number is under 8%, and the offenders are specific: **Khuda Jaane
+fails 2 of 4 tries** (the known one), while Father Ocean fails 3 of 24 and I Adore You 1 of 20 —
+which is noise, not a broken song.
 
-**10. Leaving properly.**
-Leave a room and stay out for more than a minute.
-**Expected:** that Grinder leaves the channel.
+The sweep was still running when I wrote this. **`scripts/loadtest/sweep_report.py` reads the answer
+straight out of the engine's log**, so it doesn't matter whether the sweep finishes cleanly — the
+result is recoverable either way. That is new, and it's why last time's numbers had to be
+reconstructed by hand.
 
-**If anything is wrong**, the useful thing to send me is the lines in the Grinder window that start
-with `voices:` or `booth:` — they say which identity took which room and why.
+## 4. Your ask: an accurate cost to launch for 200–500 people
 
----
+**`docs/launch-costing-200-500-users.md`** — all three usage cases side by side, as you asked.
 
-## What I did NOT do, and why
+**The short version: about $20 a month for a normal community.**
 
-- **No extra mix-making capacity.** You and I settled this at kickoff: a second identity is a second
-  seat, not a second kitchen. The engine still tops out around 8–10 at once, and past that it still
-  **fails** rather than queueing. That is the next job and I think it is the more urgent one now,
-  because two working rooms means more people grinding at the same time.
-- **I did not touch your Discord server.** No `/setup`, no channels, no categories, no roles, no
-  server icon.
-- **Nothing was merged to `main`.** One branch, one PR, your call.
-- **The leftover decision from an earlier night is still waiting**: "Clean up disk earlier, and clear
-  out stale mixes on a timer" — it would start tidying at 4 GB free instead of 2 GB, and it touches
-  the file that deletes finished mixes, so it was correctly never applied. Still on your desk.
+The two things everyone assumes are expensive are free. **Members are free. Listening is free** — a
+room with 200 people in it costs exactly the same as an empty one, because playback replays a file
+that already exists. A song is paid for **once, ever** (~2–6¢) and is then free forever.
 
-## Where I was wrong at kickoff
+**The only thing that costs money is somebody pressing `/grind`: about 1.5 cents.**
 
-I told you all 245 existing bot tests would pass untouched. **17 of them did not** — they reached
-directly into the old single-room internals, so I re-pointed them at the new per-room structure with
-their assertions unchanged. Nothing was weakened, but "untouched" was a promise I should not have
-made about a change that reshapes exactly what those tests poke at.
+|                      | Light | **Baseline** | Heavy   |
+| -------------------- | ----- | ------------ | ------- |
+| Mixes per month      | ~130  | **~1,100**   | ~19,000 |
+| Cost on free hosting | ~$2   | **~$20**     | ~$340   |
 
-## Verification, real output
+**And the most important line in the document: the cliff is the machine, not the money.** There is no
+queue in the mix-making code — past about 8–10 at once it runs out of memory and _fails_ people's
+mixes instead of making them wait. Buying a server before building the waiting list gets you a faster
+machine that falls over the same way.
 
-| Check                                                   | Result                                                    |
-| ------------------------------------------------------- | --------------------------------------------------------- |
-| Discord bot suite                                       | **303 passed** (245 at session start; +58 new, 0 removed) |
-| Backend, full                                           | **768 passed** in 229s                                    |
-| Web                                                     | **78 passed**, 9 files                                    |
-| Typecheck / lint                                        | clean                                                     |
-| `render.py` / `validate.py` / `storage.py`              | **untouched** — confirmed by diff                         |
-| Mutation check: re-inject the shared-connection bug     | **6 tests fail**, as they should                          |
-| Mutation check: re-inject the settings-wiping behaviour | **4 tests fail**, as they should                          |
-| Sound out of a second identity                          | **unproven — needs your ears**                            |
+Every claim is marked with how confident I am and where the number came from.
+
+## 5. Fixed on the way
+
+**No more ghost bots.** Tonight's lost hour was an invisible Grinder from 18:34 still running behind
+a closed window. `Start-Grinder.bat` now clears the shift before starting. Four tests, one of which
+fails if that guard is ever moved to the wrong place.
 
 ---
 
-## How this was reviewed, honestly
+## Where I was wrong tonight
 
-The overnight process normally puts a dangerous change in front of a panel of fresh reviewers before
-anything is applied. **That panel was not run here, and it was not meant to be**: it exists for
-changes that touch the handle-with-care files, and this bundle touched none of them.
+Twice, and both times I sounded more certain than the evidence justified.
 
-What was done instead is arguably harder evidence: **mutation testing.** I deliberately re-broke the
-two things most likely to be wrong and confirmed the tests catch them.
+1. **I told you the auto-play was still happening because you hadn't restarted.** You had. The real
+   cause was the ghost bot, and I only found it by listing the processes on your machine — which I
+   should have done first, since I can.
+2. **I blamed the timeouts on you clicking inside the console window.** Plausible, well-known, and
+   wrong. Same ghost bot. That one sent you chasing something that didn't matter.
 
-- Made every identity reuse the main bot's channel object — the bug where both rooms quietly share
-  one connection and the log still looks healthy. **6 tests failed.** Reverted.
-- Restored the old "overwrite the whole settings file" behaviour. **4 tests failed.** Reverted.
+The lesson recorded in the handoff: when it's your machine, look at your machine before theorising.
 
-A test that has never been seen to fail is a guess. Those two have now been seen to fail for the
-right reason.
+---
 
-**What that still does not cover:** any of it coming out of a real speaker. That is the one thing
-only you can check.
+## Do first when you're back
+
+1. **Re-render Father Ocean × Panda and run the probe.** One minute, and it decides whether the vocal
+   fix is a loudness change or a bug hunt.
+2. **Open and merge the PR.**
+3. **Build the render waiting list.** It's the next agreed job, and the costing makes the case: it
+   removes the only cliff that actually breaks a launch night, and it costs nothing to run.
+4. **The disk-cleanup card** from an earlier night is _still_ sitting unapplied on your desk.
+
+## Verification
+
+| Check                                                                        | Result                                                |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Discord bot suite                                                            | **307 passed** (245 at session start)                 |
+| Backend / web / typecheck / lint                                             | **768 / 78 / clean / clean**                          |
+| `render.py`, `validate.py`, `storage.py`                                     | **untouched**                                         |
+| Three mutation checks (shared connection, `.env` overwrite, cross-room read) | each re-broken on purpose, each caught, each reverted |
+| Two rooms with sound at once                                                 | **confirmed by you, by ear**                          |
