@@ -12,7 +12,7 @@ because from its point of view those settings simply were not configured. This i
 walks the founder into that script, so it is fixed here.
 
 WHAT THESE COVER: the writing, which is where the damage was. The prompting (hidden input, the
-refusal to accept the main bot's own token) lives in Set-GrinderSecret.ps1 and needs a person at a
+refusal to accept the main bot's own token) lives in Ask-For-Token.ps1 and needs a person at a
 keyboard - it is on the morning test sheet instead.
 """
 from __future__ import annotations
@@ -157,3 +157,39 @@ def test_the_main_grinders_own_token_is_refused_as_an_extra():
 def test_without_a_main_token_nothing_changes():
     """Every existing caller passes no main token; they must behave exactly as before."""
     assert len(speakers.SpeakerPool(["a", "b"])) == 2
+
+
+# --- the double-click scripts must actually be able to find their helpers ---------------------
+# CAUGHT FOR REAL while building this: the prompting helper was first called "Set-GrinderSecret.ps1",
+# whose name matches the repo's `*secret*` ignore rule - so `git add` silently skipped it, and a
+# fresh clone would have had a .bat pointing at a file that was not there. It worked perfectly on
+# the one machine that happened to have it, which is the worst shape of bug for a founder-facing
+# script. Renamed to Ask-For-Token.ps1; these two make sure it cannot happen again.
+
+REPO = Path(__file__).resolve().parents[3]
+BATS = [REPO / "Set-Grinder-Token.bat", REPO / "Add-Grinder-Rooms.bat"]
+
+
+def _referenced_scripts():
+    import re
+    found = []
+    for bat in BATS:
+        for m in re.finditer(r'["\']?([\w\\/.-]*scripts[\\/][\w.-]+\.ps1)', bat.read_text(encoding="utf-8")):
+            found.append((bat.name, m.group(1).replace("\\", "/")))
+    return found
+
+
+def test_every_helper_a_double_click_script_calls_actually_exists():
+    refs = _referenced_scripts()
+    assert refs, "the .bat files should be calling the PowerShell helpers"
+    for bat_name, rel in refs:
+        assert (REPO / rel).is_file(), f"{bat_name} calls {rel}, which is not there"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="no git on this machine")
+def test_those_helpers_are_actually_committed():
+    """Existing on THIS machine is not enough - an ignored file is missing for everybody else."""
+    for bat_name, rel in _referenced_scripts():
+        r = subprocess.run(["git", "check-ignore", rel], cwd=REPO,
+                           capture_output=True, text=True, timeout=30)
+        assert r.returncode != 0, f"{bat_name} calls {rel}, which git is ignoring - it will not ship"

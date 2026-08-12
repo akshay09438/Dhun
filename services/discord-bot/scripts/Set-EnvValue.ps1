@@ -18,7 +18,7 @@
   setting that looks changed and is not.
 
   It never prints the value. Deliberately non-interactive so it can be tested; the prompting lives in
-  Set-GrinderSecret.ps1.
+  Ask-For-Token.ps1.
 #>
 [CmdletBinding()]
 param(

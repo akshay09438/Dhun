@@ -44,7 +44,7 @@ echo   Paste one token per extra room below. Nothing appears on screen as you
 echo   paste. Press Enter on an empty line when you are done.
 echo.
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "services\discord-bot\scripts\Set-GrinderSecret.ps1" -Path "services\discord-bot\.env" -Key GRINDER_ROOM_TOKENS -Prompt "Token for Grinder" -Multiple
+powershell -NoProfile -ExecutionPolicy Bypass -File "services\discord-bot\scripts\Ask-For-Token.ps1" -Path "services\discord-bot\.env" -Key GRINDER_ROOM_TOKENS -Prompt "Token for Grinder" -Multiple
 
 if errorlevel 1 (
   echo.

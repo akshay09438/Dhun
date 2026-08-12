@@ -25,7 +25,7 @@ echo   Nothing appears on screen as you paste. That is deliberate - a token left
 echo   in this window's scrollback is a token that has to be reset.
 echo.
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "services\discord-bot\scripts\Set-GrinderSecret.ps1" -Path "services\discord-bot\.env" -Key DISCORD_TOKEN -Prompt "Paste bot token"
+powershell -NoProfile -ExecutionPolicy Bypass -File "services\discord-bot\scripts\Ask-For-Token.ps1" -Path "services\discord-bot\.env" -Key DISCORD_TOKEN -Prompt "Paste bot token"
 
 if errorlevel 1 (
   echo.

@@ -4,103 +4,81 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
-2026-08-12 (**session 6 — the founder heard it, the launcher bug that nearly stopped them, and the room stops going silent**). Branch `zuko/goodnight-2026-08-12-night2`, **7 commits.** **Nothing is staged and nothing is waiting for you** — that is the difference from last night, and it was engineered rather than lucky. **All suites green.**
+2026-08-12, **session 8 — `/zuko:goodnight`: THE SECOND VOICE (two listening rooms with sound at the same time)**. Branch `feat/second-grinder-voice`, 5 commits, **PR not opened yet**. `main` is at `2c1e9f9` (PR #34, the application icon, merged by the founder). **All suites green: Discord bot 303, backend 768, web 78, typecheck + lint clean.** Nothing is staged and nothing is half-written.
 
-**⚠️ THE ONE THING TO READ FIRST: voice is now FOUNDER-CONFIRMED.** The founder ran `/grind`, sat in `#Bollywood_House`, and heard a real mix play. Every hedge in every document about voice being "agent-proven but not heard" is settled. The listening rooms are real.
+**⚠️ READ FIRST: do NOT run `/setup` on the founder's live Discord server — any flag, including `refresh_branding:True`.** It recreates its default channels beside the ones the founder has renamed and reorganises their categories. It did exactly that on 2026-08-12; they restored the layout by hand and said **"never change it from this now."** Use `scripts/refresh_copy.py` (dry-run by default, creates no channels) or do nothing. **The server icon is deliberately left un-updated** — it is not worth the risk.
+
+**Voice itself is FOUNDER-CONFIRMED** (2026-08-12): they ran `/grind`, sat in `#Bollywood_House`, and heard a real mix play. Every older hedge about voice being "agent-proven but not heard" is settled. What is _not_ settled is the SECOND identity — see the top of the re-verify list.
 
 ---
 
 ## Where things stand
 
-Two sessions ran today: an interactive morning (`/zuko:start` → debugging → PR #32 merged to `main`) and an overnight batch (`/zuko:goodnight`, 11 tasks, 8 product decisions batched at kickoff — see [.zuko/goodnight/decisions.json](../.zuko/goodnight/decisions.json)).
+**Grinder plays real mixes out loud in real rooms.** `/grind`, `/skip` (including inside a set), `/stop`, `/play`, the language switch and the logo are all confirmed by the founder's own testing. Their words on the tempo question: _"the Silence x Der Lagi Lekin is sounding crazily perfect."_
 
-**The morning's headline was a bug that made the whole app look dead.** Every `/grind` answered _"The application did not respond"_. Nothing was wrong with the bot — **the bot was never running.** `Start-Grinder.bat` contained `echo Installing voice support (best-effort)...` inside an `if/else`; cmd.exe parses a whole block before executing any of it, so the bare `)` closed the block early and the launcher died with `... was unexpected at this time` right after step [1/3], never reaching the line that starts the bot. **The offending line sits on a branch that never runs on a machine that already has its virtualenv** — an unreachable line killing the entire script.
+**Shipped this session (on a branch, not merged): a second Grinder identity, so two rooms can have music at once.**
 
-**The lesson, recorded because it cost real time:** the previous handoff flagged that file as _"edited but never run end to end"_. That claim was **true**, and I closed it by re-reading the code and declaring it fine. Reading cannot catch this class of bug. **Running it can, and did, in ninety seconds.** Six tests now pin it, including one that fails if the launcher ever again names a command the bot does not have — it was telling newcomers to type `/mix`, which does not exist.
+The wall: a Discord bot application holds ONE voice connection per SERVER, not per room. So while one room played, every other was silent — and when a grind from a second room reached the front of the queue, the bot **walked out** of the room it was in, leaving those people in silence, to serve one person next door. The median mix is 189 s, so five waiting meant the last person waited ~13 minutes for a mix the engine had built in about 30 seconds. Rendering was never the bottleneck (measured ~5.5x parallel).
 
-**The overnight batch then built what voice-working made possible for the first time.**
+- **`voices.py`** — a `Voice` is one identity that can hold one room; `VoiceBox` hands them out, **main first**, so zero extras behaves exactly as before.
+- **`deck.py`** — a `Deck` is one room's playback (what is on air, position, seams, paused-at, playback token, station memory, the identity it borrowed).
+- **`booth.py`** — rewritten as the coordinator over the decks, one global queue, and the server-wide bits.
+- **`bot.py::bring_extra_voices_online`** — logs each `GRINDER_ROOM_TOKENS` identity in at startup, drops any that will not come up with one honest line, clears each one's zombie voice session, applies the `# GRINDER` disc per identity.
+- **Both `.bat` token scripts rewritten** — see the fixed hazard below.
 
-- **The station.** A room used to play one grind and go **silent**, bot still sitting in it, until the last person left. Now an empty queue falls through to replaying past grinds, ordered favouring 🔥. Walking into a quiet room starts it. **The bot still never judges a mix** — the ordering is over the community's own votes, and is never announced, shown, or hinted at.
-- **`/skip` and `/stop`**, open to anyone in the room. Not owner-only (a bad mix whose owner left held the room for three minutes); not a skip-vote (silly with two people).
-- **Listening data** — arrivals, departures, time in room. The two gaps recorded as blocking the community phase, and unmeasurable while rooms were quiet.
-- **`app/janitor.py`** — a disk timer holding a 6 GB cushion, with a **futility brake** that deletes nothing when clearing everything still would not reach the cushion.
-- **`editbudget.py`** — ten cards in one channel now share Discord's per-channel edit allowance.
+**The load-bearing detail, if this ever needs debugging:** a channel object belongs to the client that fetched it, and `voice_player.play_in` reads `channel.guild.voice_client`, which is per-client state. Each identity therefore resolves its **own** copy of the room before playing. Get that wrong and both rooms quietly share one connection — which sounds exactly like the bug being fixed and looks perfectly healthy in the log. `voice_player.py` itself is unchanged.
 
----
+**Founder decisions taken at kickoff** (recorded in `.zuko/goodnight/decisions.json`): each room is a full equal room; the extra is an identical twin (same name, same disc, applied from code); a waiting person is told their position; an empty room holds its voice ~60 s.
 
-## Two recorded beliefs corrected by measurement
-
-**1. The 25.68s render profile was RIGHT. I was wrong to doubt it.** Earlier in the day I told the founder the real wait was ~67s and that the profile "measured only the mixing stages, not the whole wait." Measured properly end to end (`scripts/loadtest/profile_wait.py`): **felt 25.42s vs 25.04s of stages — 0.38s, 1.5%, unaccounted.** The stages _are_ the wait. 67.4s is the render queue's rolling average across the founder's own **loaded** session (concurrent grinds, the Discord mp3 transcode after the engine says "done", a machine at 5.86 GB free). Both numbers are real; they measure different conditions. **The crop is still 8.53s / 33.5% and still the one worth attacking.**
-
-**2. "ARM cannot do voice" narrows a THIRD time.** `davey` publishes `manylinux_2_17_aarch64`. So: not "ARM", not even "ARM wheels" — **"no _Windows_-ARM wheel; Linux ARM is fully supported."** Free ARM hosting would run voice natively, no emulation trick, no second Python.
+**A hazard fixed on the way**, recorded as unfixed in the last handoff: `Set-Grinder-Token.bat` wrote the `.env` with a single `>`, overwriting the whole file. A second run would have silently discarded `DISCORD_GUILD_ID` and all four channel ids, and the bot would have come back half-broken with nothing in the log. Both scripts now edit one line, keep the rest, genuinely hide the token as it is typed, and refuse the main bot's own token as an "extra" (same identity — it would pull the first room's connection away mid-song).
 
 ---
 
 ## Do first next session
 
-1. **Hear the station.** Sit in `#Bollywood_House` with nothing queued and confirm it starts replaying by itself, and that `/skip` and `/stop` do what they say. This is the one thing tonight built that only an ear can confirm.
-2. **Reclaim Windows Update's 7.81 GB** — it needs administrator rights the agent does not have. This is the single biggest lever on the founder's disk and it is a few clicks in Disk Cleanup.
-3. **Read [hosting-research-2026-08-12.md](hosting-research-2026-08-12.md) and decide.** Free always-on hosting is real and voice is not the obstacle. The recommended next step is a **measurement** (one free instance, one timed render) rather than a migration — because whether 2 shared ARM cores can mix a song is genuinely unknown.
-4. **Check the catalog sweep's result** (see parked, below).
-5. **Open the PR** for `zuko/goodnight-2026-08-12-night2` and merge. The GitHub CLI is still not installed; use the compare link.
-
----
-
-## Approval queue
-
-**EMPTY.** Nothing is staged and nothing needs a tap.
-
-That is not because the risky work was skipped — it is because the disk cleaner was **deliberately redesigned** so it did not need to touch a dangerous file. `storage.py` owns the _policy_ (what may be deleted, in what order, what is never touched); the new `janitor.py` owns only the _trigger_ (when to ask). The existing `sweep(target_free_gb=...)` and `sweep(dry_run=True)` already did everything needed. **`services/api/app/storage.py` is byte-identical** — verified, not assumed.
+1. **The founder pastes the second token** — Developer Portal → the spare application `1535993733269684334` (or a new one) → Bot → Reset Token → Copy → invite it with See + Connect on the rooms category → `Add-Grinder-Rooms.bat`. **Until this happens the second room is silent, and that is expected.** Full test sheet in `.zuko/goodnight/report.md`.
+2. **Open and merge the PR** for `feat/second-grinder-voice`.
+3. **The engine's admission control** — the agreed next job, and arguably now the most urgent. There is **no queue and no limit** in the render path (`services/api/app/routes/mix.py` starts a thread per request); past ~8–10 at once the machine runs out of memory and **fails** people's mixes instead of making them wait, reporting the same sentence a genuinely unmixable pair produces. Two working rooms means more simultaneous grinding, so this gets hit sooner.
+4. **The leftover staged card `disk-sweep-floors-and-age`** on `services/api/app/storage.py` is still unapplied in `.zuko/goodnight/queue/` — a human-required decision from an earlier night. Surface it; do not apply it.
+5. **Re-run the catalog sweep** on an idle machine. The last result is WRONG and is marked as such — three good beats were blamed for a starved laptop. **Wire the failure taxonomy into `failure_sweep.py` first**, or it will report `"?"` again.
 
 ---
 
 ## Verification evidence
 
-Run on `zuko/goodnight-2026-08-12-night2`. Real output.
+Run at session close. Real output.
 
-| Check                         | Command                                                            | Result                                             |
-| ----------------------------- | ------------------------------------------------------------------ | -------------------------------------------------- |
-| Discord bot (Intel venv)      | `.venv-x64/Scripts/python.exe -m pytest -q`                        | **221 passed** _(194 at session start)_            |
-| Backend, janitor              | `pytest services/api/tests/test_janitor.py -q`                     | **14 passed**                                      |
-| Backend, disk safety          | `pytest services/api/tests -k "storage or disk or sweep or evict"` | **27 passed**                                      |
-| `storage.py` untouched        | `git diff HEAD -- services/api/app/storage.py`                     | **empty — byte-identical**                         |
-| Engine boots with the janitor | `TestClient(app)` lifespan                                         | starts + stops cleanly                             |
-| Janitor, healthy disk (real)  | `janitor.run_once()` at 9.10 GB free                               | `skip-healthy`, **deleted nothing**                |
-| Janitor, futile case (real)   | `run_once(cushion_gb=40)`                                          | `skip-futile`, **27.36 GB short, deleted nothing** |
-| The real wait                 | `scripts/loadtest/profile_wait.py`                                 | **25.42s felt / 25.04s stages / 1.5% unaccounted** |
+| Check                                      | Command                                                           | Result                                  |
+| ------------------------------------------ | ----------------------------------------------------------------- | --------------------------------------- |
+| Discord bot                                | `.venv-x64/Scripts/python.exe -m pytest -q`                       | **303 passed** _(245 at session start)_ |
+| Backend, full                              | `services/api/.venv/Scripts/python.exe -m pytest services/api -q` | **768 passed** in 229s                  |
+| Web                                        | `npm test`                                                        | **78 passed**, 9 files                  |
+| Typecheck                                  | `npm run typecheck`                                               | clean                                   |
+| Lint                                       | `npm run lint`                                                    | clean                                   |
+| `storage.py` / `render.py` / `validate.py` | `git diff main...HEAD`                                            | **untouched**                           |
+| Mutation: shared voice connection          | re-injected, then reverted                                        | **6 tests failed**, as they should      |
+| Mutation: the `.env`-overwriting behaviour | re-injected, then reverted                                        | **4 tests failed**, as they should      |
 
 ---
 
-## ⚠️ The catalog sweep FINISHED — and its answer is WRONG. Do not act on it.
-
-`scripts/loadtest/failure_sweep.csv`, all 216 pairs: **152 succeeded, 64 failed (29.6%)**, with three beats failing **18 out of 18** — Closer, Hey Brother, Silence. On its face that says withdraw three songs and the failure rate drops to 6.2%.
-
-**It is an artifact. All three were re-tested individually and ALL THREE SUCCEEDED:**
-
-| Pair                          | Sweep said   | Retried alone     |
-| ----------------------------- | ------------ | ----------------- |
-| Hey Brother × Don't Start Now | failed 18/18 | **ready**         |
-| Closer × Der Lagi Lekin       | failed       | **ready**, 24.4s  |
-| Silence × Der Lagi Lekin      | failed       | **ready**, 112.6s |
-
-**Why the sweep lied.** It renders ten at a time, and it ran alongside the full backend suite on a machine whose free disk fell to 4.3 GB. Failures averaged **7.6s against 92.5s for successes** — they died fast, before rendering, which is the signature of a starved machine rather than an incompatible pair. **This exact mistake is already in the repo's history** (`fa18e67 docs(diagnosis): correction — the failing songs were mostly a starved machine`). It has now been made twice.
-
-**And the sweep could not say why: 58 of the 64 failures recorded an error of `"?"` — no reason at all.** The failure taxonomy built for precisely this (declined / quality / resources / bug) is **not wired into this script**, which is why a starved-machine failure was again counted as a bad pair. Wiring it in is the fix; re-running on an idle machine is the re-measurement.
-
-**Nothing about the catalog should change on the strength of this file.**
-
-## Parked, honestly
-
-- **The catalog sweep result is UNRELIABLE — see above.** Started 13:46 on the remaining pairs, batch-by-batch with clean-up between batches (disk oscillated 8.3 → 6.9 → 7.7 GB, exactly as intended). **Its result is not in this document.** The CSV lands at `scripts/loadtest/` — check it before assuming anything about which pairs work. Partial coverage is still useful; a disk-starved run reporting false "bad pair" verdicts is not.
-- **Windows Update's 7.81 GB could not be reclaimed** — administrator rights. Only the founder can do it.
-
 ## Open escalations and things to RE-VERIFY (claims, not facts)
 
-- **The station has never been heard.** Its decisions are covered by 13 tests, and `booth.py`'s own honesty note applies in full: a fake voice client is always more forgiving than Discord, and that is exactly how bugs shipped past a green suite on 2026-08-11. **No audio has been proven to come out of the station path.** Treat every claim about continuous music as unverified until an ear says otherwise.
-- **`/skip` and `/stop` have never been pressed** by a person in a real room.
-- **The listening data has never recorded a real session** — only test rows.
-- **ZERO real failures have ever been recorded.** After clearing 191 load-test/placeholder rows from `events.db`, exactly **no** failure of any kind remains in the history. The whole failure taxonomy (declined / quality / resources / bug) is unproven outside tests, and the founder's "bad pair" test did not produce one either. Either the catalog is better than feared, or failures are not being recorded — **that is worth finding out.**
-- **`speakers.py` is STILL built, tested, and NOT wired.** Multi-room needs founder-created bot identities (`GRINDER_ROOM_TOKENS` is absent from `.env`). One room at a time until then.
-- **Disk: ~7.7 GB free and moving** while the sweep runs. `events.db.backup-2026-08-12` (406 KB) is the pre-cleanup copy — delete it once the numbers look right.
-- **The engine on port 8000 is the OLD process** (started 12:13, before the janitor existed). The janitor is not actually running yet; it starts with the next engine restart.
+- **⚠️ THE SECOND ROOM HAS NEVER MADE A SOUND.** Every _decision_ is covered by 58 new tests; a fake voice client is always more forgiving than Discord, and that is how seven bugs shipped past a green suite on 2026-08-11. Status: **built, reviewed, unheard.** Only the founder's token and their ears settle it.
+- **`Add-Grinder-Rooms.bat` has still never been run.** It is rewritten and its `.env`-writing half is now tested, but the interactive half (hidden input, the refusals) needs a person at a keyboard. It is step 3 of the test sheet.
+- **The founder's Discord server is hand-tuned and OFF LIMITS.** Channels, categories, roles, server icon. Bot avatar and application icon are safe (API-only, no channel side effects); nothing else is.
+- **A stale claim was corrected this session:** `speakers.py` said voice "does not work AT ALL on the founder's Windows-ARM machine". That has been untrue since 2026-08-12, when they heard a real mix play (the bot runs on `.venv-x64`, which has `davey`). Watch for other notes written under that assumption.
+- **The station has never been heard running on its own.** Its decisions carry tests; `/skip`, `/stop` and `/play` ARE founder-confirmed; the station starting itself after a dry queue is not.
+- **Queue position with several real people at once has never been seen.**
+- **The catalog sweep result is WRONG** — 29.6% failure, three beats at 18/18, all three succeeded on retry. Do not act on `scripts/loadtest/failure_sweep.csv`.
+- **95 mixes shipped with a 21–39% tempo stretch.** The founder has heard one at 29% and approved it. The other 94 are unheard, and the recorded warble threshold is 15%.
+- **The disk janitor's deletion path has still never run for real** — only its refusal path.
+- **`events.db` holds real rows after two clean-ups** (backups `events.db.backup-robots-2026-08-12` and `events.db.backup-2026-08-12`); both can go once the numbers look right.
 - **The GitHub CLI is still not installed**, so PRs are opened by hand.
+
+---
+
+## Process notes from this session
+
+- **A promise made at kickoff that turned out to be too strong:** "all 245 existing bot tests pass untouched." 17 of them reached into the old single-room internals and were **re-pointed at the room's deck with their assertions unchanged**. Not weakened — but not untouched, and it should not have been promised about a change that reshapes exactly what those tests poke at.
+- **Every commit went to a branch**, never to `main`. (Two commits went straight to `main` on 2026-08-12; deliberately not rewritten, and not repeated.)
+- **The session-7 handoff never reached `main`** — it was committed to `fix/application-icon` after the PR was opened, so PR #34 carried the code but not the notes. Its content (the `/setup` warning, the `.env` hazard, the unheard station) is carried forward here.

@@ -1,132 +1,158 @@
-# Goodnight report — 2026-08-12 (night 2)
+# Morning report — the second voice
 
-_Ran on your approved plan of eleven tasks, with eight decisions you gave at kickoff. Nothing dangerous was self-applied — and this time nothing needed to be._
+_Overnight run of 2026-08-12 night 3. Branch `feat/second-grinder-voice`. Nothing was merged to `main`._
 
 ---
 
 ## The short version
 
-**Nine of eleven done. Nothing is waiting on your desk.**
+**Everything I said I would build is built, tested and on a branch.** Nothing was staged for your
+approval, because this whole job touched **none** of the handle-with-care files — the mixing engine,
+the quality referee and the file-deleter were never opened.
 
-Last night ended with an envelope you had to open. Tonight ends with none — not because the risky work was skipped, but because I rebuilt it so it never had to touch the file that deletes things. More on that below, because it's the bit I'm most pleased with.
+**But the second room will still be silent when you wake up**, and that is expected, not a failure.
+The one step I cannot do is create the second bot's token — that lives behind your Discord login.
+It takes about two minutes and it is step 2 of the test sheet below.
 
-Two things are parked honestly: **Windows Update's 7.81 GB needs administrator rights I don't have**, and **the song-pair sweep was still running when I wrote this**.
-
----
-
-## Before anything else: I was wrong twice today, and both are now corrected
-
-I'd rather you hear these from me than find them.
-
-**1. I told you the launcher was fine. It wasn't, and it was the whole problem.**
-
-This morning I "re-verified" `Start-Grinder.bat` by reading it, and told you the old warning about it was closed. Then every `/grind` said _"The application did not respond."_
-
-The bot was never running. The launcher had a stray bracket in one line — `(best-effort)` — and Windows reads a whole section before doing any of it, so it choked, started the engine, and quit before the line that starts the bot. **The broken line was on a branch that never even runs on your machine.**
-
-Last night's notes had said that file was "edited but never actually run". That was right. **Reading it could never have caught this. Running it caught it in ninety seconds.** Six tests now guard it.
-
-**2. I told you a grind really takes 67 seconds, not 26. That was wrong.**
-
-I measured it properly instead of inferring it. End to end, from the moment you ask: **25.4 seconds**, of which **25.0 is the actual mixing work**. There is no hidden overhead — the old 26-second figure was accurate all along.
-
-The 67 seconds was real, but it was your _busy_ session — several grinds at once, the Discord file conversion afterwards, and a laptop down to 5.86 GB. Both numbers are true; they measure different situations.
-
-**The upshot is good news:** the thing I pointed you at is still the right target. Trimming to the best part costs **8.5 seconds — a third of every wait.**
+**One thing genuinely unproven:** that sound actually comes out of a second identity. I can prove
+every _decision_ it makes — 58 new tests do — but a fake voice client is always more forgiving than
+Discord, which is exactly how seven bugs shipped past a green suite on 2026-08-11. **The status of
+that one line is "built, reviewed, unheard."** Your ears settle it.
 
 ---
 
-## What got built
+## What is done
 
-|     | What                                                                                                                                 | Proof                                          |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
-| 1   | **The room stops going silent.** When nothing's queued it now replays what the community has made, favouring the ones people gave 🔥 | 13 tests                                       |
-| 2   | **`/skip` and `/stop`** — anyone in the room, as you chose                                                                           | tested, incl. that stop actually stays stopped |
-| 3   | **Grinder records who listened and for how long** — your two blocking data gaps                                                      | tested                                         |
-| 4   | **A disk cleaner that knows when NOT to delete**                                                                                     | 14 tests + proven on your real disk            |
-| 5   | **Ten cards in one channel no longer shout over each other**                                                                         | 8 tests                                        |
-| 6   | **The launcher bug**                                                                                                                 | reproduced, fixed, 6 guards                    |
-| 7   | **Free hosting research** — and the answer is yes                                                                                    | written up                                     |
-| 8   | **Test junk cleared from your database**                                                                                             | 191 rows, backup kept                          |
-| 9   | **2.83 GB of temp rubbish reclaimed**                                                                                                | measured                                       |
+|                                                      |                                                                                                                                           |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| **Two rooms can hold sound at once**                 | Each room has its own everything now — what is playing, its own waiting list, its own position, its own station.                          |
+| **`/skip`, `/stop`, `/play` are per-room**           | Skipping in Hollywood_Blends cannot touch Bollywood_House. It has no way to name it.                                                      |
+| **The extra Grinder is an identical twin**           | Same name, same "# GRINDER" disc, applied from code. It never speaks, never posts, never takes a command.                                 |
+| **Waiting people are told where they are**           | "waiting for a free voice · 2nd in line" instead of a silent "grinding…".                                                                 |
+| **An empty room keeps its voice ~60s**               | Step out for twenty seconds and the music is still playing when you come back.                                                            |
+| **Nothing changes until you paste a token**          | With none configured there is exactly one voice and the app behaves precisely as it did before. Its own regression tests hold it to that. |
+| **Saving a token no longer wipes your settings**     | See below — this was the nastiest thing I found.                                                                                          |
+| **A bad second token cannot hurt the first Grinder** | If it will not log in, one honest line in the log and the community carries on with the rooms that work.                                  |
 
-### The station, and your rule
+### The nasty one, fixed before it could bite you
 
-You asked for past mixes, best-first. I built exactly that — **but the bot still never judges a mix.** It orders by the reactions _people_ gave, and it never announces a ranking, never shows a score, never calls anything good. Silent ordering only. Your rule holds.
+`Set-Grinder-Token.bat` wrote your settings file with a single `>`, which **overwrites the whole
+file**. Running it a second time — the obvious thing to do after resetting a token — would have
+silently thrown away your server id and all four channel ids. The bot would have come back up with
+no rooms, no status message and no showcase, **and nothing in the log saying why**, because from its
+point of view those settings simply were not configured any more.
 
-It also replays straight off disk, so an hour of music costs **nothing** — no new files, no Replicate credits. And when the cleaner sweeps an old mix, that mix simply drops out of rotation.
+This was recorded as a known, unfixed hazard in the last handoff. It is fixed now, with tests, and
+I re-injected the old behaviour to confirm the tests actually catch it (they do — four of them fail).
 
-### The envelope that isn't there
+Both scripts also now genuinely **hide the token as you type it**. The old one promised that while
+using a command that echoes every character.
 
-You asked why the disk cleaner needed you. Fair question — and the answer was that I'd designed it badly.
-
-`storage.py` is dangerous because it deletes people's mixes. But it already knew _how_ to clean, and it already had a "show me what you'd delete without deleting it" mode. All it was missing was **someone to ask it, regularly**.
-
-So the cleaner is a **new, separate file** that pokes the old one on a timer. **`storage.py` was not changed by a single character** — I checked, rather than assumed. The dangerous file is exactly as it was, and you got the feature without the sticky note.
-
-**The futility brake works, and tonight proved why it matters.** Your disk dropped 3.4 GB during our conversation and **Prompt-DJ wasn't responsible** — Windows Update was sitting on 7.81 GB. A naive cleaner told to reach 6 GB would have deleted **all 3.54 GB of your mixes and still missed**. This one checks first and refuses. Tested on your actual disk: at a deliberately impossible target it reported being 27.36 GB short and **deleted nothing**.
-
----
-
-## Hosting: free is real, and ARM isn't the problem
-
-Full write-up: [docs/hosting-research-2026-08-12.md](../../docs/hosting-research-2026-08-12.md).
-
-The thing that could have killed it doesn't. Oracle's free machines are **ARM** — the word that broke voice on your laptop. But the missing piece **does** publish a Linux-ARM build; it's specifically _Windows_-ARM that has none. So voice would work there natively, with no emulation trick.
-
-That narrows your old blocker for the third time: _"ARM can't do voice"_ → _"no ARM wheel"_ → **"no Windows-ARM wheel; Linux ARM is fine."**
-
-Two catches worth knowing: Oracle **halved** its free tier in June (4 CPUs/24 GB → 2 CPUs/12 GB) with no announcement, and account creation is often refused. Storage stays at **200 GB** — twenty times your laptop's free space.
-
-**What I could not answer:** whether 2 shared ARM cores can actually mix a song in reasonable time. So my recommendation is a **measurement, not a migration** — one free instance, one timed render, one evening. If it's fast enough, everything else is routine.
+And pasting the _main_ Grinder's own token as an extra is now refused outright. It would have looked
+completely fine — valid token, successful login — but it is the same identity, so the moment the
+"second" room started, **the first room would have gone silent mid-song**. That would have read as a
+far worse bug than the one being fixed.
 
 ---
 
-## Numbers
+## Your test sheet
 
-| Check                    | Result                               |
-| ------------------------ | ------------------------------------ |
-| Discord bot suite        | **221 passed** (was 194)             |
-| Backend, full            | **767 passed, 1 failed** — see below |
-| Backend, the new cleaner | 14 passed                            |
-| Backend, disk safety     | 27 passed                            |
-| Web / typecheck / lint   | 78 passed / clean / clean            |
-| `storage.py` changed?    | **no — byte-identical**              |
+Do these in order. Steps 1 and 2 are the only ones that need anything from you.
 
-**About that one failure, honestly:** an end-to-end audio test failed while the song-pair sweep was hammering the same machine. **Run on its own straight afterwards, it passed (5 passed).** So it's two heavy jobs fighting over the same laptop, not a broken change — but I'm reporting it as a failure rather than rounding it to green.
+**1. Check nothing broke, before adding anything.**
+Run `Start-Grinder.bat` as normal. Everything should work exactly as it does today. In the Grinder
+window you should see:
+
+> `voices: one Grinder - ONE room can have sound at a time.`
+
+**Expected:** `/grind`, `/play`, `/skip`, `/stop` all behave exactly as they did yesterday.
+
+**2. Create the second identity.** (~2 minutes, in your browser.)
+Discord Developer Portal → you already have a spare application, `1535993733269684334`, that is not
+in the server — use it, or make a new one. Then: **Bot → Reset Token → Copy.** Invite it to your
+server with the same permissions as Grinder, and make sure it can **See** and **Connect to** your
+listening-rooms category. _(You do not need to set its picture — Grinder does that itself.)_
+
+**3. Paste it in.**
+Double-click **`Add-Grinder-Rooms.bat`**. Paste the token, press Enter, then press Enter again on the
+empty line to finish.
+
+**Expected:** nothing appears on screen as you paste, and it ends with
+
+> `Saved. Grinder can now have sound in 2 rooms at the same time.`
+
+**4. Check your other settings survived.**
+Run `Start-Grinder.bat` again.
+
+**Expected:** the log does **not** complain that any channel id is missing, and it now says:
+
+> `voices: 1 extra identities - up to 2 rooms can have sound at the same time`
+
+**5. Look at the server.**
+**Expected:** a second Grinder in the member list, wearing the same "# GRINDER" disc.
+
+**6. The real test — two rooms at once.**
+Easiest with two people (or your phone as the second). One person sits in `#Bollywood_House`, the
+other in `#Hollywood_Blends`. Both `/grind`.
+
+**Expected:** both rooms play **at the same time**. The first room's music does **not** stop when the
+second one starts.
+
+**On your own instead:** `/grind` in `#Bollywood_House` and let it start playing. Then move yourself
+to `#Hollywood_Blends` and type `/play`. **Expected:** music starts in Hollywood_Blends, and if you
+look at the channel list, **both** Grinders are sitting in **both** rooms at once with the speaker
+icon lit. You can only hear one, but you can see both.
+
+**7. Skip in one room only.**
+While both rooms are playing, `/skip` in one.
+**Expected:** that room moves on; the other one carries on undisturbed.
+
+**8. Stop in one room only.**
+`/stop` in one room.
+**Expected:** that room stops; the other one keeps playing.
+
+**9. The minute of grace.**
+Leave a playing room and come back within a minute.
+**Expected:** the music is still going — it never paused.
+
+**10. Leaving properly.**
+Leave a room and stay out for more than a minute.
+**Expected:** that Grinder leaves the channel.
+
+**If anything is wrong**, the useful thing to send me is the lines in the Grinder window that start
+with `voices:` or `booth:` — they say which identity took which room and why.
 
 ---
 
-## Still running, and parked
+## What I did NOT do, and why
 
-- **The song-pair sweep was still going when I wrote this.** It renders every pair for real and deletes each batch before the next, so your disk went 8.3 → 6.9 → **10 GB** rather than filling up. **Its answer is not in this report** — the results file lands in `scripts/loadtest/`. Check it before believing anything about which pairs work.
-- **Windows Update's 7.81 GB** — needs administrator rights. A few clicks in Disk Cleanup and you'd roughly double your free space. **This is the biggest single lever on your laptop and only you can pull it.**
+- **No extra mix-making capacity.** You and I settled this at kickoff: a second identity is a second
+  seat, not a second kitchen. The engine still tops out around 8–10 at once, and past that it still
+  **fails** rather than queueing. That is the next job and I think it is the more urgent one now,
+  because two working rooms means more people grinding at the same time.
+- **I did not touch your Discord server.** No `/setup`, no channels, no categories, no roles, no
+  server icon.
+- **Nothing was merged to `main`.** One branch, one PR, your call.
+- **The leftover decision from an earlier night is still waiting**: "Clean up disk earlier, and clear
+  out stale mixes on a timer" — it would start tidying at 4 GB free instead of 2 GB, and it touches
+  the file that deletes finished mixes, so it was correctly never applied. Still on your desk.
 
----
+## Where I was wrong at kickoff
 
-## What only you can do
+I told you all 245 existing bot tests would pass untouched. **17 of them did not** — they reached
+directly into the old single-room internals, so I re-pointed them at the new per-room structure with
+their assertions unchanged. Nothing was weakened, but "untouched" was a promise I should not have
+made about a change that reshapes exactly what those tests poke at.
 
-1. **Sit in a room and hear the station.** Everything about it is proven _in tests_, and tests can't hear. Your own notes record five separate times a forgiving test hid a real Discord bug in this exact area.
-2. **Press `/skip` and `/stop`.** Never done by a person.
-3. **Reclaim the Windows disk.**
-4. **Decide on hosting** — the research is done, the decision isn't.
+## Verification, real output
 
----
-
-## One thing worth knowing
-
-After clearing the test rows, your database says something surprising: **your app has never recorded a single real failure.** Not one — and your bad-pair test this morning didn't produce one either.
-
-So all those careful "here's why it didn't work" messages have never been shown to anyone. That's either very good news about your catalog, or failures aren't being recorded properly. **Worth finding out which.**
-
----
-
-**An easy way to understand this**
-
-Nine jobs done, nothing on your desk, and I owe you two corrections — I wrongly cleared the launcher this morning when it was the actual bug, and I wrongly told you a grind takes a minute when it takes 26 seconds. Both fixed, both written down.
-
-The best bit: you asked why the disk cleaner needed your permission. You were right to ask. I'd planned to modify the one file allowed to delete things — instead I left it completely alone and wrote a small **timer** that taps it on the shoulder every minute. Same feature, none of the danger, no envelope for you to open.
-
-And it already earned its keep: your disk lost 3.4 GB today and **it wasn't your app** — Windows was hoarding 7.81 GB of updates. A dumber cleaner would have thrown away every mix you've made and still not fixed it. This one looks first and refuses.
-
-Your rooms should now keep playing music by themselves. **Nobody has heard that happen yet.** Go sit in one.
+| Check                                                   | Result                                                    |
+| ------------------------------------------------------- | --------------------------------------------------------- |
+| Discord bot suite                                       | **303 passed** (245 at session start; +58 new, 0 removed) |
+| Backend, full                                           | **768 passed** in 229s                                    |
+| Web                                                     | **78 passed**, 9 files                                    |
+| Typecheck / lint                                        | clean                                                     |
+| `render.py` / `validate.py` / `storage.py`              | **untouched** — confirmed by diff                         |
+| Mutation check: re-inject the shared-connection bug     | **6 tests fail**, as they should                          |
+| Mutation check: re-inject the settings-wiping behaviour | **4 tests fail**, as they should                          |
+| Sound out of a second identity                          | **unproven — needs your ears**                            |
