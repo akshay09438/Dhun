@@ -95,18 +95,34 @@ def test_launcher_prefers_the_environment_where_voice_works() -> None:
     )
 
 
-def test_launcher_tells_people_a_command_that_exists() -> None:
-    """The launcher window is the first instruction a newcomer reads. It pointed at `/mix` for a
-    while, which is not a command the bot has."""
-    text = LAUNCHER.read_text(encoding="utf-8", errors="replace")
+def test_no_script_names_a_command_the_bot_does_not_have() -> None:
+    """A launcher window is the first instruction a newcomer reads.
+
+    Start-Grinder.bat pointed at `/mix` for a while, which does not exist. Generalising this check
+    across every .bat immediately found the SAME bug hiding in Set-Grinder-Server.bat - which is
+    the whole argument for not guarding one file at a time."""
     bot_py = (LAUNCHER.parent / "services" / "discord-bot" / "bot.py").read_text(
         encoding="utf-8", errors="replace"
     )
-    for m in re.finditer(r"type\s+/(\w+)", text):
-        name = m.group(1)
-        assert f'command(name="{name}"' in bot_py, (
-            f"the launcher tells people to type /{name}, but the bot has no such command"
-        )
+    real = set(re.findall(r'command\(name="(\w+)"', bot_py))
+    assert real, "could not read the bot's command list - the check would pass vacuously"
+
+    offenders = []
+    for bat in _all_batch_files():
+        text = bat.read_text(encoding="latin-1")
+        # Only slash-words that read as an instruction, so a path like a/b is not mistaken for one.
+        for name in re.findall(r"(?<![\w/])/(\w+)\b", text):
+            if name in {"c", "d", "f", "s", "q", "k", "b", "v", "a", "e", "r", "l", "y", "n",
+                        "online", "sagerun", "NoProfile", "Command", "Verb"}:
+                continue        # cmd.exe and PowerShell switches, not Discord commands
+            if name not in real and name.lower() in {"mix", "set", "songs", "grind", "play",
+                                                     "skip", "stop", "help", "setup", "mygrinds"}:
+                offenders.append(f"  {bat.name}: /{name}")
+
+    assert not offenders, (
+        "These scripts tell people to type a command the bot does not have:\n"
+        + "\n".join(offenders) + f"\nreal commands: {sorted(real)}"
+    )
 
 
 @pytest.mark.parametrize("bad", ["echo  Installing voice support (best-effort)..."])

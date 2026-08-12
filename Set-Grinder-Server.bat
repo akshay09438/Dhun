@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================================
-REM  Set-Grinder-Server  —  makes /mix appear INSTANTLY in your server.
+REM  Set-Grinder-Server  —  makes the slash commands appear INSTANTLY in your server.
 REM  Paste your Discord Server ID, press Enter. (Without this, a brand-new
 REM  command can take up to an hour to show up.)
 REM
@@ -30,6 +30,6 @@ if "%GID%"=="" (
 
 >> "services\discord-bot\.env" echo DISCORD_GUILD_ID=%GID%
 echo.
-echo   Saved. Now run (or restart) Start-Grinder.bat — /mix will appear instantly.
+echo   Saved. Now run ^(or restart^) Start-Grinder.bat — /grind will appear instantly.
 echo.
 pause

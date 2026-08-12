@@ -9,10 +9,10 @@ setlocal
 cd /d "%~dp0"
 
 echo.
-echo   Grinder (Prompt-DJ Discord bot) — token setup
+echo   Grinder ^(Prompt-DJ Discord bot^) — token setup
 echo   ---------------------------------------------
-echo   1) In the Discord Developer Portal: your app -^> Bot -^> Reset Token -^> Copy.
-echo   2) Right-click here to paste it, then press Enter.
+echo   1^) In the Discord Developer Portal: your app -^> Bot -^> Reset Token -^> Copy.
+echo   2^) Right-click here to paste it, then press Enter.
 echo.
 set /p TOK=Paste bot token:
 
@@ -26,7 +26,7 @@ if "%TOK%"=="" (
 
 > "services\discord-bot\.env" echo DISCORD_TOKEN=%TOK%
 echo.
-echo   Saved to services\discord-bot\.env  (private, never committed).
+echo   Saved to services\discord-bot\.env  ^(private, never committed^).
 echo   You're done for tonight. In the morning, run Start-Grinder.bat to go live.
 echo.
 pause
