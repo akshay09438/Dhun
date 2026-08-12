@@ -61,9 +61,32 @@ That is the wall broken. A Discord bot holds one voice connection per SERVER, so
 
 ---
 
+## ⚠️ FOUNDER CORRECTION: do NOT withdraw Khuda Jaane
+
+The catalog sweep says Khuda Jaane fails 3 of 6 renders — the worst in the catalog. **The founder's
+ear says it is the BEST song in the catalog for mixes so far.** Both are true, and the second one
+wins.
+
+**They are not in conflict, and the reason matters more than the fact.** The sweep measures ONE
+thing: whether a render survived to ship. It measures NOTHING about how good the ones that shipped
+sound. Nothing anywhere in this project measures that — only the founder's ears do.
+
+So a song can be the worst on the failure chart and the best in the room at the same time, and
+**a decision to withdraw a song must never be made on failure rate alone.** The 2026-08-11 session
+recommended withdrawing three songs on exactly that basis and was wrong about all three; this is the
+same mistake with better numbers.
+
+**Founder's instruction: leave the catalog exactly as it is.** No songs withdrawn, no songs
+demoted, nothing hidden. If Khuda Jaane's failure rate is ever worth acting on, the action is to
+make it FAIL LESS (it is 80 BPM against a 120–122 BPM catalog, so every pairing forces a big
+stretch), never to remove it.
+
+---
+
 ## Open escalations and things to RE-VERIFY (claims, not facts)
 
-- **The catalog sweep is INCOMPLETE and its old CSV is WRONG.** `scripts/loadtest/failure_sweep.csv` may still be the stale 15:35 file reporting 29.6% — that number was measured on a starved machine and the handoff has warned about it twice. Tonight's re-run got ~60 of 216 pairs before the disk guard stopped it. **The sweep now records WHY each pair failed** (read from the engine's own event log, no engine change), and the early evidence already splits them: some are the quality referee doing its job, some are _"the grinder ran out of room — nothing to do with your songs."_ **Re-run with real disk headroom before believing any catalog failure rate.**
+- **The catalog sweep ran to 105 of 216 pairs and was then stopped by the founder** (deliberately - the machine was wanted back). Result: **12 of 105 failed (11.4%), of which 5 were the machine being full, so 7 - 6.7% - are genuine.** Read it back any time with `scripts/loadtest/sweep_report.py`; it reads the engine's own log, so stopping the sweep costs nothing. **The old CSV on disk is the stale 15:35 file claiming 29.6% - that number is now disproved on half the catalog and should be ignored.** The untested half is the second half of the beat list.
+- **(superseded) The old sweep CSV.** `scripts/loadtest/failure_sweep.csv` may still be the stale 15:35 file reporting 29.6% — that number was measured on a starved machine and the handoff has warned about it twice. Tonight's re-run got ~60 of 216 pairs before the disk guard stopped it. **The sweep now records WHY each pair failed** (read from the engine's own event log, no engine change), and the early evidence already splits them: some are the quality referee doing its job, some are _"the grinder ran out of room — nothing to do with your songs."_ **Re-run with real disk headroom before believing any catalog failure rate.**
 - **A correction to an old finding:** the concurrency diagnosis's #1 problem — "every failure reports the same sentence" — **is no longer true.** The engine now distinguishes a quality rejection from an out-of-resources failure in its own log. That document should be corrected.
 - **The disk janitor's deletion path appears to have run for real tonight** (a founder-made mix vanished from disk while free space fell). Previously recorded as never having run. Worth confirming from the engine log before treating as fact.
 - **`Add-Grinder-Rooms.bat` has now been run for real by the founder, successfully.** Its `.env`-writing half is tested; the interactive half was exercised by hand.
