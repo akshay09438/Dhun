@@ -173,6 +173,12 @@ def _connect(data_dir: Path) -> sqlite3.Connection:
             status      TEXT    NOT NULL,          -- 'ok' | 'failed'
             health      TEXT    NOT NULL,          -- 'green' | 'amber' | 'red'
             fail_reason TEXT,
+            fail_kind   TEXT,                      -- WHY it failed: see app/failure.py ALL_KINDS.
+            --                                        'declined' (refused before rendering) | 'quality'
+            --                                        (built, then the referee refused it) | 'resources'
+            --                                        (the HOST ran out of room - says nothing about the
+            --                                        songs) | 'bug'. NULL on rows predating this column,
+            --                                        which is honest: we genuinely did not know.
             anomalies   TEXT,                      -- JSON array of {code, detail, action, severity}
             extra       TEXT,                      -- JSON blob (tempo/key facts, audio_url, set members)
             source      TEXT,                      -- 'web' | 'discord' (NULL on rows predating this column)
@@ -200,6 +206,7 @@ _ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
     ("user_name", "TEXT"),
     ("local_day", "TEXT"),
     ("local_hour", "INTEGER"),
+    ("fail_kind", "TEXT"),
 )
 
 
@@ -218,7 +225,7 @@ def _insert(data_dir: Path, row: dict[str, Any]) -> None:
         try:
             cols = ("created_at", "kind", "via", "ref_id", "user_id", "song1_id", "song2_id",
                     "song1_name", "song2_name", "rule", "rule_label", "take", "status", "health",
-                    "fail_reason", "anomalies", "extra", "source", "user_name",
+                    "fail_reason", "fail_kind", "anomalies", "extra", "source", "user_name",
                     "local_day", "local_hour")
             conn.execute(
                 f"INSERT INTO events ({','.join(cols)}) VALUES ({','.join('?' for _ in cols)})",
@@ -246,6 +253,7 @@ def record_mix(
     take: int | None = None,
     anomalies: list[dict] | None = None,
     fail_reason: str | None = None,
+    fail_kind: str | None = None,
     extra: dict[str, Any] | None = None,
     created_at: str | None = None,
     source: str | None = None,
@@ -255,7 +263,11 @@ def record_mix(
 
     `source` is where it was made ('web' | 'discord') and `user_name` a display name where one
     exists (a Discord username; the web app has no login yet). Both are recorded only — like
-    `user_id`, they never reach the cache id or the audio."""
+    `user_id`, they never reach the cache id or the audio.
+
+    `fail_kind` (app/failure.py) is WHY a failure happened — the difference between "these two
+    songs don't work" and "the host ran out of room", which until 2026-08-11 were the same
+    sentence in this table and therefore uncountable."""
     ex = dict(extra or {})
     if status == "ok":
         ex.setdefault("audio_url", f"/mix/{mix_id}/audio")
@@ -281,6 +293,7 @@ def record_mix(
         "status": status,
         "health": health_for(status, anomalies),
         "fail_reason": fail_reason,
+        "fail_kind": fail_kind,
         "anomalies": json.dumps(anomalies or []),
         "extra": json.dumps(ex),
     })
@@ -294,6 +307,7 @@ def record_set(
     user_id: str | None = None,
     members: list[dict] | None = None,
     fail_reason: str | None = None,
+    fail_kind: str | None = None,
     extra: dict[str, Any] | None = None,
     created_at: str | None = None,
     source: str | None = None,
@@ -334,6 +348,7 @@ def record_set(
         "status": status,
         "health": health,
         "fail_reason": fail_reason,
+        "fail_kind": fail_kind,
         "anomalies": json.dumps([]),
         "extra": json.dumps(ex),
     })
@@ -642,6 +657,18 @@ def health_reasons(data_dir: Path) -> dict[str, Any]:
                 SELECT COALESCE(fail_reason, '(no reason recorded)') AS reason, COUNT(*) AS n
                 FROM events WHERE status <> 'ok' GROUP BY reason ORDER BY n DESC
             """)
+            # THE question the 20.7% number could not answer: of the failures, how many were
+            # really about the songs, and how many were just a machine with no room left?
+            # 'unknown' is every row written before fail_kind existed - shown, never guessed at.
+            #
+            # Aliased `cause`, NOT `kind`: this table already HAS a `kind` column ('mix' | 'set'),
+            # and `... AS kind ... GROUP BY kind` silently groups by that existing column instead
+            # of the expression, collapsing every cause into one bucket. Caught by a test that
+            # expected two causes and got one.
+            by_cause = _all(conn, """
+                SELECT COALESCE(fail_kind, 'unknown') AS cause, COUNT(*) AS n
+                FROM events WHERE status <> 'ok' GROUP BY cause ORDER BY n DESC
+            """)
             # Anomalies are a JSON array per row, so they are counted here rather than in SQL. Only
             # amber rows carry them, which keeps this to a small slice of the log.
             codes: dict[str, int] = {}
@@ -655,6 +682,7 @@ def health_reasons(data_dir: Path) -> dict[str, Any]:
                     continue
             return {
                 "failures": failures,
+                "by_cause": by_cause,
                 "degradations": [{"code": c, "n": n}
                                  for c, n in sorted(codes.items(), key=lambda kv: -kv[1])],
             }
@@ -662,7 +690,7 @@ def health_reasons(data_dir: Path) -> dict[str, Any]:
             conn.close()
     except Exception:  # noqa: BLE001
         log.exception("events: health_reasons failed")
-        return {"failures": [], "degradations": []}
+        return {"failures": [], "by_cause": [], "degradations": []}
 
 
 def person(data_dir: Path, user_id: str) -> dict[str, Any]:

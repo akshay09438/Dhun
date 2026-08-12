@@ -23,6 +23,7 @@ coverage/
 __pycache__/
 *.pyc
 .venv/
+.venv-x64/
 venv/
 .pytest_cache/
 

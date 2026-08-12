@@ -32,6 +32,11 @@ class MixResult:
     message: str | None = None
     rule: int | None = None     # 1 simple / 3 chop / 4 echo — for the style label
     notes: str | None = None
+    # WHERE IT IS, so the card can move (2026-08-11). All optional: an engine that predates
+    # these simply leaves them None and the card falls back to a plain "grinding...".
+    stage: str | None = None            # what the engine is doing right now, in plain words
+    queue_position: int | None = None   # 1-based place in the line, or None once it is rendering
+    queue_eta_secs: int | None = None   # rough wait. An estimate on a card, never a promise
 
 
 @dataclasses.dataclass
@@ -39,6 +44,9 @@ class SetResult:
     set_id: str
     status: str                 # "ready" | "error" | "processing" | "idle"
     message: str | None = None
+    stage: str | None = None            # kept in step with MixResult so one card handler serves both
+    queue_position: int | None = None
+    queue_eta_secs: int | None = None
     duration: float | None = None
     members: list | None = None  # [{index, song1_id, song2_id, rule, kept, seam_at, reason}]
 
@@ -109,19 +117,23 @@ class PromptDJClient:
             mix_id=mix_id, status=d.get("status", "idle"), message=d.get("message"),
             rule=plan.get("rule") if isinstance(plan, dict) else None,
             notes=plan.get("notes") if isinstance(plan, dict) else None,
+            stage=d.get("stage"), queue_position=d.get("queue_position"),
+            queue_eta_secs=d.get("queue_eta_secs"),
         )
 
     async def wait_for_mix(self, mix_id: str, *, poll: float = 2.0, timeout: float = 600.0,
                            on_progress=None) -> MixResult:
-        """Poll until the mix is ready or errors (or we give up). `on_progress(elapsed)` is
-        awaited each tick so the caller can update a 'still mixing…' message."""
+        """Poll until the mix is ready or errors (or we give up). `on_progress(elapsed, res)` is
+        awaited each tick so the caller can move the card - it is handed the whole result, not
+        just a clock, because "6th in line" and "mixing it down" are the useful things to show
+        and only the engine knows them."""
         elapsed = 0.0
         while True:
             res = await self.mix_status(mix_id)
             if res.status in ("ready", "error"):
                 return res
             if on_progress is not None:
-                await on_progress(elapsed)
+                await on_progress(elapsed, res)
             await asyncio.sleep(poll)
             elapsed += poll
             if elapsed >= timeout:
@@ -167,7 +179,9 @@ class PromptDJClient:
         r.raise_for_status()
         d = r.json()
         return SetResult(set_id=set_id, status=d.get("status", "idle"), message=d.get("message"),
-                         duration=d.get("duration"), members=d.get("members"))
+                         duration=d.get("duration"), members=d.get("members"),
+                         stage=d.get("stage"), queue_position=d.get("queue_position"),
+                         queue_eta_secs=d.get("queue_eta_secs"))
 
     async def wait_for_set(self, set_id: str, *, poll: float = 3.0, timeout: float = 1200.0,
                            on_progress=None) -> SetResult:
@@ -178,7 +192,7 @@ class PromptDJClient:
             if res.status in ("ready", "error"):
                 return res
             if on_progress is not None:
-                await on_progress(elapsed)
+                await on_progress(elapsed, res)   # same shape as wait_for_mix, so one card handler serves both
             await asyncio.sleep(poll)
             elapsed += poll
             if elapsed >= timeout:

@@ -265,3 +265,31 @@ def test_set_consecutive_indices_and_users_diverge(tmp_path, monkeypatch):
 
     assert sid("A", 0) != sid("A", 1)  # a user's consecutive sets differ (G3)
     assert sid("A", 0) != sid("B", 0)  # different users differ (G4)
+
+
+# ---------------------------------------------------------------- The line (renderq), 2026-08-11
+
+def test_a_set_goes_through_the_SAME_line_as_a_single_mix(tmp_path, monkeypatch):
+    """The hole this closes: a set is up to FIVE renders and used to start its own thread, so it
+    bypassed the render cap completely. Twenty people each building a five-pair grind started
+    twenty concurrent renders no matter what the mix route's cap said - which made the most
+    render-heavy request in the whole app the one thing with no back-pressure at all.
+
+    A set takes ONE slot, not five: it already runs its members one after another internally."""
+    _use_tmp(monkeypatch, tmp_path)
+    _beat(tmp_path, BEAT1, 120.0)
+    _vocal(tmp_path, VOC1, 120.0)
+
+    submitted = []
+    real_submit = set_route.renderq.queue.submit
+
+    def spy(job_id, fn, **kw):
+        submitted.append(job_id)
+        return real_submit(job_id, fn, **kw)
+
+    monkeypatch.setattr(set_route.renderq.queue, "submit", spy)
+    body = client.post("/set", json={"sets": [{"song1_id": BEAT1, "song2_id": VOC1}]}).json()
+
+    assert len(submitted) == 1, "a set must take one slot in the line, not one per member"
+    assert body["queue_waiting"] is not None, "the card has no idea how long the line is"
+    _poll(body["set_id"], "ready")

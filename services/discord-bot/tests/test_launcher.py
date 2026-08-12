@@ -1,0 +1,103 @@
+"""Start-Grinder.bat must actually reach the line that starts the bot.
+
+WHY THIS EXISTS. On 2026-08-12 the launcher was edited to prefer the Intel environment (the one
+where voice works). The edit was correct. But the same edit left an `echo` containing a bare
+`(best-effort)` inside an if/else block, and cmd.exe parses a whole block BEFORE executing any of
+it - so the bare `)` closed the block early and the launcher died with
+
+    ... was unexpected at this time.
+
+immediately after step [1/3]. It never reached step [3/3], so the bot never started. Discord then
+answered every `/grind` with "The application did not respond", which looks like a bot bug and is
+not one.
+
+The branch containing the offending line NEVER RUNS on a machine that already has a virtualenv.
+That is the whole danger: the file looks fine, the logic is right, the broken line is unreachable,
+and it still kills the script. Reading the batch file is not enough to catch this, and the previous
+session's handoff correctly flagged the launcher as "edited but never run end to end" - the claim
+was true and closing it by re-reading the code was a mistake.
+
+These tests are cheap and they fail loudly on the exact class of bug.
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+
+LAUNCHER = Path(__file__).resolve().parents[3] / "Start-Grinder.bat"
+
+
+def _lines() -> list[tuple[int, str]]:
+    text = LAUNCHER.read_text(encoding="utf-8", errors="replace")
+    return list(enumerate(text.splitlines(), start=1))
+
+
+def test_launcher_exists() -> None:
+    assert LAUNCHER.is_file(), f"the launcher went missing: {LAUNCHER}"
+
+
+def test_echo_lines_escape_their_parentheses() -> None:
+    """Any `echo` inside the file must escape ( and ) as ^( ^).
+
+    Checked on every echo rather than only the ones inside blocks: telling "inside a block" from
+    "outside" needs a real batch parser, and escaping everywhere is harmless - `echo ^(x^)` prints
+    exactly the same text as `echo (x)` when it does parse.
+    """
+    offenders: list[str] = []
+    for num, raw in _lines():
+        line = raw.strip()
+        if not re.match(r"^echo\b", line, flags=re.IGNORECASE):
+            continue
+        # Strip the legal escaped forms, then anything left is a bare parenthesis.
+        stripped = line.replace("^(", "").replace("^)", "")
+        if "(" in stripped or ")" in stripped:
+            offenders.append(f"  line {num}: {line}")
+
+    assert not offenders, (
+        "These echo lines contain unescaped parentheses. Inside an if/else block cmd.exe treats a "
+        "bare ')' as the end of the block and the launcher dies with '... was unexpected at this "
+        "time' BEFORE it starts the bot - even if the line is on a branch that never runs.\n"
+        "Write them as ^( and ^).\n" + "\n".join(offenders)
+    )
+
+
+def test_launcher_still_starts_the_bot() -> None:
+    """The last thing the file does must be run bot.py. A launcher that reaches the end without
+    starting the bot is the same failure wearing a different hat."""
+    text = LAUNCHER.read_text(encoding="utf-8", errors="replace")
+    assert "bot.py" in text, "the launcher no longer starts bot.py at all"
+    assert "%BOTPY%" in text, "the launcher no longer uses the chosen interpreter (BOTPY)"
+
+
+def test_launcher_prefers_the_environment_where_voice_works() -> None:
+    """`.venv-x64` is the Intel environment; it is the only one on this machine where `davey`
+    imports and therefore the only one that can make a sound in a listening room."""
+    text = LAUNCHER.read_text(encoding="utf-8", errors="replace")
+    assert ".venv-x64" in text, (
+        "the launcher no longer prefers the Intel environment - voice playback will silently "
+        "stop working in the listening rooms"
+    )
+
+
+def test_launcher_tells_people_a_command_that_exists() -> None:
+    """The launcher window is the first instruction a newcomer reads. It pointed at `/mix` for a
+    while, which is not a command the bot has."""
+    text = LAUNCHER.read_text(encoding="utf-8", errors="replace")
+    bot_py = (LAUNCHER.parent / "services" / "discord-bot" / "bot.py").read_text(
+        encoding="utf-8", errors="replace"
+    )
+    for m in re.finditer(r"type\s+/(\w+)", text):
+        name = m.group(1)
+        assert f'command(name="{name}"' in bot_py, (
+            f"the launcher tells people to type /{name}, but the bot has no such command"
+        )
+
+
+@pytest.mark.parametrize("bad", ["echo  Installing voice support (best-effort)..."])
+def test_the_detector_actually_catches_the_original_bug(bad: str) -> None:
+    """A guard nobody has seen fail is a guard nobody should trust. This is the exact line that
+    broke the launcher; the check above must reject it."""
+    stripped = bad.strip().replace("^(", "").replace("^)", "")
+    assert "(" in stripped or ")" in stripped

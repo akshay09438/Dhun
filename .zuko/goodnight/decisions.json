@@ -1,25 +1,28 @@
 {
-  "session": "2026-08-10-goodnight-hardrules-and-discord-ui",
+  "session": "2026-08-11-goodnight-concurrency-and-the-consumer",
   "invoked": "/zuko:goodnight",
+  "founder_lenses": [
+    "DEVELOPER: build it properly.",
+    "CONSUMER: a person arrives in Discord wanting an INSTANT mix. There are exactly two places to make one - the #get-shit-done text channel, and the 2-3 listening (voice) rooms. Judge every change by what that person feels.",
+    "FOUNDER: maximum convenience for the user, but ZERO money to spend. At every blockage, reason from first principles about what can be done for FREE."
+  ],
   "bundle": [
-    "Task 1: make the key/pitch rules unbreakable (defense-in-depth, +/-2 semitone cap)",
-    "Task 2: Grinder Discord bot UI overhaul (Rythm-style look, purple identity)"
+    "Jobs 1-8 from docs/zuko-handoff.md (the approved concurrency batch)",
+    "Plus three consumer-lens additions surfaced at kickoff and approved (see decisions below)"
   ],
   "decisions": {
-    "task1_tempo_behavior": "LEAVE AS-IS. Founder: 'the BPM stretching is being done currently' -> keep current beat-locked tempo matching; never refuse a pair. Do NOT change tempo/decline behavior.",
-    "task1_pitch_cap": "HARD CAP +/-2 semitones, absolute, every layer (decision keys.CAP_SEMITONES, executor mix.KEY_SHIFT_CAP, referee validate.py K1, force-check sweep). The +/-3 empirical leak is the bug to kill.",
-    "task1_untrusted_key_policy": "Still measure the shift from audio for unverified keys, but CAP at +/-2 (never >2). Founder: 'closest possible rule, the song has to be made, can't refuse'.",
-    "task1_never_refuse": "The app must NEVER refuse to make a pair. Enforce rules as CLAMPS, not gates.",
-    "task1_interpretation_flag": "Founder's tempo answer was terse. Interpreted as: keep tempo as-is, fix pitch to +/-2. Low-risk (does not change tempo). Flag in morning report for correction.",
-    "task2_scope": "Copy Rythm's LOOK, messages, presentation, flow. Keep Grinder's catalog picker (beat + vocal). NO search-any-song (V1 non-goal).",
-    "task2_identity": "Purple 'Electric Violet' (#6d3bf5) matching the web app, across all embeds.",
-    "task2_channels": "Commands allowed in ANY text channel; audio playback only in voice channels.",
-    "task2_reference": "Rythm music bot screenshots: now-playing card (art + progress + control buttons), help/instructions embeds, queued/now-playing style messages."
+    "job6_drop_the_wav": "SKIP - do NOT build it. Founder's call. A repeat mix currently returns in 0.03s because the full render is kept; in a busy Discord room that instant repeat IS the product. Job 10 (age-based sweep) reclaims the same disk on demand. Revisit only if disk becomes the proven wall.",
+    "resource_failure_behaviour": "RETRY QUIETLY AND SAY 'BUSY'. When a grind fails because the MACHINE was out of memory/disk (not because the pair is bad), the app must NOT say 'try another pair' - that blames the user for the host's problem. It re-queues the grind automatically and the card says the grinder is slammed, with a place in line. The user does nothing.",
+    "voice_x64_experiment": "YES - attempt it tonight, installing is permitted. Voice is 100% dead on this Windows-ARM machine (no ARM build of the Discord voice audio library), which makes the listening rooms SILENT rooms. Windows 11 on ARM has built-in x86-64 emulation; an x86-64 Python + the Intel wheels may work. Free. Deliver a straight yes/no by morning with evidence.",
+    "the_waiting_card": "YES - make the 'grinding...' card MOVE. Today it sits frozen for 25-30s, which reads as broken to a first-timer. It must tick through what is happening, and show queue position ('6th, ~3 min') whenever there is a line."
   },
   "hard_constraints": [
-    "DANGEROUS surfaces (validate.py, render.py) are STAGED, never self-applied overnight (ZUKO_OVERNIGHT).",
-    "Task 1 primary fix (pitch cap) lands at non-dangerous layers (mix.py, keys.py, docs, tests, sanity sweep); the referee (validate.py) hardening is staged for the morning tap.",
-    "Task 2 (services/discord-bot/) is non-dangerous, additive; the engine is not modified.",
-    "Never weaken a test to pass; never change tempo behavior (founder said keep it)."
-  ]
+    "DANGEROUS surfaces are STAGED, never self-applied overnight (ZUKO_OVERNIGHT). services/api/app/storage.py is the one in scope tonight (job 10).",
+    "storage.py scored 48 = 'human-required' (deletes user audio, irreversible). It is NOT a one-tap card in the morning - it gets a full attended review.",
+    "workers/render.py and services/api/app/planner/validate.py must NOT be modified. Nothing tonight changes how a mix SOUNDS.",
+    "Never weaken, skip or delete a test to make code pass.",
+    "The 0.03s cache hit is a protected product property - no change may regress it.",
+    "Free only. No paid service, no cloud spend, no new subscription - the founder has no budget."
+  ],
+  "acceptance_owner": "founder (ear + eyes); the agent may not self-certify anything voice-shaped, which cannot be exercised on this machine"
 }

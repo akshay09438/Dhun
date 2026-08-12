@@ -23,14 +23,13 @@ import hashlib
 import json
 import logging
 import sys
-import threading
 from pathlib import Path
 
 import soundfile as sf
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
-from app import events
+from app import events, failure, renderq
 from app.config import settings
 from app.models import MixPlan
 from app.planner import beat_guest_verse
@@ -130,6 +129,11 @@ class SetJob(BaseModel):
     members: list[SetMember] = []
     duration: float | None = None  # total set length in seconds
     message: str | None = None
+    # WHERE THIS IS IN THE LINE - mirrors Mix, so one card handler serves both (2026-08-11).
+    stage: str | None = None
+    queue_position: int | None = None
+    queue_waiting: int | None = None
+    queue_eta_secs: int | None = None
 
 
 def set_id_for(pairs: list[tuple[str, str, int]]) -> str:
@@ -204,20 +208,26 @@ def _seam_positions(seq: list[dict]) -> tuple[list[float], float]:
 
 def _record_set_event(set_id: str, user_id: str | None, status: str,
                       members: list["SetMember"], reason: str | None, duration: float | None,
-                      source: str | None = None, user_name: str | None = None) -> None:
+                      source: str | None = None, user_name: str | None = None,
+                      fail: "failure.Failure | None" = None) -> None:
     """Record this set's outcome to the ops event log. NON-FATAL: any failure is swallowed."""
     try:
+        extra: dict = {"duration": duration} if duration is not None else {}
+        if fail is not None:
+            extra["fail_detail"] = fail.detail
+            extra["machine"] = fail.machine
         events.record_set(
             settings.data_dir, set_id=set_id, status=status, user_id=user_id,
             members=[m.model_dump() for m in members], fail_reason=reason,
-            extra={"duration": duration} if duration is not None else None,
+            extra=extra or None,
+            fail_kind=(fail.kind if fail is not None else None),
             source=source, user_name=user_name)
     except Exception:  # noqa: BLE001 — telemetry must never break a set
         log.exception("failed to record set event for %s", set_id)
 
 
 def _run_set(set_id: str, pairs: list[tuple[str, str, int]], user_id: str | None = None,
-             source: str | None = None, user_name: str | None = None) -> None:
+             source: str | None = None, user_name: str | None = None) -> failure.Failure | None:
     """Background worker: reconcile tempo -> render each kept pair (reuse mix._run_mix) -> crop each to
     its ~180s best-parts highlight (workers.best_parts, post-render) -> join. Best-parts is the DEFAULT
     output. A crop that fails falls back to that mix's full render, so a set never fails on the crop.
@@ -261,6 +271,7 @@ def _run_set(set_id: str, pairs: list[tuple[str, str, int]], user_id: str | None
                     index=i, song1_id=s1, song2_id=s2, rule=rule, kept=False, reason=unmixable[i],
                 ))
                 continue
+            _stage(set_id, f"mixing {i} of {len(pairs)}")
             mid = mixroute.mix_id_for(s1, s2, "", 1, rule)   # each song plays under ITS chosen rule
             wav = mixroute._mix_wav(mid)
             if not (wav.exists() and mixroute._plan_path(mid).exists()):
@@ -327,18 +338,77 @@ def _run_set(set_id: str, pairs: list[tuple[str, str, int]], user_id: str | None
         _jobs.pop(set_id, None)
         _record_set_event(set_id, user_id, "ok", members, None, round(total, 3),
                           source=source, user_name=user_name)
-    except SetRenderError as e:
-        reason = f"Couldn't join these mixes into a set: {e}"
-        _jobs[set_id] = ("error", reason)
-        _record_set_event(set_id, user_id, "failed", members, reason, None,
-                          source=source, user_name=user_name)
-    except Exception:  # noqa: BLE001 — never leak a raw trace; log so a systematic bug isn't invisible
-        log.exception("set build failed for %s", set_id)
+        return None
+    except Exception as exc:  # noqa: BLE001 — nothing leaks raw; every failure is CLASSIFIED
+        # Same four verdicts as a single mix (app/failure.py). A set is five renders back to
+        # back, so it is the MOST likely thing to run the host out of room — and "try different
+        # songs" was exactly the wrong advice when that happened.
+        fail = failure.classify(exc, data_dir=settings.data_dir, quality=SetRenderError)
         _set_wav(set_id).unlink(missing_ok=True)
-        reason = "Couldn't build this set. Try different songs."
-        _jobs[set_id] = ("error", reason)
-        _record_set_event(set_id, user_id, "failed", members, reason, None,
-                          source=source, user_name=user_name)
+        if fail.kind == failure.BUG:
+            log.exception("set %s failed (bug)", set_id)
+        else:
+            log.warning("set %s failed (%s): %s [host %s]",
+                        set_id, fail.kind, fail.detail, fail.machine)
+        # Same promise as a single mix: while the queue still intends to retry, the user is
+        # told it is busy, not that it failed. The gave_up hook writes the real error if the
+        # host never frees up.
+        _jobs[set_id] = (("processing", mixroute.BUSY_MESSAGE) if fail.is_resources
+                         else ("error", fail.user_message))
+        _record_set_event(set_id, user_id, "failed", members, fail.user_message, None,
+                          source=source, user_name=user_name, fail=fail)
+        return fail
+
+
+def _submit_set(set_id: str, pairs: list[tuple[str, str, int]], req: "SetRequest") -> renderq.Admission:
+    """Put the WHOLE set in the same line the single mixes use.
+
+    Granularity matters here. A set is up to five renders, and it already runs them one after
+    another on its own thread - so it takes ONE slot, not five. Before this, a set bypassed the
+    cap completely: twenty people each building a five-mix set started twenty concurrent renders
+    no matter what the mix route's cap said, which made the cap a half-cap and left the most
+    render-heavy request in the app as the one thing with no back-pressure at all."""
+    outcome: dict[str, failure.Failure] = {}
+
+    def run() -> bool:
+        fail = _run_set(set_id, pairs, req.user_id, source=req.source, user_name=req.user_name)
+        if fail is None:
+            return False
+        outcome["fail"] = fail
+        return fail.is_resources
+
+    def gave_up() -> None:
+        fail = outcome.get("fail")
+        _jobs[set_id] = ("error", fail.user_message if fail is not None
+                         else "The grinder ran out of room. Give it a minute and try again.")
+
+    return renderq.queue.submit(_queue_key(set_id), run, user_id=req.user_id, on_gave_up=gave_up)
+
+
+def _stage(set_id: str, text: str) -> None:
+    """Say which mix of the set is being built, so a five-pair grind is visibly progressing
+    rather than looking hung for two and a half minutes. Never overwrites a finished verdict."""
+    if _jobs.get(set_id, (None,))[0] == "processing":
+        _jobs[set_id] = ("processing", text)
+
+
+def _queue_key(set_id: str) -> str:
+    """Scoped to the output directory for the same reason as the mix route's: two builds writing
+    to different places are different jobs. In production `data_dir` never changes."""
+    return f"{settings.data_dir}|{set_id}"
+
+
+def _with_queue_state(job: SetJob) -> SetJob:
+    stats = renderq.queue.stats()
+    job.queue_waiting = stats["waiting"]
+    position = renderq.queue.position_of(_queue_key(job.set_id))
+    if position is not None:
+        job.queue_position = position
+        job.queue_eta_secs = int(round(renderq.queue.eta_secs(position)))
+        job.stage = f"waiting for room - {position} ahead of you"
+    elif job.status == "processing":
+        job.stage = job.message or "grinding"
+    return job
 
 
 @router.post("/set")
@@ -365,12 +435,13 @@ def start_set(req: SetRequest, response: Response) -> SetJob:
 
     if _jobs.get(set_id, (None,))[0] != "processing":
         _jobs[set_id] = ("processing", None)
-        threading.Thread(target=_run_set, args=(set_id, pairs, req.user_id),
-                         kwargs={"source": req.source, "user_name": req.user_name},
-                         daemon=True).start()
+        admission = _submit_set(set_id, pairs, req)
+        if not admission.accepted:
+            _jobs.pop(set_id, None)
+            raise HTTPException(429, admission.reason or "The grinder is busy. Try again shortly.")
 
     response.status_code = 202
-    return SetJob(set_id=set_id, status="processing")
+    return _with_queue_state(SetJob(set_id=set_id, status="processing"))
 
 
 @router.get("/set/{set_id}")
@@ -382,7 +453,7 @@ def set_status(set_id: str) -> SetJob:
     if ready is not None:
         return ready
     status, message = _jobs.get(set_id, ("idle", None))
-    return SetJob(set_id=set_id, status=status, message=message)
+    return _with_queue_state(SetJob(set_id=set_id, status=status, message=message))
 
 
 @router.get("/set/{set_id}/audio")

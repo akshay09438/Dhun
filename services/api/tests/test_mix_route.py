@@ -379,3 +379,83 @@ def test_vocal_rich_beat_never_gets_the_chop_rule(monkeypatch):
         mix_route.MixRequest(song1_id=beat, song2_id=voc, user_id="u1", generation=g))[0]
         for g in range(30)]
     assert 3 not in effective, f"a vocal-rich beat was sent to the chop renderer: {effective}"
+
+
+# ---------------------------------------------------------------- The line (renderq), 2026-08-11
+# The route no longer starts an unbounded thread per request. These pin what a person in the
+# Discord actually experiences: they are told where they are, and a host that ran out of room
+# is never reported to them as a problem with their songs.
+
+
+def _resource_failure():
+    """What _run_mix returns when the HOST ran out of room, not the songs."""
+    from app import failure
+    return failure.Failure(failure.RESOURCES, "The grinder ran out of room.", "MemoryError: ", {})
+
+
+def test_a_mix_reports_how_busy_the_grinder_is(tmp_path, monkeypatch):
+    """The card needs numbers to show instead of sitting frozen for 25-30 seconds."""
+    _use_tmp(monkeypatch, tmp_path)
+    _setup_pair(tmp_path)
+    body = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2}).json()
+    assert body["queue_waiting"] is not None, "no idea how long the line is"
+    _poll(body["mix_id"], "ready")
+
+
+def test_a_host_that_ran_out_of_room_keeps_the_mix_ALIVE_instead_of_failing_the_user(
+        tmp_path, monkeypatch):
+    """The founder's decision. A resource failure is the queue's problem, so the mix stays in
+    the line and the user reads 'busy' - never 'try another pair', which blames them for it."""
+    _use_tmp(monkeypatch, tmp_path)
+    _setup_pair(tmp_path)
+    attempts = []
+
+    def starving(mix_id, *a, **kw):
+        attempts.append(1)
+        mix_route._jobs[mix_id] = ("processing", mix_route.BUSY_MESSAGE)
+        return _resource_failure()
+
+    monkeypatch.setattr(mix_route, "_run_mix", starving)
+    body = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2}).json()
+
+    for _ in range(200):                      # let the queue retry
+        if len(attempts) >= 2:
+            break
+        time.sleep(0.05)
+    assert len(attempts) >= 2, "a resource failure was not retried"
+
+    seen = client.get(f"/mix/{body['mix_id']}").json()
+    assert seen["status"] == "processing", "told the user it failed while still retrying it"
+    assert "another pair" not in (seen["message"] or "").lower()
+
+
+def test_when_the_room_never_frees_up_the_user_is_finally_told_the_truth(tmp_path, monkeypatch):
+    """The other half of the same promise: 'you're in the line' must not become a lie that
+    never resolves. Once the retries are spent, the mix ends as a real error."""
+    _use_tmp(monkeypatch, tmp_path)
+    _setup_pair(tmp_path)
+
+    def always_starving(mix_id, *a, **kw):
+        mix_route._jobs[mix_id] = ("processing", mix_route.BUSY_MESSAGE)
+        return _resource_failure()
+
+    monkeypatch.setattr(mix_route, "_run_mix", always_starving)
+    body = client.post("/mix", json={"song1_id": SONG1, "song2_id": SONG2}).json()
+
+    final = _poll(body["mix_id"], "error", tries=400)
+    assert final["status"] == "error"
+    assert "room" in (final["message"] or "").lower()
+    assert "another pair" not in (final["message"] or "").lower()
+
+
+def test_the_mix_says_what_it_is_doing_while_it_works(tmp_path, monkeypatch):
+    """The frozen card was the complaint. A stage is only ever written while a job is still
+    processing, so it can never overwrite a finished verdict."""
+    _use_tmp(monkeypatch, tmp_path)
+    mix_route._jobs["x" * 64] = ("processing", None)
+    mix_route._stage("x" * 64, "mixing it down")
+    assert mix_route._jobs["x" * 64] == ("processing", "mixing it down")
+
+    mix_route._jobs["y" * 64] = ("error", "This pair didn't come out clean.")
+    mix_route._stage("y" * 64, "mixing it down")
+    assert mix_route._jobs["y" * 64][0] == "error", "a stage note overwrote a real verdict"

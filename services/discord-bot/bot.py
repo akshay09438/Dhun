@@ -261,6 +261,7 @@ class GrindContext:
         self.audio_path: Path | None = None      # the WAV, kept for The Booth
         self.number: int | None = None
         self.duration: float = 0.0
+        self._last_line: str | None = None       # the live "what's happening" line, so we only edit on a change
 
     # -- naming -------------------------------------------------------------------------
     def named_pairs(self) -> list[tuple[str, str]]:
@@ -276,9 +277,33 @@ class GrindContext:
         return f"long grind, {len(named)} tracks"
 
     # -- the card -----------------------------------------------------------------------
-    def _submit_embed(self) -> discord.Embed:
+    def _submit_embed(self, *, stage: str | None = None, position: int | None = None,
+                      eta_secs: int | None = None) -> discord.Embed:
         beat, vocals = self.named_pairs()[-1]
-        return ui.submit_embed(user=self.interaction.user, beat=beat, vocals=vocals)
+        return ui.submit_embed(user=self.interaction.user, beat=beat, vocals=vocals,
+                               stage=stage, position=position, eta_secs=eta_secs)
+
+    async def _on_progress(self, _elapsed: float, res) -> None:
+        """Move the card while the engine works.
+
+        Only edits when the LINE ACTUALLY CHANGES. Discord rate-limits message edits, and
+        re-sending an identical embed every two seconds would spend that budget saying nothing -
+        so a grind that sits in one stage for twenty seconds costs exactly one edit."""
+        if self.message is None:
+            return
+        line = ui.waiting_line(stage=getattr(res, "stage", None),
+                               position=getattr(res, "queue_position", None),
+                               eta_secs=getattr(res, "queue_eta_secs", None))
+        if line == self._last_line:
+            return
+        self._last_line = line
+        try:
+            await self.message.edit(embed=self._submit_embed(
+                stage=getattr(res, "stage", None),
+                position=getattr(res, "queue_position", None),
+                eta_secs=getattr(res, "queue_eta_secs", None)))
+        except discord.HTTPException:
+            pass       # a card that will not update is not worth failing a grind over
 
     async def _post_submit_card(self, *, first: bool) -> None:
         """State 1, posted BEFORE any rendering starts. The grind number is claimed here so the
@@ -310,7 +335,7 @@ class GrindContext:
                 a, b = self.pairs[0]
                 mix_id = await bot.api.start_mix(a, b, self.user_id, self.generation,
                                                  user_name=self.user_name)
-                res = await bot.api.wait_for_mix(mix_id)
+                res = await bot.api.wait_for_mix(mix_id, on_progress=self._on_progress)
                 if res.status != "ready":
                     await self._fail(res.message or "That pair did not come out. Try another.")
                     return None
@@ -319,7 +344,7 @@ class GrindContext:
             else:
                 set_id = await bot.api.start_set(self.pairs, self.user_id, set_index=0,
                                                  user_name=self.user_name)
-                res = await bot.api.wait_for_set(set_id)
+                res = await bot.api.wait_for_set(set_id, on_progress=self._on_progress)
                 if res.status != "ready":
                     await self._fail(res.message or "That did not come out. Try another pair.")
                     return None
