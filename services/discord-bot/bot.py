@@ -23,6 +23,7 @@ import discord
 from discord import app_commands
 
 import brand
+import editbudget
 import media
 import server_setup
 import showcase
@@ -296,6 +297,16 @@ class GrindContext:
                                eta_secs=getattr(res, "queue_eta_secs", None))
         if line == self._last_line:
             return
+
+        # Each card is already polite on its own - but politeness per card is not politeness per
+        # CHANNEL, and Discord rate-limits edits per channel. Ten cards moving in #get-shit-done
+        # know nothing about each other, so they share one budget here. A skipped progress edit
+        # costs nothing: the next tick is two seconds away and knows more. The FINAL edit that
+        # delivers the mix bypasses this entirely - see run().
+        channel = getattr(self.message, "channel", None)
+        if not editbudget.budget.allow(getattr(channel, "id", 0)):
+            return          # deliberately do NOT record _last_line: the next tick retries
+
         self._last_line = line
         try:
             await self.message.edit(embed=self._submit_embed(
