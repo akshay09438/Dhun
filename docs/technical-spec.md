@@ -577,3 +577,41 @@ single-room internals were re-pointed at the room's deck with their assertions u
 
 **Not proven, and cannot be here:** that audio comes out of a second identity. `booth.py`'s honesty
 note stands — a fake voice client is always more forgiving than Discord.
+
+## As-built (the station removed; two rooms kept apart), 2026-08-12
+
+**The station is gone, by founder decision, after they used it.** Built the same day to stop a room
+falling silent, it meant a room started playing things nobody had asked for. Removed rather than
+disabled: `Deck.play_station`, `Deck.air`, `Deck.station_number`, `_station_paused`,
+`_recently_aired`, `STATION_MEMORY`, `Booth._play_station`, `Booth._air`, `Booth.station_number`,
+`Booth._busiest_live_room`, `store.station_candidates`, and every test that covered only them. The
+🔥 reaction count is still recorded and is still the product signal — it simply no longer orders
+anything Grinder acts on.
+
+**What starts music now, and nothing else does:**
+
+| | |
+|---|---|
+| `/grind` | plays in the room its owner is sitting in |
+| `/play` | picks up whatever `/stop` paused in that room; with nothing paused it says so |
+| a queued grind reaching the front | plays when the room's voice frees up |
+| arriving in a room | **nothing** — it only cancels that room's empty-room timer |
+| a mix ending with an empty queue | **nothing** — the room goes quiet and `release_voice()` leaves |
+
+**Two bugs the founder's own testing found, both in how rooms were kept apart.**
+
+1. **Two Grinders in one channel.** A claim and a connection were two different lifetimes.
+   `release_voice()` handed back the claim and left the identity sitting in the channel; another
+   identity could then legitimately claim that room and `voice_player.play_in`'s `vc.move_to(...)`
+   walked it in on top. `release_voice()` is now `async` and disconnects, finding the connection via
+   `Voice.connections()` — off the **identity's client**, not the guild, because the whole problem is
+   that the identity may be somewhere we are not looking. Best-effort: a failed disconnect must not
+   cost that room its claim for the rest of the night.
+2. **One room reading another room's connection.** `Deck.voice_client` fell back to
+   `guild.voice_client` when the room held no identity — which is whatever the main bot is doing
+   elsewhere. So `/play` in the second room answered about the first room's music, and `/skip` could
+   too. It now also checks the connection is actually **in this room**. The original test double had
+   no `.channel`, which is precisely why it slipped through; the new one has.
+
+**Also added:** a refusal now logs which identity holds which room, because a refusal said "one
+room" ten minutes after startup had said two and nothing recorded enough to say which was wrong.

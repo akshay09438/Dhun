@@ -19,14 +19,9 @@ import logging
 import time
 from pathlib import Path
 
-import store
 import voice_player
 
 log = logging.getLogger("promptdj.discord")
-
-# How many recently-aired grinds one room remembers, so a small catalogue does not loop the same mix
-# back to back. Small on purpose: a room with four mixes should still cycle rather than fall silent.
-STATION_MEMORY = 10
 
 # Pressing skip twice quickly must not land back on the boundary just crossed.
 _SEAM_GUARD_SECS = 2.0
@@ -41,9 +36,6 @@ class Deck:
         self.room_id = room_id
         self.booth = booth                          # the coordinator, for shared services
         self.now_playing = None                     # the GrindContext currently out loud HERE
-        self.station_number: int | None = None      # what is on air from the archive, if any
-        self._station_paused = False                # set by /stop, so the finish callback obeys it
-        self._recently_aired: list[int] = []
         # Where we are in the file that is playing, and where /stop left off. discord.py tracks
         # neither, so each deck keeps both itself.
         self._now_path: str | None = None
@@ -69,8 +61,8 @@ class Deck:
     # -- is anything happening in here ----------------------------------------------------------
     @property
     def busy(self) -> bool:
-        """True if this room has something on air - a grind or a station replay."""
-        return self.now_playing is not None or self.station_number is not None
+        """True if this room has something on air."""
+        return self.now_playing is not None
 
     # -- where we are in the current track -------------------------------------------------------
     # discord.py has no notion of a playback position, so each deck keeps its own: where in the file
@@ -237,96 +229,32 @@ class Deck:
     async def advance(self, token: int | None = None) -> None:
         """One finished in THIS room, take the next. Called back from the audio player.
 
-        When the queue empties the room does NOT go silent. Until 2026-08-12 it did: the bot sat
-        connected and quiet until the last person left, which is a dead room with a bot in it."""
+        NOTHING STARTS BY ITSELF (founder decision, 2026-08-12, after listening to it). A room used
+        to fall through to a "station" that replayed past mixes when the queue emptied, so a room
+        would start playing things nobody had asked for. That is now gone: when there is nothing
+        left that somebody actually requested, the room goes quiet and the identity LEAVES - no bot
+        sits connected and silent, and the voice is free for a room that does have something to
+        play."""
         if token is not None and token != self._play_token:
             # A playback we deliberately replaced has just reported that it ended. It did - but
             # because we stopped it, not because it finished. Acting on this is what stomped on the
             # track a /skip had just started.
             return
         async with self.booth.lock:
-            last = self.now_playing
             self.now_playing = None
             nxt = self.booth.take_next_for(self.room_id)
         if nxt is not None:
             await self.booth.start(nxt)
             return
 
-        # NOTHING MORE FOR THIS ROOM. Before starting a replay, check whether another room has a
-        # real grind waiting with no identity to play it: a fresh grind anywhere outranks a repeat
-        # anywhere. With only the main bot configured this is exactly today's behaviour - the single
-        # voice moves on to whoever is next in line.
+        # NOTHING MORE FOR THIS ROOM. Does another room have a real grind waiting with no identity
+        # to play it? With only the main bot configured this is exactly the old behaviour - the
+        # single voice moves on to whoever is next in line.
         if await self.booth.hand_over_if_someone_is_waiting(self):
             return
 
-        # WHICH SERVER. Taking it from the finished grind's interaction works only when a GRIND was
-        # playing - while the STATION is on air `now_playing` is None, so that read produced None,
-        # `rooms(None)` returned [], and the room went silent for good.
-        guild = getattr(getattr(last, "interaction", None), "guild", None) or self.booth.last_guild
-        await self.play_station(guild)
-
-    # -- the station ----------------------------------------------------------------------------------
-    async def play_station(self, guild) -> None:
-        """Keep THIS room alive with what the community has already made.
-
-        Ordered favouring 🔥 reactions - the community's own votes, never Grinder's opinion. THE BOT
-        STILL NEVER JUDGES A MIX: nothing about this ordering is announced, shown, or hinted at. A
-        visible ranking would prejudice the reaction data, which is the whole product signal.
-
-        Replays straight off disk, so a station hour costs no Replicate credit and writes no new
-        file. A mix the disk janitor has swept simply drops out of rotation - hence the exists()
-        check rather than trusting the database."""
-        if self._station_paused:
-            return                      # somebody asked for quiet; stop means stop
-        room = self.booth.room_by_id(guild, self.room_id)
-        if room is None or self.booth.listeners(room) == 0:
-            return                      # nobody listening in here; silence is correct
-
-        try:
-            candidates = store.station_candidates()
-        except Exception:               # noqa: BLE001 - the station must never break the room
-            log.exception("booth: could not read station candidates")
-            return
-
-        for row in candidates:
-            if row["number"] in self._recently_aired:
-                continue
-            path = row["audio_path"]
-            if not path or not Path(path).exists():
-                continue                # swept by the janitor, or never finished
-            await self.air(room, row, path)
-            return
-
-        # Everything known has aired recently. Forget the history and start the rotation again
-        # rather than going quiet - a small room would otherwise fall silent after three mixes.
-        if self._recently_aired:
-            self._recently_aired.clear()
-            log.info("booth: station rotation exhausted in room %s, starting the cycle again",
-                     self.room_id)
-            return await self.play_station(guild)
-        log.info("booth: nothing on disk to air - room %s stays quiet until the next grind",
-                 self.room_id)
-
-    async def air(self, room, row, path: str) -> None:
-        """Put one past grind on air in this room. Silent by design - no card, no announcement, no
-        verdict."""
-        channel = await self._channel_to_play_into(room)
-        if channel is None:
-            return                      # every identity is busy; a replay never outranks a grind
-        self._recently_aired.append(row["number"])
-        if len(self._recently_aired) > STATION_MEMORY:
-            self._recently_aired.pop(0)
-        self.station_number = row["number"]
-        try:
-            tok = self._begin_playback()
-            await voice_player.play_in(channel, path, on_finished=lambda t=tok: self.advance(t))
-            seams = await self.booth._resolve_seams(row["number"], _ref_of(row), _seams_of(row))
-            self._mark_playing(path, seams=seams, guild=getattr(room, "guild", None))
-            log.info("booth: station aired grind #%s in %s", row["number"],
-                     getattr(room, "name", self.room_id))
-        except Exception:  # noqa: BLE001 - a failed replay must not end the station
-            log.exception("booth: station could not air grind #%s", row["number"])
-            self.station_number = None
+        log.info("booth: room %s has nothing more that was asked for - going quiet", self.room_id)
+        await self.release_voice()
 
     # -- controls -------------------------------------------------------------------------------------
     async def skip(self, room) -> str:
@@ -362,13 +290,14 @@ class Deck:
     async def stop(self, room) -> str:
         """Pause THIS room, and REMEMBER WHERE. `/play` picks up from exactly here.
 
+        The identity is deliberately KEPT so `/play` resumes instantly rather than rejoining. If
+        nobody comes back, the empty-room grace period lets it go a minute later.
+
         Deliberately does NOT clear the queue. It used to, which meant one person could bin
         everybody else's waiting grinds without anyone being told why."""
         async with self.booth.lock:
             if self._now_path:
                 self._paused_at = (self._now_path, self.elapsed(), list(self._now_seams))
-            self.station_number = None
-            self._station_paused = True   # do not let the finish callback restart the station
         vc = self.voice_client(room)
         if vc is not None and vc.is_playing():
             vc.stop()
@@ -382,8 +311,6 @@ class Deck:
         vc = self.voice_client(room)
         if vc is not None and vc.is_playing():
             return "Already playing."
-
-        self._station_paused = False
 
         if self._paused_at:
             path, offset, seams = self._paused_at
@@ -407,42 +334,16 @@ class Deck:
             # failing - the mix is gone from disk, not from the world.
             self._paused_at = None
 
-        await self.play_station(getattr(room, "guild", None))
-        if self.station_number is None:
-            if self.booth.voices.holder_of(self.room_id) is None and self.booth.voices_all_busy():
-                return self.booth.every_voice_busy_line()
-            return "Nothing to play yet. Grind something."
-        return "Playing."
+        # NOTHING WAS ASKED FOR, SO NOTHING PLAYS (founder decision, 2026-08-12). /play used to fall
+        # through to a "station" that put on a past mix here; a room that starts playing things
+        # nobody requested is chaos, not company. /play now does exactly one job: pick up whatever
+        # /stop paused.
+        if self.booth.voices.holder_of(self.room_id) is None and self.booth.voices_all_busy():
+            return self.booth.every_voice_busy_line()
+        return "Nothing to play here. Run **/grind** to make something."
 
     # -- going quiet ------------------------------------------------------------------------------------
     def go_quiet(self) -> None:
         """Forget what was on air here. Used when the room empties."""
         self.now_playing = None
-        self.station_number = None
-        self._station_paused = False
         self._now_started = None
-
-
-def _seams_of(row) -> list:
-    """Track boundaries stored with a past grind, or none. Tolerant by design: a row written before
-    the column existed, or holding junk, must simply mean "no seams" rather than break the station."""
-    import json
-    try:
-        raw = row["seams"]
-    except (KeyError, IndexError, TypeError):
-        return []
-    if not raw:
-        return []
-    try:
-        vals = json.loads(raw)
-        return [float(v) for v in vals if isinstance(v, (int, float))]
-    except (TypeError, ValueError):
-        return []
-
-
-def _ref_of(row) -> str | None:
-    """The engine's set id for a past grind, if the row has one."""
-    try:
-        return row["ref_id"]
-    except (KeyError, IndexError, TypeError):
-        return None

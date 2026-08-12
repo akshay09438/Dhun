@@ -507,7 +507,7 @@ class GrindContext:
                                 attachments=[clip] if clip else [],
                                 view=GrindView(self))
         await _seed_reactions(self.message)
-        # Remember where the audio lives so the station can replay it later straight off disk -
+        # Remember where the audio lives so it can be re-sent later straight off disk -
         # no re-render, no download, no new file. If the janitor sweeps it, it simply drops out
         # of rotation.
         try:
@@ -908,9 +908,8 @@ async def skip_cmd(interaction: discord.Interaction) -> None:
 
 @bot.tree.command(name="stop", description="Stop the music in your listening room.")
 async def stop_cmd(interaction: discord.Interaction) -> None:
-    """Stop means stop: it clears the room's queue AND parks the station, so the room does not
-    immediately start replaying something. The next grind, or the next person to walk in, starts
-    it up again."""
+    """Stop means stop: the room falls quiet and stays quiet. Nothing starts it again by itself -
+    the next /grind, or /play to pick up exactly where you stopped."""
     await interaction.response.defer(ephemeral=True)
     await interaction.followup.send(
         await booth.stop_playback(interaction.user), ephemeral=True)

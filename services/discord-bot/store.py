@@ -67,7 +67,7 @@ CREATE INDEX IF NOT EXISTS ix_sessions_open ON room_sessions(user_id, room_id, l
 # grinder.db in the wild predates these, so they are applied by inspection at connect time rather
 # than by a migration tool this app does not have.
 _ADDED_COLUMNS = (
-    # Where the finished audio sits on disk. The station replays it straight from there, so a
+    # Where the finished audio sits on disk, so it can be re-sent without re-rendering - and so a
     # replay costs no download and writes no new file - and when the disk janitor sweeps an old
     # render, that mix simply drops out of rotation instead of erroring.
     ("grinds", "audio_path", "TEXT"),
@@ -207,17 +207,17 @@ def count_for_user(user_id: int) -> int:
     return int(row["n"])
 
 
-# --- the station ------------------------------------------------------------------------------
-# When a room's queue empties it replays what the community has already made, favouring the mixes
-# people reacted to with 🔥. THE BOT STILL NEVER JUDGES A MIX: this is an ordering over the
-# community's own votes, never Grinder's opinion, and nothing about the ordering is ever shown or
-# announced. A visible ranking would prejudice the reaction data, which is the real product signal.
+# --- reactions and the finished audio -----------------------------------------------------------
+# 🔥 is the community's own vote and the real product signal. THE BOT NEVER JUDGES A MIX: nothing
+# here is ever turned into a ranking Grinder acts on. (Until 2026-08-12 the reaction count ordered a
+# "station" that replayed past mixes when a room fell quiet; the founder removed it, because a room
+# that starts playing things nobody asked for is chaos rather than company.)
 
 FIRE = "🔥"
 
 
 def set_audio_path(number: int, path: str) -> None:
-    """Remember where a finished grind's audio lives, so the station can replay it from disk
+    """Remember where a finished grind's audio lives, so it can be replayed or re-sent from disk
     without re-rendering or re-downloading."""
     with _lock:
         c = connect()
@@ -234,29 +234,6 @@ def set_seams(number: int, seams: list) -> None:
                   (json.dumps([round(float(s), 3) for s in seams if s]), number))
         c.commit()
 
-
-def station_candidates(limit: int = 50) -> list[sqlite3.Row]:
-    """Past grinds that could go out on air, best-first.
-
-    Ordered by 🔥 count, then most recent. Only grinds that actually have audio recorded - a grind
-    still rendering, or one whose file the disk janitor has since swept, must never be offered
-    (the caller checks the file still exists; this just avoids obviously dead rows).
-
-    A LEFT JOIN rather than a subquery so a grind with no reactions at all still appears, at the
-    back. A room that has only ever made unreacted mixes must still have something to play.
-    """
-    with _lock:
-        return connect().execute(
-            "SELECT g.*, COALESCE(SUM(CASE WHEN r.emoji=? THEN 1 ELSE 0 END), 0) AS fires "
-            "FROM grinds g LEFT JOIN reactions r ON r.grind_number = g.number "
-            "WHERE g.audio_path IS NOT NULL "
-            "GROUP BY g.number "
-            "ORDER BY fires DESC, g.number DESC LIMIT ?", (FIRE, limit)).fetchall()
-
-
-# --- listening data ---------------------------------------------------------------------------
-# The two gaps recorded as blocking the community phase: do people actually listen, and when do
-# they drop off. Neither is answerable without knowing who was in a room and for how long.
 
 def room_arrival(*, guild_id: int | None, room_id: int, room_name: str, user_id: int,
                  user_name: str, when: str, playing_number: int | None = None) -> None:

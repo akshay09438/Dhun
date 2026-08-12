@@ -260,9 +260,9 @@ def test_stopping_one_room_leaves_the_other_playing(plays):
 
     asyncio.run(s.booth.stop_playback(ben))
 
-    assert deck_b._station_paused is True
-    assert deck_a._station_paused is False, "room A never asked for quiet"
+    assert deck_b._paused_at is not None or deck_b._now_started is None, "room B is stopped"
     assert deck_a.now_playing is not None, "room A is still playing"
+    assert deck_a._now_started is not None, "room A never asked for quiet"
     assert s.spk_guild.voice_client.stops == 1, "only the extra identity's audio was stopped"
     assert s.main_guild.voice_client.stops == 0, "the main Grinder's audio was not touched"
 

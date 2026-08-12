@@ -44,7 +44,7 @@ import ui
 import voice_player  # noqa: F401 - re-exported so tests can monkeypatch booth.voice_player
 import voices as voices_mod
 from botconfig import load_config
-from deck import Deck, _ref_of, _seams_of  # noqa: F401 - _ref_of/_seams_of kept importable here
+from deck import Deck
 
 log = logging.getLogger("promptdj.discord")
 CFG = load_config()
@@ -95,15 +95,6 @@ class Booth:
     def remember_guild(self, guild) -> None:
         if guild is not None:
             self.last_guild = guild
-
-    @property
-    def station_number(self) -> int | None:
-        """What the archive is playing ANYWHERE, or None. Kept as one number because it answers the
-        only question anybody asks of it: is a replay on air."""
-        for d in self.decks.values():
-            if d.station_number is not None:
-                return d.station_number
-        return None
 
     # -- the rooms ------------------------------------------------------------------------
     def is_a_room(self, channel) -> bool:
@@ -233,10 +224,6 @@ class Booth:
             return
         deck = self.deck(room)
 
-        # A fresh grind un-pauses that room's station: asking for music is asking for music.
-        deck._station_paused = False
-
-        interrupt_station = False
         async with self.lock:
             if deck.now_playing is not None:
                 ahead = self._ahead_of(room.id)
@@ -246,23 +233,6 @@ class Booth:
                          ctx.number, deck.now_playing.number, getattr(room, "name", room.id),
                          ahead + 1)
                 return
-            if deck.station_number is not None:
-                # An archive replay is on air IN THIS ROOM. A fresh grind OUTRANKS it - someone who
-                # just made a thing should hear their thing, not wait out a repeat of last week's.
-                # ORDER MATTERS: queue this grind BEFORE cutting the replay short. Stopping first
-                # would let the finish callback reach advance(), find an empty queue, and start
-                # another replay - racing this one.
-                self.queue.append(ctx)
-                deck.station_number = None
-                interrupt_station = True
-
-        if interrupt_station:
-            vc = deck.voice_client(room)
-            if vc is not None and vc.is_playing():
-                vc.stop()               # callback -> advance -> pops the grind queued above
-            else:
-                await deck.advance()    # nothing actually playing; move it along ourselves
-            return
 
         await deck.play_grind(ctx, room)
 
@@ -278,24 +248,6 @@ class Booth:
             await ctx.message.edit(embed=embed)
         except discord.HTTPException:
             pass
-
-    # -- the station ---------------------------------------------------------------------------
-    async def _play_station(self, guild) -> None:
-        """Start the archive in the room that most wants it - the busiest one with nothing on air.
-
-        Kept at this level because 'somebody arrived somewhere and it is quiet' is a server-wide
-        event; the choosing of WHAT to air belongs to the room, and lives on its deck."""
-        room = self._busiest_live_room(guild)
-        if room is None:
-            return                      # nobody listening anywhere; silence is correct
-        self.remember_guild(guild)
-        await self.deck(room).play_station(guild)
-
-    async def _air(self, room, row, path: str) -> None:
-        """Put one past grind on air in a named room. Kept here so callers (and tests) can aim at a
-        room without reaching for its deck."""
-        self.remember_guild(getattr(room, "guild", None))
-        await self.deck(room).air(row=row, path=path, room=room)
 
     async def _resolve_seams(self, number: int | None, ref_id: str | None,
                              stored: list | None) -> list:
@@ -321,15 +273,6 @@ class Booth:
             except Exception:  # noqa: BLE001
                 pass
         return seams or []
-
-    def _busiest_live_room(self, guild):
-        """The room with the most people in it, or None if nobody is listening anywhere."""
-        best, best_n = None, 0
-        for room in self.rooms(guild):
-            n = self.listeners(room)
-            if n > best_n:
-                best, best_n = room, n
-        return best
 
     # -- controls ------------------------------------------------------------------------------
     # Each of these acts on the caller's OWN room and cannot reach any other. Skipping in
@@ -458,13 +401,13 @@ class Booth:
         if not now_in and before.channel is not None and self.listeners(before.channel) == 0:
             self._start_grace(guild, before.channel)
 
-        # SOMEBODY ARRIVED TO A QUIET ROOM. Before 2026-08-12 they would sit in silence until
-        # somebody happened to grind - the single most common way a listening room felt broken.
+        # ARRIVING STARTS NOTHING (founder decision, 2026-08-12, after listening to it). Walking in
+        # used to put a past mix on automatically. It was built to stop rooms feeling dead; used for
+        # real it meant music appearing that nobody had asked for. All that happens now is that
+        # coming back cancels the empty-room timer, so somebody who stepped out finds their music
+        # still playing.
         if now_in:
-            deck = self.deck(after.channel)
-            deck.empty_since = None          # they are back inside the grace period
-            if not deck.busy:
-                await deck.play_station(guild)
+            self.deck(after.channel).empty_since = None
 
     # -- the grace period ---------------------------------------------------------------------
     def _start_grace(self, guild, room) -> None:
@@ -507,8 +450,7 @@ class Booth:
     def _record_arrival(self, member, room, when: str) -> None:
         try:
             deck = self.deck(room)
-            playing = (deck.now_playing.number if deck.now_playing is not None
-                       else deck.station_number)
+            playing = deck.now_playing.number if deck.now_playing is not None else None
             store.room_arrival(
                 guild_id=getattr(member.guild, "id", None), room_id=room.id, room_name=room.name,
                 user_id=member.id, user_name=getattr(member, "display_name", ""), when=when,
@@ -557,9 +499,7 @@ class Booth:
         """Nobody left to hear it, anywhere. Stop and get out - no identity may sit connected and
         silent.
 
-        This also ends every station: playing to an empty room burns CPU and a voice connection for
-        an audience of nobody. Each deck's pause flag is cleared too, so the next person to walk in
-        gets music rather than inheriting somebody's earlier /stop."""
+        Playing to an empty room burns CPU and a voice connection for an audience of nobody."""
         self.queue.clear()
         for deck in self.decks.values():
             deck.go_quiet()
