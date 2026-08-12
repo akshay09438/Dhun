@@ -31,11 +31,15 @@ IMAGES: tuple[tuple[str, str, tuple[int, int]], ...] = (
     # FOUNDER'S CHOICE (2026-08-11): the split-disc "Avatar biggest size.png", not the "G" mark.
     # The cut/offset disc is the INTENDED design, confirmed by the founder — see the module
     # docstring. `Icon.png` (the G) stays in the source folder if it is ever wanted back.
-    ("Avatar biggest size.png", "icon.png", (512, 512)),
-    # The GRINDER wordmark disc: the picture on the welcome post and /help. Discord renders an
-    # embed image about 400px wide, so 640 is already more than it can show — and the grain in the
-    # source art compresses badly, so every extra pixel costs real bytes for no visible gain.
-    ("Main logo.png", "logo.png", (640, 640)),
+    # FOUNDER'S CHOICE (2026-08-12): the "# GRINDER" disc replaces the plain split disc
+    # everywhere. Same intended cut/offset artwork, now carrying the wordmark, so the avatar
+    # says who it is at any size. Sourced at 512 exactly — the size we output — so this is a
+    # straight copy with NO resampling and no softening of the curved text.
+    ("grinder-H2-black-512.png", "icon.png", (512, 512)),
+    # The same disc, larger, for anywhere an embed shows a picture. Sourced from the 1024 rather
+    # than the 2048: 640 is already more than Discord renders in an embed, and downscaling from
+    # 2048 costs 4 MB of read for an identical result.
+    ("grinder-H2-black-1024.png", "logo.png", (640, 640)),
     # The glow banner. 960x540 is Discord's server-banner size, and the source is already 16:9,
     # so this is a clean downscale with no cropping. Cannot be APPLIED until the server reaches
     # boost level 2 — committed now so it is ready the moment it can be used.
@@ -47,6 +51,12 @@ IMAGES: tuple[tuple[str, str, tuple[int, int]], ...] = (
 # IMAGES because it saves as JPEG: the art is a grainy gradient, which PNG cannot compress (1426 KB
 # vs 102 KB for a visually identical q94 JPEG). Source is the founder's 4x export; 1360x480 is 2x
 # what Discord renders, so it stays sharp on a high-DPI screen.
+# CAUTION (2026-08-12): re-encoding this produces a DIFFERENT FILE even when the source art has
+# not changed - a newer Pillow encodes the same JPEG at 152 KB where the shipped one is 104 KB.
+# The bot uploads on a fingerprint change, so a pointless re-encode re-uploads the profile banner
+# and touches the #read-this-first post, which the founder explicitly asked to leave alone.
+# If you run this script for some OTHER asset, check `git status` afterwards and restore this file
+# unless the artwork itself actually changed.
 REMIX_BANNER_SRC = "grinder-banner-680x240@4x.png"
 REMIX_BANNER_OUT = "remix-banner.jpg"
 REMIX_BANNER_SIZE = (1360, 480)
