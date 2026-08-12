@@ -134,6 +134,31 @@ def mark_avatar_applied() -> None:
         pass
 
 
+# The APPLICATION icon is a different picture from the bot's avatar: it is what the Developer
+# Portal lists, what the slash-command picker shows, and what the App Directory would use. Setting
+# the avatar does NOT set it, which is why the portal still showed the old disc after the avatar
+# had already changed (founder-reported 2026-08-12).
+#
+# It used to be true that the API could not change this - an older comment in bot.py said exactly
+# that. discord.py 2.7.1's AppInfo.edit accepts `icon`, so it can now, and doing it here keeps the
+# portal in step instead of relying on somebody remembering to re-upload it by hand.
+def app_icon_needs_upload() -> bool:
+    fp = icon_fingerprint()
+    if fp is None:
+        return False
+    try:
+        return (ASSETS / ".applied-app-icon").read_text(encoding="utf-8").strip() != fp
+    except OSError:
+        return True
+
+
+def mark_app_icon_applied() -> None:
+    try:
+        (ASSETS / ".applied-app-icon").write_text(icon_fingerprint() or "", encoding="utf-8")
+    except OSError:
+        pass
+
+
 def emoji_files() -> list[tuple[str, Path]]:
     """(emoji_name, file) for every shipped emoji, in the order EMOJI_FALLBACK declares — so the
     upload order is stable and predictable rather than filesystem-dependent."""
