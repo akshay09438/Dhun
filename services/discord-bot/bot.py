@@ -746,8 +746,15 @@ async def mygrinds_cmd(interaction: discord.Interaction) -> None:
 @bot.tree.command(name="play", description="Start the music in your listening room, or pick up where you stopped.")
 async def play_cmd(interaction: discord.Interaction) -> None:
     """The command that was missing. Before this, the ONLY way to get Grinder into a room was to
-    finish a grind while sitting in one - somebody who just wanted music had nothing to type."""
-    await interaction.response.send_message(await booth.play(interaction.user), ephemeral=True)
+    finish a grind while sitting in one - somebody who just wanted music had nothing to type.
+
+    DEFER FIRST. Discord kills an interaction that has not been acknowledged within 3 SECONDS, and
+    /play may have to open a voice connection (a real handshake, seconds) and ask the engine for a
+    set's boundaries. Observed live on 2026-08-12: "The application did not respond", while /skip
+    beside it succeeded - because /skip runs when the bot is ALREADY connected and never pays that
+    cost."""
+    await interaction.response.defer(ephemeral=True)
+    await interaction.followup.send(await booth.play(interaction.user), ephemeral=True)
 
 
 @bot.tree.command(name="skip", description="Skip to the next track in your listening room.")
@@ -759,9 +766,12 @@ async def skip_cmd(interaction: discord.Interaction) -> None:
     faintly silly when there are two people in it, and this is a validation-scale community where
     social pressure works better than machinery.
 
-    Ephemeral, so skipping does not litter the channel with notices.
+    Ephemeral, so skipping does not litter the channel with notices. Deferred for the same reason
+    as /play: a seek re-opens the audio stream and may first ask the engine for the set's
+    boundaries, which can outrun Discord's 3-second acknowledgement window.
     """
-    await interaction.response.send_message(await booth.skip(interaction.user), ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
+    await interaction.followup.send(await booth.skip(interaction.user), ephemeral=True)
 
 
 @bot.tree.command(name="stop", description="Stop the music in your listening room.")
@@ -769,7 +779,8 @@ async def stop_cmd(interaction: discord.Interaction) -> None:
     """Stop means stop: it clears the room's queue AND parks the station, so the room does not
     immediately start replaying something. The next grind, or the next person to walk in, starts
     it up again."""
-    await interaction.response.send_message(
+    await interaction.response.defer(ephemeral=True)
+    await interaction.followup.send(
         await booth.stop_playback(interaction.user), ephemeral=True)
 
 

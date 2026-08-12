@@ -453,3 +453,60 @@ def test_the_station_can_still_advance_after_a_station_track_ends(booth, tmp_pat
     asyncio.run(booth._advance())               # the track ends
     assert booth.station_number is not None and booth.station_number != first, \
         "the room must keep playing after a station track ends, not fall silent"
+
+
+# --- the stomped seek (founder-reported 2026-08-12: "said track 2, track 2 didn't play") ---------
+# discord.py's vc.stop() FIRES the current source's `after` callback, and voice_player.play_in
+# calls stop() before starting anything. So deliberately replacing the audio delivers a "track
+# finished" that is not true - and acting on it started something else OVER the top.
+
+def test_a_seek_is_not_undone_by_the_callback_from_the_track_it_replaced(booth, tmp_path,
+                                                                        monkeypatch):
+    """THE REPORTED BUG. /skip said "Skipped to track 2" and track 2 did not play, because the
+    stopped track's finish-callback ran a moment later and started something else."""
+    guild, room, member = _room_with(booth)
+    _grind_on_disk(tmp_path, "other", fires=5)          # what the station would stomp on with
+    audio = tmp_path / "set.wav"; audio.write_bytes(b"RIFF")
+
+    started = []
+    captured = {}
+
+    async def fake_play_in(ch, path, on_finished=None, start_at=0.0):
+        started.append((Path(path).stem, start_at))
+        captured["cb"] = on_finished                    # the CURRENT track's callback
+    monkeypatch.setattr(booth_mod.voice_player, "play_in", fake_play_in)
+
+    booth._mark_playing(str(audio), offset=0.0, seams=[160.0], guild=guild)
+    booth._now_started = booth._now_started - 100
+    # The callback the OLD track holds. The token must be captured NOW, by value - reading it
+    # later would read the token of whatever replaced it, which is the whole thing being guarded.
+    old_token = booth._play_token
+    stale_cb = lambda: booth._advance(old_token)
+
+    asyncio.run(booth.skip(member))
+    assert started[-1] == ("set", 160.0), "the seek itself must happen"
+
+    # now the stopped track's callback arrives, late, as it does in real life
+    asyncio.run(stale_cb())
+
+    assert started[-1] == ("set", 160.0), (
+        "the seek was stomped: something started over the top of the track /skip just began"
+    )
+    assert booth.station_number is None
+
+
+def test_a_genuine_track_ending_still_advances(booth, tmp_path, monkeypatch):
+    """The guard must not make the room deaf to real endings - that would trade one silent-room
+    bug for another."""
+    guild, room, member = _room_with(booth)
+    _grind_on_disk(tmp_path, "next", fires=1)
+    audio = tmp_path / "cur.wav"; audio.write_bytes(b"RIFF")
+
+    async def fake_play_in(ch, path, on_finished=None, start_at=0.0):
+        pass
+    monkeypatch.setattr(booth_mod.voice_player, "play_in", fake_play_in)
+
+    booth._mark_playing(str(audio), guild=guild)
+    tok = booth._begin_playback()          # the token the CURRENT playback holds
+    asyncio.run(booth._advance(tok))       # it really finished
+    assert booth.station_number is not None, "a real ending must still hand over to the station"

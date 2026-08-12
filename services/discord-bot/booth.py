@@ -109,6 +109,14 @@ class Booth:
         # Looks up a set's track boundaries from the engine, given its set id. Injected by bot.py
         # so the booth needs no HTTP client of its own and stays unit-testable. None = no lookup.
         self.seam_lookup = None
+        # WHICH PLAYBACK a finish-callback belongs to. discord.py's vc.stop() FIRES the current
+        # source's `after` callback, and voice_player.play_in calls stop() before starting the
+        # next thing - so deliberately replacing the audio (a seek, an interrupt) delivers a
+        # "track finished" that is not true. Acting on it started something else OVER the top of
+        # what we had just started: /skip reported "skipped to track 2" and then track 2 was
+        # immediately stomped. Every playback carries a token; a callback from a superseded one
+        # is ignored.
+        self._play_token = 0
 
     # -- the rooms ------------------------------------------------------------------------
     def is_a_room(self, channel) -> bool:
@@ -203,7 +211,9 @@ class Booth:
         # that says something is happening when it is not is the one thing this interface must
         # never do.
         try:
-            await voice_player.play_in(room, ctx.audio_path, on_finished=self._advance)
+            tok = self._begin_playback()
+            await voice_player.play_in(room, ctx.audio_path,
+                                       on_finished=lambda t=tok: self._advance(t))
             # A SET is one continuous file; its seams are where each member's crossfade begins,
             # which is what a listener hears as "the next track". Without them /skip could only
             # throw away all five.
@@ -238,12 +248,17 @@ class Booth:
         except discord.HTTPException:
             pass
 
-    async def _advance(self) -> None:
+    async def _advance(self, token: int | None = None) -> None:
         """One finished, take the next. Called back from the audio player.
 
         When the queue empties the room does NOT go silent. Until 2026-08-12 it did: the bot sat
         connected and quiet until the last person left, which is a dead room with a bot in it, not
         a listening room. Now it falls through to the station."""
+        if token is not None and token != self._play_token:
+            # A playback we deliberately replaced has just reported that it ended. It did - but
+            # because we stopped it, not because it finished. Acting on this is what stomped on
+            # the track a /skip had just started.
+            return
         async with self._lock:
             last = self.now_playing
             self.now_playing = None
@@ -331,7 +346,8 @@ class Booth:
             self._recently_aired.pop(0)
         self.station_number = row["number"]
         try:
-            await voice_player.play_in(room, path, on_finished=self._advance)
+            tok = self._begin_playback()
+            await voice_player.play_in(room, path, on_finished=lambda t=tok: self._advance(t))
             seams = await self._resolve_seams(row["number"], _ref_of(row), _seams_of(row))
             self._mark_playing(path, seams=seams, guild=room.guild)
             log.info("booth: station aired grind #%s in %s", row["number"], room.name)
@@ -353,6 +369,12 @@ class Booth:
     # discord.py has no notion of a playback position, so the booth keeps its own: where in the
     # file this playback STARTED, and when. Everything below - skipping inside a set, and picking
     # up where /stop left off - is arithmetic on those two numbers.
+
+    def _begin_playback(self) -> int:
+        """Claim the next playback token. MUST be called BEFORE play_in, so that the stale
+        callback fired by its internal stop() already looks superseded when it arrives."""
+        self._play_token += 1
+        return self._play_token
 
     def _mark_playing(self, path: str, *, offset: float = 0.0, seams: list | None = None,
                       guild=None) -> None:
@@ -404,7 +426,9 @@ class Booth:
             path, seams = self._now_path, list(self._now_seams)
             place = self._now_seams.index(seam) + 2      # human numbering: seam 0 starts track 2
             try:
-                await voice_player.play_in(room, path, on_finished=self._advance, start_at=seam)
+                tok = self._begin_playback()
+                await voice_player.play_in(room, path, on_finished=lambda t=tok: self._advance(t),
+                                           start_at=seam)
             except Exception:  # noqa: BLE001
                 log.exception("booth: could not seek to %.2fs", seam)
                 return "Couldn't skip that one."
@@ -459,7 +483,9 @@ class Booth:
             path, offset, seams = self._paused_at
             if Path(path).exists():
                 try:
-                    await voice_player.play_in(room, path, on_finished=self._advance,
+                    tok = self._begin_playback()
+                    await voice_player.play_in(room, path,
+                                               on_finished=lambda t=tok: self._advance(t),
                                                start_at=offset)
                 except Exception:  # noqa: BLE001
                     log.exception("booth: could not resume")
