@@ -182,14 +182,41 @@ class PromptDJBot(discord.Client):
             else:
                 log.info("brand: avatar already up to date")
             await self._apply_profile_banner(user)
+            await self._apply_app_icon()
             url = str(user.display_avatar.url) if user.display_avatar else None
             # Log it: this is the ONLY way to check from outside what picture Discord actually holds
-            # for the bot, and it distinguishes the bot's avatar from the separate Application icon
-            # shown in the slash-command picker (which the API cannot change).
+            # for the bot. NOTE (corrected 2026-08-12): this line used to end "...the separate
+            # Application icon shown in the slash-command picker (which the API cannot change)".
+            # It can — discord.py 2.7.1's AppInfo.edit takes an icon — and it is now set below.
             log.info("brand: bot avatar url = %s", url)
             ui.set_avatar_url(url)
         except Exception:  # noqa: BLE001 — branding is cosmetic; never let it stop the bot
             log.warning("brand: couldn't set the avatar (continuing)", exc_info=True)
+
+    async def _apply_app_icon(self) -> None:
+        """Set the APPLICATION icon - a different picture from the bot's avatar.
+
+        The avatar is what you see beside a message. This is what the Developer Portal lists, what
+        the slash-command picker shows, and what the App Directory would use. Setting one does NOT
+        set the other, which is why the portal still showed the old disc after the avatar had
+        already changed (founder-reported 2026-08-12).
+
+        Its own fingerprint file, so it uploads once per artwork change rather than on every start.
+        Never fatal: a bot that cannot set a picture must still make mixes."""
+        if not brand.app_icon_needs_upload():
+            log.info("brand: application icon already up to date")
+            return
+        data = brand.image_bytes(brand.ICON)
+        if data is None:
+            return
+        try:
+            info = await self.application_info()
+            await info.edit(icon=data, reason="Grinder - keep the portal icon in step with the art")
+            brand.mark_app_icon_applied()
+            log.info("brand: application icon uploaded from %s (%s)",
+                     brand.ICON.name, brand.icon_fingerprint())
+        except Exception:  # noqa: BLE001 - cosmetic; the avatar already succeeded above
+            log.warning("brand: couldn't set the application icon (continuing)", exc_info=True)
 
     async def _apply_profile_banner(self, user) -> None:
         """Set the strip behind the bot's picture on its profile card.
