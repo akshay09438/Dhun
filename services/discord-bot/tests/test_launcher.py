@@ -38,27 +38,41 @@ def test_launcher_exists() -> None:
     assert LAUNCHER.is_file(), f"the launcher went missing: {LAUNCHER}"
 
 
+def _all_batch_files() -> list[Path]:
+    """EVERY double-clickable script we ship, not just the one that broke.
+
+    Generalised on 2026-08-12 after a second .bat was added: a guard that protects one file while
+    the next one is written freehand only catches the bug we already know about."""
+    return sorted(LAUNCHER.parent.glob("*.bat"))
+
+
+def test_there_is_something_to_check() -> None:
+    assert _all_batch_files(), "no .bat files found - this guard would pass vacuously"
+
+
 def test_echo_lines_escape_their_parentheses() -> None:
-    """Any `echo` inside the file must escape ( and ) as ^( ^).
+    """Any `echo` in any of our .bat files must escape ( and ) as ^( ^).
 
     Checked on every echo rather than only the ones inside blocks: telling "inside a block" from
     "outside" needs a real batch parser, and escaping everywhere is harmless - `echo ^(x^)` prints
     exactly the same text as `echo (x)` when it does parse.
     """
     offenders: list[str] = []
-    for num, raw in _lines():
-        line = raw.strip()
-        if not re.match(r"^echo\b", line, flags=re.IGNORECASE):
-            continue
-        # Strip the legal escaped forms, then anything left is a bare parenthesis.
-        stripped = line.replace("^(", "").replace("^)", "")
-        if "(" in stripped or ")" in stripped:
-            offenders.append(f"  line {num}: {line}")
+    for bat in _all_batch_files():
+        text = bat.read_text(encoding="utf-8", errors="replace")
+        for num, raw in enumerate(text.splitlines(), start=1):
+            line = raw.strip()
+            if not re.match(r"^echo\b", line, flags=re.IGNORECASE):
+                continue
+            # Strip the legal escaped forms, then anything left is a bare parenthesis.
+            stripped = line.replace("^(", "").replace("^)", "")
+            if "(" in stripped or ")" in stripped:
+                offenders.append(f"  {bat.name} line {num}: {line}")
 
     assert not offenders, (
         "These echo lines contain unescaped parentheses. Inside an if/else block cmd.exe treats a "
-        "bare ')' as the end of the block and the launcher dies with '... was unexpected at this "
-        "time' BEFORE it starts the bot - even if the line is on a branch that never runs.\n"
+        "bare ')' as the end of the block and the script dies with '... was unexpected at this "
+        "time' BEFORE reaching its real work - even if the line is on a branch that never runs.\n"
         "Write them as ^( and ^).\n" + "\n".join(offenders)
     )
 
