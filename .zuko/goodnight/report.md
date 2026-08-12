@@ -1,132 +1,150 @@
-# Goodnight report — 2026-08-12 (night 2)
+# Morning report — the hygiene batch, the Panda question, and your costing
 
-_Ran on your approved plan of eleven tasks, with eight decisions you gave at kickoff. Nothing dangerous was self-applied — and this time nothing needed to be._
-
----
-
-## The short version
-
-**Nine of eleven done. Nothing is waiting on your desk.**
-
-Last night ended with an envelope you had to open. Tonight ends with none — not because the risky work was skipped, but because I rebuilt it so it never had to touch the file that deletes things. More on that below, because it's the bit I'm most pleased with.
-
-Two things are parked honestly: **Windows Update's 7.81 GB needs administrator rights I don't have**, and **the song-pair sweep was still running when I wrote this**.
+_Overnight run of 2026-08-12, after you confirmed two rooms playing at once. Branch
+`feat/second-grinder-voice`. Nothing merged to `main`. Nothing staged for your approval — this batch
+touched none of the handle-with-care files._
 
 ---
 
-## Before anything else: I was wrong twice today, and both are now corrected
+## First, the thing that matters
 
-I'd rather you hear these from me than find them.
-
-**1. I told you the launcher was fine. It wasn't, and it was the whole problem.**
-
-This morning I "re-verified" `Start-Grinder.bat` by reading it, and told you the old warning about it was closed. Then every `/grind` said _"The application did not respond."_
-
-The bot was never running. The launcher had a stray bracket in one line — `(best-effort)` — and Windows reads a whole section before doing any of it, so it choked, started the engine, and quit before the line that starts the bot. **The broken line was on a branch that never even runs on your machine.**
-
-Last night's notes had said that file was "edited but never actually run". That was right. **Reading it could never have caught this. Running it caught it in ninety seconds.** Six tests now guard it.
-
-**2. I told you a grind really takes 67 seconds, not 26. That was wrong.**
-
-I measured it properly instead of inferring it. End to end, from the moment you ask: **25.4 seconds**, of which **25.0 is the actual mixing work**. There is no hidden overhead — the old 26-second figure was accurate all along.
-
-The 67 seconds was real, but it was your _busy_ session — several grinds at once, the Discord file conversion afterwards, and a laptop down to 5.86 GB. Both numbers are true; they measure different situations.
-
-**The upshot is good news:** the thing I pointed you at is still the right target. Trimming to the best part costs **8.5 seconds — a third of every wait.**
+**Two rooms play at the same time, you heard it, and nothing starts on its own any more.** That is
+the wall that was structurally impossible this morning, broken and confirmed by your own ears. The
+rest of this is tidying up around it.
 
 ---
 
-## What got built
+## 1. Your question: do both bots follow the same rules?
 
-|     | What                                                                                                                                 | Proof                                          |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
-| 1   | **The room stops going silent.** When nothing's queued it now replays what the community has made, favouring the ones people gave 🔥 | 13 tests                                       |
-| 2   | **`/skip` and `/stop`** — anyone in the room, as you chose                                                                           | tested, incl. that stop actually stays stopped |
-| 3   | **Grinder records who listened and for how long** — your two blocking data gaps                                                      | tested                                         |
-| 4   | **A disk cleaner that knows when NOT to delete**                                                                                     | 14 tests + proven on your real disk            |
-| 5   | **Ten cards in one channel no longer shout over each other**                                                                         | 8 tests                                        |
-| 6   | **The launcher bug**                                                                                                                 | reproduced, fixed, 6 guards                    |
-| 7   | **Free hosting research** — and the answer is yes                                                                                    | written up                                     |
-| 8   | **Test junk cleared from your database**                                                                                             | 191 rows, backup kept                          |
-| 9   | **2.83 GB of temp rubbish reclaimed**                                                                                                | measured                                       |
+**Yes — and not because the second one was written carefully. Because it has no rules in it.**
 
-### The station, and your rule
+I grepped every single thing the extra identity is ever asked to do. The complete list is four calls:
+look up its own copy of a room, clear its voice state at startup, read its own user to set its
+picture, and store its login. **There is no fifth.**
 
-You asked for past mixes, best-first. I built exactly that — **but the bot still never judges a mix.** It orders by the reactions _people_ gave, and it never announces a ranking, never shows a score, never calls anything good. Silent ordering only. Your rule holds.
+It cannot post, so it cannot judge a mix. It cannot render, so it cannot bypass the quality referee.
+It cannot pick songs, plan an arrangement, or read a command. It is handed a finished file and plays
+it.
 
-It also replays straight off disk, so an hour of music costs **nothing** — no new files, no Replicate credits. And when the cleaner sweeps an old mix, that mix simply drops out of rotation.
+Written up with the evidence in **`docs/second-voice-hygiene-audit.md`**, including the one-line grep
+so you can re-run it yourself any time.
 
-### The envelope that isn't there
+## 2. Your question: why wasn't Panda sung?
 
-You asked why the disk cleaner needed you. Fair question — and the answer was that I'd designed it badly.
+**It is not the arrangement's fault — and I can prove that much.**
 
-`storage.py` is dangerous because it deletes people's mixes. But it already knew _how_ to clean, and it already had a "show me what you'd delete without deleting it" mode. All it was missing was **someone to ask it, regularly**.
+The plan puts Panda's vocal into the mix three times. Two of those land fully inside the clip you
+actually heard: **87 seconds of Panda in a 220-second clip, 40% of it.** For contrast, Father Ocean's
+own vocal appears for 6.3 seconds. So the mix didn't forget him and the crop didn't skip him.
 
-So the cleaner is a **new, separate file** that pokes the old one on a timer. **`storage.py` was not changed by a single character** — I checked, rather than assumed. The dangerous file is exactly as it was, and you got the feature without the sticky note.
+The engine also flagged that pair as awkward at the time, in its own words: _122 BPM beat against a
+72 BPM vocal — about twice apart._ Panda was squeezed to 85% of his length and pitched down a
+semitone. That is right on the recorded warble threshold.
 
-**The futility brake works, and tonight proved why it matters.** Your disk dropped 3.4 GB during our conversation and **Prompt-DJ wasn't responsible** — Windows Update was sitting on 7.81 GB. A naive cleaner told to reach 6 GB would have deleted **all 3.54 GB of your mixes and still missed**. This one checks first and refuses. Tested on your actual disk: at a deliberately impossible target it reported being 27.36 GB short and **deleted nothing**.
+**What I could not finish:** proving whether the vocal actually survived into the finished audio. Two
+suspects with opposite fixes — either it's there and buried (a known, parked issue where vocals sit
+6–8 dB under the beat on _every_ mix), or it never made it into the render. The measurement that
+tells them apart needs the mix file, and **it was deleted off the disk by tonight's catalog sweep**
+before I got to it.
+
+That costs almost nothing to recover: a mix's id is a hash of its inputs, so re-running that pair
+regenerates a byte-identical file. **Re-render, run the probe, get a verdict — about a minute.**
+
+**I did not touch the vocal chain.** A loudness fix applied to a render bug changes nothing, and that
+file is handle-with-care.
+
+One thing worth your seeing: my _first_ attempt at that measurement gave an answer that looked
+convincing and was wrong — the arrangement's own energy arc swamped it. It's written up as a
+discarded method, not dressed up as a finding.
+
+## 3. Your ask: make every song play
+
+The never-decline rule already means no pair is refused for tempo or key. The only thing that can
+still stop a mix is the referee catching a render that genuinely sounds bad — **and I didn't disable
+that**, because it's the guard that stops the app quietly shipping mush.
+
+Instead I swept the catalog for real and, for the first time, **recorded WHY each failure failed.**
+The engine's own log already knew; nothing was reading it.
+
+**Result so far (77 pairs, sweep still running):**
+
+|                                         |                    |
+| --------------------------------------- | ------------------ |
+| Failed                                  | 10 of 77 — **13%** |
+| ...of which the machine was simply full | 4                  |
+| **Genuine pair failures**               | **6 of 77 — 7.8%** |
+
+**That 29.6% figure you were told before was wrong**, exactly as suspected — it counted a starved
+machine as broken songs. The real number is under 8%, and the offenders are specific: **Khuda Jaane
+fails 2 of 4 tries** (the known one), while Father Ocean fails 3 of 24 and I Adore You 1 of 20 —
+which is noise, not a broken song.
+
+The sweep was still running when I wrote this. **`scripts/loadtest/sweep_report.py` reads the answer
+straight out of the engine's log**, so it doesn't matter whether the sweep finishes cleanly — the
+result is recoverable either way. That is new, and it's why last time's numbers had to be
+reconstructed by hand.
+
+## 4. Your ask: an accurate cost to launch for 200–500 people
+
+**`docs/launch-costing-200-500-users.md`** — all three usage cases side by side, as you asked.
+
+**The short version: about $20 a month for a normal community.**
+
+The two things everyone assumes are expensive are free. **Members are free. Listening is free** — a
+room with 200 people in it costs exactly the same as an empty one, because playback replays a file
+that already exists. A song is paid for **once, ever** (~2–6¢) and is then free forever.
+
+**The only thing that costs money is somebody pressing `/grind`: about 1.5 cents.**
+
+|                      | Light | **Baseline** | Heavy   |
+| -------------------- | ----- | ------------ | ------- |
+| Mixes per month      | ~130  | **~1,100**   | ~19,000 |
+| Cost on free hosting | ~$2   | **~$20**     | ~$340   |
+
+**And the most important line in the document: the cliff is the machine, not the money.** There is no
+queue in the mix-making code — past about 8–10 at once it runs out of memory and _fails_ people's
+mixes instead of making them wait. Buying a server before building the waiting list gets you a faster
+machine that falls over the same way.
+
+Every claim is marked with how confident I am and where the number came from.
+
+## 5. Fixed on the way
+
+**No more ghost bots.** Tonight's lost hour was an invisible Grinder from 18:34 still running behind
+a closed window. `Start-Grinder.bat` now clears the shift before starting. Four tests, one of which
+fails if that guard is ever moved to the wrong place.
 
 ---
 
-## Hosting: free is real, and ARM isn't the problem
+## Where I was wrong tonight
 
-Full write-up: [docs/hosting-research-2026-08-12.md](../../docs/hosting-research-2026-08-12.md).
+Twice, and both times I sounded more certain than the evidence justified.
 
-The thing that could have killed it doesn't. Oracle's free machines are **ARM** — the word that broke voice on your laptop. But the missing piece **does** publish a Linux-ARM build; it's specifically _Windows_-ARM that has none. So voice would work there natively, with no emulation trick.
+1. **I told you the auto-play was still happening because you hadn't restarted.** You had. The real
+   cause was the ghost bot, and I only found it by listing the processes on your machine — which I
+   should have done first, since I can.
+2. **I blamed the timeouts on you clicking inside the console window.** Plausible, well-known, and
+   wrong. Same ghost bot. That one sent you chasing something that didn't matter.
 
-That narrows your old blocker for the third time: _"ARM can't do voice"_ → _"no ARM wheel"_ → **"no Windows-ARM wheel; Linux ARM is fine."**
-
-Two catches worth knowing: Oracle **halved** its free tier in June (4 CPUs/24 GB → 2 CPUs/12 GB) with no announcement, and account creation is often refused. Storage stays at **200 GB** — twenty times your laptop's free space.
-
-**What I could not answer:** whether 2 shared ARM cores can actually mix a song in reasonable time. So my recommendation is a **measurement, not a migration** — one free instance, one timed render, one evening. If it's fast enough, everything else is routine.
-
----
-
-## Numbers
-
-| Check                    | Result                               |
-| ------------------------ | ------------------------------------ |
-| Discord bot suite        | **221 passed** (was 194)             |
-| Backend, full            | **767 passed, 1 failed** — see below |
-| Backend, the new cleaner | 14 passed                            |
-| Backend, disk safety     | 27 passed                            |
-| Web / typecheck / lint   | 78 passed / clean / clean            |
-| `storage.py` changed?    | **no — byte-identical**              |
-
-**About that one failure, honestly:** an end-to-end audio test failed while the song-pair sweep was hammering the same machine. **Run on its own straight afterwards, it passed (5 passed).** So it's two heavy jobs fighting over the same laptop, not a broken change — but I'm reporting it as a failure rather than rounding it to green.
+The lesson recorded in the handoff: when it's your machine, look at your machine before theorising.
 
 ---
 
-## Still running, and parked
+## Do first when you're back
 
-- **The song-pair sweep was still going when I wrote this.** It renders every pair for real and deletes each batch before the next, so your disk went 8.3 → 6.9 → **10 GB** rather than filling up. **Its answer is not in this report** — the results file lands in `scripts/loadtest/`. Check it before believing anything about which pairs work.
-- **Windows Update's 7.81 GB** — needs administrator rights. A few clicks in Disk Cleanup and you'd roughly double your free space. **This is the biggest single lever on your laptop and only you can pull it.**
+1. **Re-render Father Ocean × Panda and run the probe.** One minute, and it decides whether the vocal
+   fix is a loudness change or a bug hunt.
+2. **Open and merge the PR.**
+3. **Build the render waiting list.** It's the next agreed job, and the costing makes the case: it
+   removes the only cliff that actually breaks a launch night, and it costs nothing to run.
+4. **The disk-cleanup card** from an earlier night is _still_ sitting unapplied on your desk.
 
----
+## Verification
 
-## What only you can do
-
-1. **Sit in a room and hear the station.** Everything about it is proven _in tests_, and tests can't hear. Your own notes record five separate times a forgiving test hid a real Discord bug in this exact area.
-2. **Press `/skip` and `/stop`.** Never done by a person.
-3. **Reclaim the Windows disk.**
-4. **Decide on hosting** — the research is done, the decision isn't.
-
----
-
-## One thing worth knowing
-
-After clearing the test rows, your database says something surprising: **your app has never recorded a single real failure.** Not one — and your bad-pair test this morning didn't produce one either.
-
-So all those careful "here's why it didn't work" messages have never been shown to anyone. That's either very good news about your catalog, or failures aren't being recorded properly. **Worth finding out which.**
-
----
-
-**An easy way to understand this**
-
-Nine jobs done, nothing on your desk, and I owe you two corrections — I wrongly cleared the launcher this morning when it was the actual bug, and I wrongly told you a grind takes a minute when it takes 26 seconds. Both fixed, both written down.
-
-The best bit: you asked why the disk cleaner needed your permission. You were right to ask. I'd planned to modify the one file allowed to delete things — instead I left it completely alone and wrote a small **timer** that taps it on the shoulder every minute. Same feature, none of the danger, no envelope for you to open.
-
-And it already earned its keep: your disk lost 3.4 GB today and **it wasn't your app** — Windows was hoarding 7.81 GB of updates. A dumber cleaner would have thrown away every mix you've made and still not fixed it. This one looks first and refuses.
-
-Your rooms should now keep playing music by themselves. **Nobody has heard that happen yet.** Go sit in one.
+| Check                                                                        | Result                                                |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Discord bot suite                                                            | **307 passed** (245 at session start)                 |
+| Backend / web / typecheck / lint                                             | **768 / 78 / clean / clean**                          |
+| `render.py`, `validate.py`, `storage.py`                                     | **untouched**                                         |
+| Three mutation checks (shared connection, `.env` overwrite, cross-room read) | each re-broken on purpose, each caught, each reverted |
+| Two rooms with sound at once                                                 | **confirmed by you, by ear**                          |

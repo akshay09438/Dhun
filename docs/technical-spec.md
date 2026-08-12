@@ -515,3 +515,103 @@ When Song 2's vocal is in a clashing key with Song 1's beat, the app now **shift
 - **Wiring** (`app/routes/mix.py`): inside `_run_mix`, right after `assert_plan` — `resolve_key_shift` (gated by `key_match_enabled()`) → `pitch.shifted_vocal` (PitchError → loud decline) → `validate.assert_key_shift` (K1; ValidationError → declines with the other quality failures) — all BEFORE `render_mix` / `assert_render`. The retired live "Play" vocal-bus path (`routes/live.py`, currently **unmounted dead code**) applies the SAME shift AND the SAME K1 referee (defense-in-depth, added on re-review 2026-08-06), so it can never emit an un-shifted or unverified "key-matched" vocal if that screen is ever re-enabled.
 - **Off-switch + cache:** `mix.py._KEY_MATCH_ENABLED` (currently True). Folded into `ENGINE_VERSION` as `+m10key`, so flipping it off drops the tag → byte-identical to the pre-key-match engine and auto-invalidates key-matched caches. Instant, reversible.
 - **Reviews / status:** built; full backend suite green (bar the pre-existing disk-dependent `test_cache_sweep` flake). Two independent adversarial reviews found two issues — an un-refereed live-bus path and a K1 chroma-flat mis-judge — **both fixed and re-reviewed SAFE (2026-08-06):** K1 PROCEED by both reviewers; live-bus hardened with the K1 call. **NOT yet merged** — the founder reviews the PR and decides. **Residuals logged:** the `0.15` K1 margin is an untuned taste constant (recommend an ear-check on a genuinely flat/breathy vocal, and note its inconclusive branch is only exercised via a mocked `best_rotation`); the pitch helper is validation-grade (swap for a native binding before scale; confirm the render host has Node); CI runs vitest only, so the Python K1/key tests run locally, not automatically (a small separate CI change is recommended).
+
+## As-built (the second voice — two listening rooms with sound at once), 2026-08-12
+
+**The wall.** A Discord bot application holds exactly ONE voice connection per SERVER. Not per
+channel — per identity, for the whole guild, the same way a person can only be in one voice call at
+a time. `booth.py` had been written around that: one `now_playing`, one queue, one position, one
+station. And `_play` re-read the owner's room at play time, so serving a grind from a second room
+called `vc.move_to(...)` and physically pulled the bot out of the room it was in.
+
+**The shape now** — three files, each with one job:
+
+- **`voices.py`** — a `Voice` is one identity that can hold one room: the main bot (index 0) or one
+  `Speaker` from the existing pool. `VoiceBox.claim/release/holder_of` hands them out, **main
+  first**, which is what makes the zero-extras case identical to the old behaviour.
+- **`deck.py`** — a `Deck` is one room's playback: what is on air, its position and seams, its
+  `_paused_at`, its playback token, its station memory, the identity it has borrowed, and when it
+  went empty. `play_grind` / `advance` / `play_station` / `air` / `skip` / `stop` / `resume`.
+- **`booth.py`** — now the coordinator: the decks, the voice box, one global FIFO queue, the pinned
+  status message, arrival counting, seam lookup, room discovery and `check_config`.
+
+**The subtlety that makes or breaks it.** A channel object belongs to the client that fetched it,
+and `voice_player.play_in` reads `channel.guild.voice_client`, which is per-client state. Handing it
+the main bot's channel object connects the *main bot* no matter which identity was chosen — both
+rooms would quietly share one connection, sounding exactly like the bug being fixed and looking
+healthy in the log. So `Voice.resolve(room)` returns **that identity's own copy** of the room
+(`speaker.client.get_channel(room.id)`) before anything plays, and `Deck.voice_client(room)` reads
+the connection back the same way. **`voice_player.py` itself is unchanged.**
+
+**Scheduling rules**, all deliberately small:
+
+- A room asks for a voice when it wants to play. `None` is a normal answer — the grind waits and the
+  card says so, with its position among grinds for *its own* room.
+- When a room runs out of its own work it checks whether **another** room has a real grind waiting
+  with no identity, and hands its voice over: **a fresh grind anywhere outranks a replay anywhere**,
+  the same rule that already lets a new grind interrupt the station in its own room. With one
+  identity this *is* the old behaviour — the single voice moves on to whoever is next.
+- A room that empties holds its identity for `EMPTY_ROOM_GRACE_SECS` (60) before releasing and
+  disconnecting. A hold, not a stop-and-restart.
+
+**Startup** (`bot.py::bring_extra_voices_online`, in `setup_hook`, not `on_ready` — the latter fires
+on every reconnect): builds the pool from `GRINDER_ROOM_TOKENS`, logs each extra in via
+`speakers.bring_online`, and **drops any that do not come up** (reset token, never invited, no bot
+user) with one honest log line. Each survivor gets its zombie voice session cleared and the
+`# GRINDER` disc applied, tracked by a **per-identity** marker because Discord's avatar rate limit is
+counted per bot. `SpeakerPool` now also refuses a token equal to `DISCORD_TOKEN` — same identity, so
+it would pull the first room's connection away mid-song.
+
+**The `.env` writers.** `Set-Grinder-Token.bat` wrote the file with a single `>`, overwriting it
+whole; a second run discarded `DISCORD_GUILD_ID` and all four channel ids. Both `.bat` files now call
+`scripts/Set-EnvValue.ps1` (replace one line, keep the rest, drop stale duplicates) via
+`scripts/Ask-For-Token.ps1`, which reads the token with `Read-Host -AsSecureString` — the old
+script promised hidden input while using `set /p`, which echoes.
+
+**Tests.** `test_voices.py` (22), `test_two_rooms.py` (15), `test_speakers_online.py` (10),
+`test_env_scripts.py` (11; the PowerShell ones skip where there is no PowerShell). The two-room
+doubles deliberately give each identity its own guild and channel objects, because that is the only
+way to catch the shared-connection bug; both it and the old `.env`-overwriting behaviour were
+re-injected as mutants and confirmed to fail the suite. Existing tests that reached into the old
+single-room internals were re-pointed at the room's deck with their assertions unchanged.
+
+**Not proven, and cannot be here:** that audio comes out of a second identity. `booth.py`'s honesty
+note stands — a fake voice client is always more forgiving than Discord.
+
+## As-built (the station removed; two rooms kept apart), 2026-08-12
+
+**The station is gone, by founder decision, after they used it.** Built the same day to stop a room
+falling silent, it meant a room started playing things nobody had asked for. Removed rather than
+disabled: `Deck.play_station`, `Deck.air`, `Deck.station_number`, `_station_paused`,
+`_recently_aired`, `STATION_MEMORY`, `Booth._play_station`, `Booth._air`, `Booth.station_number`,
+`Booth._busiest_live_room`, `store.station_candidates`, and every test that covered only them. The
+🔥 reaction count is still recorded and is still the product signal — it simply no longer orders
+anything Grinder acts on.
+
+**What starts music now, and nothing else does:**
+
+| | |
+|---|---|
+| `/grind` | plays in the room its owner is sitting in |
+| `/play` | picks up whatever `/stop` paused in that room; with nothing paused it says so |
+| a queued grind reaching the front | plays when the room's voice frees up |
+| arriving in a room | **nothing** — it only cancels that room's empty-room timer |
+| a mix ending with an empty queue | **nothing** — the room goes quiet and `release_voice()` leaves |
+
+**Two bugs the founder's own testing found, both in how rooms were kept apart.**
+
+1. **Two Grinders in one channel.** A claim and a connection were two different lifetimes.
+   `release_voice()` handed back the claim and left the identity sitting in the channel; another
+   identity could then legitimately claim that room and `voice_player.play_in`'s `vc.move_to(...)`
+   walked it in on top. `release_voice()` is now `async` and disconnects, finding the connection via
+   `Voice.connections()` — off the **identity's client**, not the guild, because the whole problem is
+   that the identity may be somewhere we are not looking. Best-effort: a failed disconnect must not
+   cost that room its claim for the rest of the night.
+2. **One room reading another room's connection.** `Deck.voice_client` fell back to
+   `guild.voice_client` when the room held no identity — which is whatever the main bot is doing
+   elsewhere. So `/play` in the second room answered about the first room's music, and `/skip` could
+   too. It now also checks the connection is actually **in this room**. The original test double had
+   no `.channel`, which is precisely why it slipped through; the new one has.
+
+**Also added:** a refusal now logs which identity holds which room, because a refusal said "one
+room" ten minutes after startup had said two and nothing recorded enough to say which was wrong.

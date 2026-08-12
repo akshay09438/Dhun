@@ -159,6 +159,27 @@ def mark_app_icon_applied() -> None:
         pass
 
 
+# The same markers, but for slots that are per-IDENTITY rather than per-file. Every extra Grinder
+# wears the same disc as the main one (the founder's call: an identical twin, so a listener in the
+# second room just sees Grinder), but Discord tracks each identity's avatar separately - and the
+# avatar rate limit is strict and PER BOT. So each one needs its own record of what it last sent.
+def slot_needs_upload(slot: str) -> bool:
+    fp = icon_fingerprint()
+    if fp is None:
+        return False
+    try:
+        return (ASSETS / f".applied-{slot}").read_text(encoding="utf-8").strip() != fp
+    except OSError:
+        return True          # no marker yet -> never uploaded for this identity
+
+
+def mark_slot_applied(slot: str) -> None:
+    try:
+        (ASSETS / f".applied-{slot}").write_text(icon_fingerprint() or "", encoding="utf-8")
+    except OSError:
+        pass                 # cosmetic bookkeeping; never worth failing a startup over
+
+
 def emoji_files() -> list[tuple[str, Path]]:
     """(emoji_name, file) for every shipped emoji, in the order EMOJI_FALLBACK declares — so the
     upload order is stable and predictable rather than filesystem-dependent."""

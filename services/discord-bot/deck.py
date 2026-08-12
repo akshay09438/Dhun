@@ -1,0 +1,349 @@
+"""ONE room's playback: what is on air in it, where we are in the file, and what happens next.
+
+WHY THIS EXISTS. Until now the booth held one of everything - one thing playing, one waiting list,
+one "where you were when you pressed stop", one station. That was correct while a bot could only
+ever have sound in one room, which is Discord's rule for one identity. The moment there is a second
+identity there must be one of each PER ROOM, or the two rooms trample each other: a /skip in
+Hollywood_Blends would move Bollywood_House's track, and /stop in one would strand the other.
+
+So: a Deck is everything that belongs to a single room, and `booth.Booth` became the coordinator
+that owns one Deck per room and decides which of them gets a voice.
+
+HONESTY NOTE, inherited and still true: none of the behaviour here can be proven by a test. A fake
+voice client is always more forgiving than Discord - that is exactly how seven bugs shipped past a
+green suite on 2026-08-11. The tests cover the DECISIONS; the audio needs a real room and a real ear.
+"""
+from __future__ import annotations
+
+import logging
+import time
+from pathlib import Path
+
+import voice_player
+
+log = logging.getLogger("promptdj.discord")
+
+# Pressing skip twice quickly must not land back on the boundary just crossed.
+_SEAM_GUARD_SECS = 2.0
+
+
+class Deck:
+    """One listening room's playback. Owns no Discord objects - it is handed the room each time,
+    because a channel object belongs to the client that fetched it and this room may be played
+    through a different identity from one track to the next."""
+
+    def __init__(self, room_id: int, booth) -> None:
+        self.room_id = room_id
+        self.booth = booth                          # the coordinator, for shared services
+        self.now_playing = None                     # the GrindContext currently out loud HERE
+        # Where we are in the file that is playing, and where /stop left off. discord.py tracks
+        # neither, so each deck keeps both itself.
+        self._now_path: str | None = None
+        self._now_offset = 0.0
+        self._now_started: float | None = None
+        self._now_seams: list[float] = []
+        self._paused_at: tuple[str, float, list] | None = None
+        # WHICH PLAYBACK a finish-callback belongs to. discord.py's vc.stop() FIRES the current
+        # source's `after` callback, and voice_player.play_in calls stop() before starting the next
+        # thing - so deliberately replacing the audio (a seek, an interrupt) delivers a "track
+        # finished" that is not true. Acting on it started something else OVER the top of what had
+        # just been started. Every playback carries a token; a callback from a superseded one is
+        # ignored.
+        self._play_token = 0
+        # The identity currently holding this room, and when the room went empty (for the grace
+        # period - stepping out for twenty seconds must not kill the music).
+        self.voice = None
+        self.empty_since: float | None = None
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<Deck room={self.room_id} playing={self.now_playing is not None}>"
+
+    # -- is anything happening in here ----------------------------------------------------------
+    @property
+    def busy(self) -> bool:
+        """True if this room has something on air."""
+        return self.now_playing is not None
+
+    # -- where we are in the current track -------------------------------------------------------
+    # discord.py has no notion of a playback position, so each deck keeps its own: where in the file
+    # this playback STARTED, and when. Skipping inside a set and picking up where /stop left off are
+    # both arithmetic on those two numbers.
+
+    def _begin_playback(self) -> int:
+        """Claim the next playback token. MUST be called BEFORE play_in, so that the stale callback
+        fired by its internal stop() already looks superseded when it arrives."""
+        self._play_token += 1
+        return self._play_token
+
+    def _mark_playing(self, path: str, *, offset: float = 0.0, seams: list | None = None,
+                      guild=None) -> None:
+        if guild is not None:
+            self.booth.remember_guild(guild)
+        self._now_path = str(path)
+        self._now_offset = float(offset)
+        self._now_started = time.monotonic()
+        self._now_seams = sorted(float(s) for s in (seams or []) if s)
+
+    def elapsed(self) -> float:
+        """How far into the current file we are, in seconds."""
+        if self._now_started is None:
+            return 0.0
+        return self._now_offset + max(0.0, time.monotonic() - self._now_started)
+
+    def _next_seam_after(self, secs: float) -> float | None:
+        """The start of the NEXT track inside the set that is playing, if there is one.
+
+        A set is ONE continuous audio file, so without these boundaries a skip could only throw away
+        the whole set. `seam_at` from the engine's set manifest is where each member's crossfade
+        begins, which is exactly the boundary a listener perceives as 'the next track'."""
+        for s in self._now_seams:
+            if s > secs + _SEAM_GUARD_SECS:
+                return s
+        return None
+
+    # -- the voice this room has borrowed ---------------------------------------------------------
+    async def _channel_to_play_into(self, room):
+        """This room, as seen by the identity that is going to play into it - or None if we cannot
+        get one.
+
+        THE SUBTLE BIT. A channel object belongs to the client that fetched it, and
+        `voice_player.play_in` reaches for `channel.guild.voice_client`, which is per-CLIENT state.
+        Handing it the MAIN bot's channel object would connect the MAIN bot however carefully we had
+        chosen a different identity - and both rooms would quietly share one connection, which
+        sounds exactly like the bug this whole feature fixes."""
+        voice = self.booth.voices.claim(self.room_id)
+        if voice is None:
+            return None                             # every identity is busy; the room waits
+        channel = voice.resolve(room)
+        if channel is None:
+            # Invited to the server but not allowed to see this room is BY FAR the likeliest
+            # real-world misconfiguration. Give the voice straight back so it is not held hostage by
+            # a room it cannot enter, and say which one, by name.
+            log.warning("voices: %s cannot see %s - check it has View Channel and Connect on the "
+                        "rooms category", voice.label, getattr(room, "name", self.room_id))
+            self.booth.voices.release(self.room_id)
+            return None
+        self.voice = voice
+        return channel
+
+    async def release_voice(self) -> None:
+        """Give this room's identity back AND make it leave the channel.
+
+        FOUNDER-REPORTED, 2026-08-12: Hollywood_Blends listed "Grinder" twice. A CLAIM AND A
+        CONNECTION ARE TWO DIFFERENT LIFETIMES, and this is where they drifted apart - letting go of
+        a room used to hand back only the claim, leaving the identity still sitting in the channel.
+        Another identity could then quite legally claim that room, and `voice_player.play_in` calls
+        `vc.move_to(...)`, which walks it straight in on top of the one already there. Two Grinders,
+        one room, playing over each other - which speakers.py names as worse than silence.
+
+        Leaving is best-effort: a room that will not let go must not stop the claim being freed, or
+        one failed disconnect would cost that room its sound for the rest of the night."""
+        voice = self.voice or self.booth.voices.holder_of(self.room_id)
+        if voice is not None:
+            for vc in voice.connections():
+                try:
+                    await vc.disconnect(force=True)
+                except Exception:  # noqa: BLE001
+                    log.warning("booth: %s could not leave cleanly", voice.label, exc_info=True)
+            self.booth.voices.release(self.room_id)
+        self.voice = None
+
+    def voice_client(self, room):
+        """The connection actually carrying THIS ROOM's audio, or None.
+
+        Two separate ways to read the wrong room's connection, and the founder hit the second one
+        within ten minutes of the feature going live.
+
+        1. Read through the holding identity, not off the room we were handed: `guild.voice_client`
+           differs per client, so the main bot's would report "nothing is playing" in a room an extra
+           voice is very much playing.
+        2. AND CHECK THE CONNECTION IS ACTUALLY IN THIS ROOM. A room with no identity of its own
+           still has a `guild`, and that guild's `voice_client` is whatever the main bot is doing
+           somewhere else. So Hollywood_Blends would look at Bollywood_House's connection, see it
+           busy, and answer "Already playing" - about a room that was silent. One room's controls
+           must never be able to see another room's turntable.
+        """
+        voice = self.voice or self.booth.voices.holder_of(self.room_id)
+        channel = voice.resolve(room) if voice is not None else room
+        guild = getattr(channel, "guild", None) if channel is not None else None
+        vc = getattr(guild, "voice_client", None)
+        if vc is None:
+            return None
+        where = getattr(getattr(vc, "channel", None), "id", None)
+        if where is not None and where != self.room_id:
+            return None                 # that connection belongs to a different room
+        return vc
+
+    # -- playing ------------------------------------------------------------------------------------
+    async def play_grind(self, ctx, room) -> None:
+        """Play one finished grind into this room.
+
+        The room is passed in, re-checked by the caller at play time rather than remembered - a
+        queued grind's owner may well have wandered off or moved rooms while they waited, and
+        playing to the room they have left is worse than not playing at all."""
+        if room is None:
+            log.info("booth: grind #%s not played, its owner left the rooms", ctx.number)
+            await self.advance()
+            return
+
+        channel = await self._channel_to_play_into(room)
+        if channel is None:
+            # No identity free. Wait rather than cutting somebody else off, and TELL them - a person
+            # staring at "grinding..." with no explanation assumes it broke and presses again.
+            await self.booth.wait_for_a_voice(ctx, room)
+            return
+
+        self.now_playing = ctx
+        # CONNECT FIRST, CLAIM SECOND. The banner used to go up before the connection was even
+        # attempted, so on 2026-08-11 a card read "PLAYING LIVE IN BOLLYWOOD_HOUSE - 2 listening"
+        # while the voice handshake was failing five times over and nothing was audible. A card that
+        # says something is happening when it is not is the one thing this interface must never do.
+        try:
+            tok = self._begin_playback()
+            await voice_player.play_in(channel, ctx.audio_path,
+                                       on_finished=lambda t=tok: self.advance(t))
+            # A SET is one continuous file; its seams are where each member's crossfade begins,
+            # which is what a listener hears as "the next track". Without them /skip could only
+            # throw away all five.
+            seams = await self.booth._resolve_seams(getattr(ctx, "number", None),
+                                                    getattr(ctx, "ref_id", None),
+                                                    getattr(ctx, "seams", None))
+            self._mark_playing(ctx.audio_path, seams=seams, guild=getattr(room, "guild", None))
+        except Exception:  # noqa: BLE001 - the room going quiet must never kill the bot
+            log.exception("booth: could not play grind #%s in %s", ctx.number,
+                          getattr(room, "name", self.room_id))
+            self.now_playing = None
+            await self.booth._say_it_did_not_play(ctx)
+            await self.advance()
+            return
+
+        self.booth.grinds_this_session += 1
+        self.booth.last_up = ctx.label()
+        heard = self.booth.listeners(room)
+        log.info("booth: playing grind #%s (%s) in %s to %d listening, through %s",
+                 ctx.number, ctx.label(), getattr(room, "name", self.room_id), heard,
+                 self.voice.label if self.voice else "?")
+        await self.booth._show_live_banner(ctx, heard, room)
+        await self.booth.refresh_status(getattr(ctx.interaction, "guild", None))
+
+    async def advance(self, token: int | None = None) -> None:
+        """One finished in THIS room, take the next. Called back from the audio player.
+
+        NOTHING STARTS BY ITSELF (founder decision, 2026-08-12, after listening to it). A room used
+        to fall through to a "station" that replayed past mixes when the queue emptied, so a room
+        would start playing things nobody had asked for. That is now gone: when there is nothing
+        left that somebody actually requested, the room goes quiet and the identity LEAVES - no bot
+        sits connected and silent, and the voice is free for a room that does have something to
+        play."""
+        if token is not None and token != self._play_token:
+            # A playback we deliberately replaced has just reported that it ended. It did - but
+            # because we stopped it, not because it finished. Acting on this is what stomped on the
+            # track a /skip had just started.
+            return
+        async with self.booth.lock:
+            self.now_playing = None
+            nxt = self.booth.take_next_for(self.room_id)
+        if nxt is not None:
+            await self.booth.start(nxt)
+            return
+
+        # NOTHING MORE FOR THIS ROOM. Does another room have a real grind waiting with no identity
+        # to play it? With only the main bot configured this is exactly the old behaviour - the
+        # single voice moves on to whoever is next in line.
+        if await self.booth.hand_over_if_someone_is_waiting(self):
+            return
+
+        log.info("booth: room %s has nothing more that was asked for - going quiet", self.room_id)
+        await self.release_voice()
+
+    # -- controls -------------------------------------------------------------------------------------
+    async def skip(self, room) -> str:
+        """Next track IN THIS ROOM. Inside a set that means the NEXT MEMBER of the set, not
+        abandoning all five."""
+        vc = self.voice_client(room)
+        if vc is None or not vc.is_playing():
+            return "Nothing is playing right now."
+
+        seam = self._next_seam_after(self.elapsed())
+        if seam is not None and self._now_path:
+            # Seek forward inside the same file. Stopping and restarting would fire the finish
+            # callback and hand the room to the next grind, losing the rest of the set.
+            path, seams = self._now_path, list(self._now_seams)
+            place = self._now_seams.index(seam) + 2      # human numbering: seam 0 starts track 2
+            channel = await self._channel_to_play_into(room)
+            if channel is None:
+                return "Couldn't skip that one."
+            try:
+                tok = self._begin_playback()
+                await voice_player.play_in(channel, path,
+                                           on_finished=lambda t=tok: self.advance(t),
+                                           start_at=seam)
+            except Exception:  # noqa: BLE001
+                log.exception("booth: could not seek to %.2fs", seam)
+                return "Couldn't skip that one."
+            self._mark_playing(path, offset=seam, seams=seams)
+            return f"Skipped to track {place}."
+
+        vc.stop()          # end of the set (or not a set) - the callback takes the next thing
+        return "Skipped."
+
+    async def stop(self, room) -> str:
+        """Pause THIS room, and REMEMBER WHERE. `/play` picks up from exactly here.
+
+        The identity is deliberately KEPT so `/play` resumes instantly rather than rejoining. If
+        nobody comes back, the empty-room grace period lets it go a minute later.
+
+        Deliberately does NOT clear the queue. It used to, which meant one person could bin
+        everybody else's waiting grinds without anyone being told why."""
+        async with self.booth.lock:
+            if self._now_path:
+                self._paused_at = (self._now_path, self.elapsed(), list(self._now_seams))
+        vc = self.voice_client(room)
+        if vc is not None and vc.is_playing():
+            vc.stop()
+        self._now_started = None
+        where = f" at {int(self._paused_at[1]) // 60}:{int(self._paused_at[1]) % 60:02d}" \
+            if self._paused_at else ""
+        return f"Stopped{where}. Use **/play** to pick up where you left off."
+
+    async def resume(self, room) -> str:
+        """Start the music in this room - and bring a Grinder in if one is not already here."""
+        vc = self.voice_client(room)
+        if vc is not None and vc.is_playing():
+            return "Already playing."
+
+        if self._paused_at:
+            path, offset, seams = self._paused_at
+            if Path(path).exists():
+                channel = await self._channel_to_play_into(room)
+                if channel is None:
+                    return self.booth.every_voice_busy_line()
+                try:
+                    tok = self._begin_playback()
+                    await voice_player.play_in(channel, path,
+                                               on_finished=lambda t=tok: self.advance(t),
+                                               start_at=offset)
+                except Exception:  # noqa: BLE001
+                    log.exception("booth: could not resume")
+                    return "Couldn't start it again."
+                self._mark_playing(path, offset=offset, seams=seams,
+                                   guild=getattr(room, "guild", None))
+                self._paused_at = None
+                return f"Picking up at {int(offset) // 60}:{int(offset) % 60:02d}."
+            # Swept by the disk janitor while it was paused. Say so plainly and move on rather than
+            # failing - the mix is gone from disk, not from the world.
+            self._paused_at = None
+
+        # NOTHING WAS ASKED FOR, SO NOTHING PLAYS (founder decision, 2026-08-12). /play used to fall
+        # through to a "station" that put on a past mix here; a room that starts playing things
+        # nobody requested is chaos, not company. /play now does exactly one job: pick up whatever
+        # /stop paused.
+        if self.booth.voices.holder_of(self.room_id) is None and self.booth.voices_all_busy():
+            return self.booth.every_voice_busy_line()
+        return "Nothing to play here. Run **/grind** to make something."
+
+    # -- going quiet ------------------------------------------------------------------------------------
+    def go_quiet(self) -> None:
+        """Forget what was on air here. Used when the room empties."""
+        self.now_playing = None
+        self._now_started = None

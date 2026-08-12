@@ -1,44 +1,38 @@
 {
-  "session": "2026-08-12-goodnight-the-station-and-the-janitor",
+  "session": "2026-08-12-goodnight-night3-hygiene-panda-and-the-costing",
   "invoked": "/zuko:goodnight",
-  "kickoff_context": "Ran immediately after the session where voice became FOUNDER-CONFIRMED for the first time (a real mix played in #Bollywood_House), and after the launcher bug that had stopped the bot starting at all was found and fixed. The listening rooms are real as of today, which is what unblocks most of tonight's bundle.",
-  "founder_lenses": [
-    "DEVELOPER: build it properly.",
-    "CONSUMER: a person arrives in Discord wanting an INSTANT mix. Two places to make one - the #get-shit-done text channel, and the listening (voice) rooms. Judge every change by what that person feels.",
-    "FOUNDER: maximum convenience for the user, but ZERO money to spend. At every blockage, reason from first principles to a FREE solution."
+  "kickoff_context": "Runs straight after the founder confirmed BY EAR that two listening rooms play at the same time and that nothing starts on its own any more. Tonight's hour of confusion was caused by a GHOST BOT - a Grinder process from 18:34 still running invisibly with the old code; it was killed live, and it explains the auto-play, the 'only one room' refusal and the Unknown-interaction 404s. Free disk at kickoff: 8.68 GB.",
+  "decisions": [
+    {
+      "id": "D1",
+      "question": "How much will a typical member actually make mixes (for the costing)?",
+      "answer": "SHOW ALL THREE CASES SIDE BY SIDE - light (mostly listeners), baseline (a few a week each), heavy (constant grinding).",
+      "detail": "Chosen so the founder can see where the cost cliff is and decide how hard to push growth. Listening is free once a mix exists; only MAKING mixes costs money, so member count alone does not drive the bill."
+    },
+    {
+      "id": "D2",
+      "question": "'Make all songs play no matter what' - how far does that go?",
+      "answer": "SWEEP AND REPORT, DO NOT WEAKEN THE REFEREE.",
+      "detail": "Stated to the founder at kickoff and not objected to. The never-decline rule already means no pair is refused for tempo or key. The only remaining refusal is the quality referee catching a render that genuinely sounds bad, and disabling that is the one thing the project's own rules forbid - it is what stops the app quietly shipping mush. Instead: sweep every pair, and report each one that cannot ship WITH ITS REAL REASON, so the founder decides per song."
+    },
+    {
+      "id": "D3",
+      "question": "The Panda fix - can it be applied overnight?",
+      "answer": "NO. STAGED FOR A HUMAN YES.",
+      "detail": "Not a preference - the deterministic floor. If the cause is where the evidence points (the vocal chain or the referee) the fix touches a dangerous-path file, so it is built and reviewed but left on the founder's desk. Expect one decision card in the morning, not a finished fix."
+    }
   ],
-  "decisions": {
-    "the_station": "RE-PLAY PAST MIXES, BEST-FIRST. When a room's queue empties it must NOT go silent - it becomes a radio of what the community has already made, ordered favouring mixes people reacted to with fire. Costs no Replicate credit and no new disk, and it makes the reaction data load-bearing. Explicitly NOT auto-grinding fresh pairs on idle (burns credits and disk with nobody necessarily listening).",
-    "the_station_hard_constraint": "THE BOT STILL NEVER JUDGES A MIX. Ordering by human reactions is allowed because those are the community's votes, not Grinder's opinion. But the station must NEVER announce a ranking, call a mix good, show a score, or say anything that reads as a verdict. Silent ordering only. Violating this prejudices the fire/skull/neutral reaction data, which is the real product signal.",
-    "playback_controls": "ANYONE IN THE ROOM can skip or stop. Matches how small friendly Discord rooms actually behave, and at validation scale social pressure handles abuse. Deliberately NOT a skip-vote (fiddly and silly with two people) and NOT owner-only (a bad mix whose owner has left would hold the room for three minutes).",
-    "hosting_research": "HARD ZERO BUDGET. Research genuinely FREE always-on options only, and report honestly on what they can and cannot run - including a straight answer on whether free is possible at all for an always-on bot + engine. No paid comparison shopping. Research only; NO code, NO migration, NO signing up for anything.",
-    "windows_disk_reclaim": "YES - reclaim Windows Update's 7.81 GB download cache plus our own temp/scratch junk, using Windows' own supported cleanup. Found at kickoff: free disk fell 9.28 -> 5.86 GB during the session and Prompt-DJ was NOT the cause (its data folder was unchanged; the founder's test grinds added only 0.51 GB).",
-    "listening_data": "RECORD WHO, WHEN, AND HOW LONG. Discord user id, join time, leave time, and which mix was playing. This is the founder's own server and own members, and it is the minimum that answers 'do people actually listen, and when do they drop off' - the two data gaps recorded as blocking the Discord community phase. Deliberately NOT also linking reactions to individuals this round (more personal data than the question needs).",
-    "catalog_sweep": "RUN IT LAST, CLEAN-AS-YOU-GO. 134 pairs remain of 216. Each render is deleted once judged so disk never accumulates. If it runs out of time or space it PARKS HONESTLY with partial results - partial coverage is still useful, a disk-starved machine reporting false 'bad pair' verdicts is not.",
-    "events_db_cleanup": "YES - clear the placeholder and load-test rows so real numbers are not polluted. Back the file up first and report exactly how many rows went."
-  },
-  "hard_constraints": [
-    "DANGEROUS surfaces are STAGED, never self-applied overnight (ZUKO_OVERNIGHT). Nothing in tonight's bundle is expected to need one - the janitor was deliberately REDESIGNED to leave services/api/app/storage.py byte-identical.",
-    "services/api/app/storage.py MUST NOT be modified. The janitor is a NEW file that calls the existing sweep(target_free_gb=...) and sweep(dry_run=True), both of which already exist. If a task appears to require editing storage.py, STOP and stage it instead.",
-    "workers/render.py and services/api/app/planner/validate.py must NOT be modified. Nothing tonight changes how a mix SOUNDS.",
-    "Never weaken, skip or delete a test to make code pass.",
-    "The 0.03s cache hit is a protected product property - no change may regress it.",
-    "Free only. No paid service, no cloud spend, no new subscription, no sign-ups.",
-    "The bot never judges a mix - see the_station_hard_constraint.",
-    "Nothing merges to main. One integration branch, one morning PR."
+  "already_known_at_kickoff": [
+    "The clip the founder heard was mix 221.5s-441.1s of a 474.7s render (envelope alignment, match 0.68 vs next-best 0.65 - weak, state the confidence).",
+    "The PLAN places Panda's vocal for 87.4s of that 220s clip (40%), so it is not a planning failure - the question is whether it survived the render.",
+    "Two suspects: the parked vocal-loudness issue (vocals ~6-8 dB under the beat, no makeup gain, recorded 2026-08-08) and half_time_pair (122 BPM beat vs 72 BPM vocal, vocal_stretch 0.85 - right at the recorded 15% warble threshold).",
+    "A vocal-band energy check was inconclusive and confounded by the arrangement's energy arc. Do not present it as evidence."
   ],
-  "known_state_at_kickoff": {
-    "voice": "FOUNDER-CONFIRMED - a real mix played in #Bollywood_House. No longer a claim.",
-    "launcher": "fixed and merged (PR #32). Was dying on an unescaped bracket before reaching the line that starts the bot.",
-    "disk_free_gb": 5.86,
-    "windows_update_cache_gb": 7.81,
-    "promptdj_data_gb": 12.66,
-    "evictable_renders_gb": 3.54,
-    "protected_songs_stems_analyses_gb": 4.03,
-    "real_render_time_secs": "queue's own rolling average reads 67.4s, against the 25.68s the previous night's profile reported. The profile measured only the mixing stages, not the whole wait. Re-measuring is task 5.",
-    "failures_ever_recorded": "329 events, exactly ONE failure (kind=bug). The declined/quality/resources messages have never fired in reality.",
-    "catalog_coverage": "82 of 216 pairs swept; 8 of 12 beats untested.",
-    "speakers_py": "built and tested, still NOT wired to playback. Multi-room needs founder-created bot identities (GRINDER_ROOM_TOKENS absent from .env)."
-  },
-  "acceptance_owner": "founder (ear + eyes). The agent may not self-certify anything that has to SOUND right, or anything whose proof is 'a person heard it'."
+  "standing_rules_that_apply_tonight": [
+    "The founder's Discord server is hand-tuned and OFF LIMITS. Never run /setup, with any flag.",
+    "The bot NEVER judges a mix - no rating, score, verdict, tempo or key, anywhere.",
+    "Never weaken, skip or delete a test to reach green.",
+    "Nothing merges to main overnight. One branch, one PR.",
+    "Disk: the catalog sweep must delete each render as soon as it is judged. Free space at kickoff is 8.68 GB; below 2 GB, stop and say so."
+  ]
 }

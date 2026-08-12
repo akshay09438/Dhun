@@ -60,18 +60,32 @@ class SpeakerPool:
     most one speaker. Both halves matter: two speakers in the same room would play two different
     grinds over each other, which is worse than silence."""
 
-    def __init__(self, tokens: list[str] | None = None) -> None:
+    def __init__(self, tokens: list[str] | None = None, main_token: str | None = None) -> None:
         # Deduplicated, because pasting the same token twice is an easy mistake and the second
         # copy is not a second identity - it is the SAME login, and Discord would simply move the
         # one connection, silently killing the first room mid-grind.
+        #
+        # `main_token` closes the same hole one step wider, and it is the worse mistake of the two:
+        # pasting the MAIN Grinder's token as an extra. Nothing about it looks wrong - the token is
+        # valid, the login succeeds - but it is the same identity, so the moment the "second" room
+        # started, the FIRST room would go silent mid-song. That reads as a much worse bug than the
+        # one this whole feature fixes, so it is refused here rather than discovered live.
         seen: set[str] = set()
+        main = (main_token or "").strip()
         self.speakers: list[Speaker] = []
         for tok in tokens or []:
             tok = tok.strip()
-            if not tok or tok in seen:
-                if tok:
-                    log.warning("speakers: ignoring a duplicate token - it is the same identity, "
-                                "not a second one, and would steal the first room's connection")
+            if not tok:
+                continue
+            if main and tok == main:
+                log.warning("speakers: ignoring a token that is the MAIN Grinder's own - it is the "
+                            "same identity, not a second one, so it would pull the first room's "
+                            "connection away mid-song. Create a NEW application in the Developer "
+                            "Portal for each extra room.")
+                continue
+            if tok in seen:
+                log.warning("speakers: ignoring a duplicate token - it is the same identity, "
+                            "not a second one, and would steal the first room's connection")
                 continue
             seen.add(tok)
             self.speakers.append(Speaker(len(self.speakers) + 1, tok))
@@ -120,6 +134,62 @@ class SpeakerPool:
     def release_all(self) -> None:
         for s in self.speakers:
             s.room_id = None
+
+
+async def bring_online(pool: "SpeakerPool", make_client, *, ready_timeout: float = 30.0,
+                       on_ready=None) -> list["Speaker"]:
+    """Log each extra identity in, and drop the ones that do not come up.
+
+    A SICK EXTRA MUST NEVER TAKE THE MAIN GRINDER DOWN. There are three ways one fails to arrive and
+    all three are things the founder can plausibly do by accident: pasting a token that has since
+    been reset, creating the application but never inviting it to the server, or pasting the token of
+    an application whose bot user was never created. Each of those must cost exactly one line in the
+    log and nothing else - the community still gets the rooms the working identities can cover.
+
+    `make_client` is injected rather than imported so this can be tested without Discord. The real
+    one hands back a discord.Client; the tests hand back a fake that can be made to fail on purpose,
+    which is the only way any of this gets exercised before it is in front of real people.
+    """
+    import asyncio
+
+    live: list[Speaker] = []
+    for s in pool.speakers:
+        client = make_client()
+        start = asyncio.ensure_future(client.start(s.token))
+        ready = asyncio.ensure_future(client.wait_until_ready())
+        done, _pending = await asyncio.wait({start, ready}, timeout=ready_timeout,
+                                            return_when=asyncio.FIRST_COMPLETED)
+        # `start` finishing FIRST means it died - a successful login never returns; it runs for the
+        # life of the process. So "ready won the race" is the only good outcome.
+        if ready in done and not start.done():
+            s.client = client
+            live.append(s)
+            log.info("speakers: extra voice #%d is online", s.index)
+            if on_ready is not None:
+                try:
+                    await on_ready(s)
+                except Exception:  # noqa: BLE001 - branding an extra is cosmetic
+                    log.warning("speakers: could not finish setting up extra voice #%d",
+                                s.index, exc_info=True)
+            continue
+
+        why = "timed out"
+        if start.done():
+            exc = start.exception()
+            why = f"{type(exc).__name__}: {exc}" if exc else "the login ended immediately"
+        log.warning("speakers: extra voice #%d did not come online (%s). Check the token is current "
+                    "and that this application has been INVITED to the server. Carrying on without "
+                    "it - the rooms it would have covered will wait their turn as before.",
+                    s.index, why)
+        for task in (start, ready):
+            task.cancel()
+        try:
+            await client.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    pool.speakers = live
+    return live
 
 
 def describe(pool: "SpeakerPool") -> str:

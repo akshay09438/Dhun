@@ -13,6 +13,7 @@ Writes a CSV so the failures can be grouped by song afterwards.
 from __future__ import annotations
 
 import csv
+import sqlite3
 import sys
 import threading
 import time
@@ -26,6 +27,37 @@ import loadtest as lt                                        # noqa: E402
 BATCH = 10
 OUT = Path(__file__).parent / "failure_sweep.csv"
 MIN_FREE_GB = 2.5
+EVENTS_DB = Path(__file__).resolve().parents[2] / "services" / "api" / "data" / "events.db"
+
+
+def _reason_from_events(mix_id: str | None) -> tuple[str, str]:
+    """The engine's OWN recorded reason for a failure, and its kind.
+
+    Read rather than changed: the engine already writes a real fail_reason to its event log, it just
+    does not surface one to the user. A read-only join gets the honest taxonomy without touching a
+    single line of the mix pipeline."""
+    if not mix_id or not EVENTS_DB.exists():
+        return "", ""
+    try:
+        c = sqlite3.connect(f"file:{EVENTS_DB}?mode=ro", uri=True)
+        c.row_factory = sqlite3.Row
+        row = c.execute("SELECT fail_reason, fail_kind, anomalies FROM events "
+                        "WHERE ref_id=? ORDER BY id DESC LIMIT 1", (mix_id,)).fetchone()
+        c.close()
+    except Exception:  # noqa: BLE001 - a missing reason must never stop the sweep
+        return "", ""
+    if row is None:
+        return "", ""
+    reason = (row["fail_reason"] or "").strip()
+    kind = (row["fail_kind"] or "").strip()
+    if not kind and reason:
+        # Group by the phrase the engine itself used, so the CSV can be counted rather than read.
+        low = reason.lower()
+        kind = ("quality-referee" if "quality check" in low or "referee" in low
+                else "no-beat-grid" if "beat" in low and "grid" in low
+                else "out-of-resources" if "memory" in low or "space" in low
+                else "other")
+    return reason[:300], kind
 
 
 def main() -> None:
@@ -61,10 +93,21 @@ def main() -> None:
         for (b, v), r in zip(chunk, out):
             ok = bool(r and r.get("ok"))
             nfail += 0 if ok else 1
+            mix_id = (r or {}).get("mix_id")
+            # WHY IT FAILED, not just THAT it failed. The engine answers every user-facing failure
+            # with the same sentence - "Couldn't build this mix" - which is exactly what sent the
+            # 2026-08-11 investigation down the wrong path for hours: a starved machine and a
+            # genuinely unmixable pair were indistinguishable. The engine's own event log DOES
+            # record the real reason, so read it from there rather than changing the engine.
+            reason, kind = ("", "")
+            if not ok:
+                reason, kind = _reason_from_events(mix_id)
             rows.append({"beat": b["original_name"], "vocal": v["original_name"],
                          "ok": ok, "secs": round((r or {}).get("secs", 0), 1),
+                         "kind": kind,
+                         "why": reason or ("" if ok else (r or {}).get("err", "?")),
                          "error": "" if ok else (r or {}).get("err", "?")})
-            ids.add((r or {}).get("mix_id"))
+            ids.add(mix_id)
         lt.cleanup(ids)
 
         done = start + len(chunk)
@@ -75,7 +118,7 @@ def main() -> None:
               f"running failure rate {rate:5.1f}%  |  ~{eta:.0f} min left")
 
     with OUT.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["beat", "vocal", "ok", "secs", "error"])
+        w = csv.DictWriter(f, fieldnames=["beat", "vocal", "ok", "secs", "kind", "why", "error"])
         w.writeheader()
         w.writerows(rows)
 
@@ -89,6 +132,12 @@ def main() -> None:
     fails = Counter(r["vocal"] for r in bad)
     for name, n in fails.most_common(12):
         print(f"  {n:2d}/{tried[name]:2d}  {name}")
+    print("\nWHY they failed - the engine's OWN reason, not one sentence for everything:")
+    for kind, n in Counter(r["kind"] or "unrecorded" for r in bad).most_common():
+        print(f"  {n:3d}  {kind}")
+        for r in [x for x in bad if (x["kind"] or "unrecorded") == kind][:3]:
+            print(f"         e.g. {r['beat']} x {r['vocal']}: {r['why'][:150]}")
+
     print("\nWorst BEATS (fails / times tried):")
     triedb = Counter(r["beat"] for r in rows)
     failsb = Counter(r["beat"] for r in bad)
