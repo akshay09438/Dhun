@@ -44,6 +44,12 @@ BOT_NAME = "Grinder"       # the beta Discord bot's name (Prompt-DJ is the produ
 VIOLET = ui.ACCENT         # the Grinder purple, sampled from the artwork — defined in brand.py
 MAX_TAKES = 5              # matches the web app's MAX_GENERATIONS_PER_SESSION
 
+# WHICH VOCALS A PERSON SEES. "Bollywood" rather than "Hindi" because three of the fourteen are
+# Punjabi (AP Dhillon, Jugni Ji, Wari Jawa) - Bollywood is both more honest and the word a global
+# audience already knows. Beats are NEVER filtered; they are instrumental beds.
+LANGUAGES = {"english": "English", "bollywood": "Bollywood"}
+DEFAULT_LANGUAGE = "english"
+
 
 # --------------------------------------------------------------------------------------
 # The client — loads the catalog once for autocomplete, syncs the /mix command.
@@ -500,15 +506,26 @@ class GrindBuilderView(discord.ui.View):
         self.pairs: list[tuple[str, str]] = []
         self.sel_beat: str | None = None
         self.sel_vocal: str | None = None
+        # WHICH VOCALS ARE SHOWN. The catalog is 14 Bollywood vocals to 4 English ones, so a
+        # listener who does not know Hindi opened the picker and met a wall of unfamiliar names.
+        # Defaults to English (founder's call) and is a TOGGLE, not a one-time setting - nothing
+        # is hidden forever, and the cross-language pairs that make the best mixes stay one tap
+        # away. Beats are never filtered: they are instrumental and belong to neither audience.
+        self.language = DEFAULT_LANGUAGE
 
-        self.beat_select = discord.ui.Select(placeholder="Pick a beat...", row=0,
+        self.beat_select = discord.ui.Select(placeholder="Pick a beat...", row=1,
                                              options=self._opts(bot.beats, None))
         self.beat_select.callback = self._on_beat
-        self.vocal_select = discord.ui.Select(placeholder="Pick a vocal...", row=1,
-                                              options=self._opts(bot.vocals, None))
+        self.vocal_select = discord.ui.Select(placeholder="Pick a vocal...", row=2,
+                                              options=self._opts(self._vocals(), None))
         self.vocal_select.callback = self._on_vocal
         self.add_item(self.beat_select)
         self.add_item(self.vocal_select)
+        self.lang_select = discord.ui.Select(placeholder="Vocals: English", row=0, options=[
+            discord.SelectOption(label=LANGUAGES[k], value=k, default=(k == self.language))
+            for k in LANGUAGES])
+        self.lang_select.callback = self._on_language
+        self.add_item(self.lang_select)
         # Consistent from birth: everything starts greyed out because nothing is picked yet.
         # Done here rather than at the call site so no future caller can forget it and ship a
         # picker whose buttons all look available before they can do anything.
@@ -519,10 +536,40 @@ class GrindBuilderView(discord.ui.View):
         return [discord.SelectOption(label=lbl, value=val, default=dflt)
                 for lbl, val, dflt in select_option_specs(songs, selected_id)]
 
+    def _vocals(self):
+        """The vocals this person should see. Falls back to the whole list if a language somehow
+        matches nothing, because an empty dropdown is worse than an unfiltered one."""
+        # getattr, not s.language: the bot talks to the engine over HTTP, and an engine that
+        # predates the language field simply will not send one. A missing tag must mean "unknown",
+        # never a crashed picker.
+        picked = [s for s in bot.vocals if (getattr(s, "language", "") or "") == self.language]
+        return picked or bot.vocals
+
+    def set_language(self, lang: str) -> None:
+        """Switch which vocals are shown. Deliberately PURE of Discord so it can be tested without
+        faking an interaction - the callback below does the plumbing, this does the thinking."""
+        self.language = lang if lang in LANGUAGES else DEFAULT_LANGUAGE
+        # A vocal chosen in the OTHER language is dropped. Leaving it selected would show a picker
+        # whose own choice is missing from its list, and Grind it would build something the person
+        # can no longer see.
+        if self.sel_vocal and self.sel_vocal not in {s.id for s in self._vocals()}:
+            self.sel_vocal = None
+        self.lang_select.placeholder = f"Vocals: {LANGUAGES[self.language]}"
+        self._refresh_options()
+        self.sync_buttons()
+
+    async def _on_language(self, interaction: discord.Interaction) -> None:
+        if not await self._guard(interaction):
+            return
+        self.set_language(self.lang_select.values[0])
+        await interaction.response.edit_message(embed=self.embed(), view=self)
+
     def _refresh_options(self) -> None:
         # NOT _refresh: discord.ui.View owns that name and calls it with the message components.
         self.beat_select.options = self._opts(bot.beats, self.sel_beat)
-        self.vocal_select.options = self._opts(bot.vocals, self.sel_vocal)
+        self.vocal_select.options = self._opts(self._vocals(), self.sel_vocal)
+        for o in self.lang_select.options:
+            o.default = (o.value == self.language)
 
     def _staged(self) -> list[tuple[str, str]]:
         """Everything that would be built right now, including a pair that is picked but not yet
@@ -608,7 +655,7 @@ class GrindBuilderView(discord.ui.View):
         await interaction.response.edit_message(embed=self.embed(), view=self)
 
     @discord.ui.button(label="Add another pair", emoji="➕",
-                       style=discord.ButtonStyle.secondary, row=2)
+                       style=discord.ButtonStyle.secondary, row=3)
     async def add_another(self, interaction: discord.Interaction,
                           button: discord.ui.Button) -> None:
         if not await self._guard(interaction):
@@ -628,7 +675,7 @@ class GrindBuilderView(discord.ui.View):
         await interaction.response.edit_message(embed=self.embed(), view=self)
 
     @discord.ui.button(label="Remove the last one", emoji="↩️",
-                       style=discord.ButtonStyle.secondary, row=2)
+                       style=discord.ButtonStyle.secondary, row=3)
     async def undo(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._guard(interaction):
             return
@@ -637,7 +684,7 @@ class GrindBuilderView(discord.ui.View):
         await interaction.response.edit_message(embed=self.embed(), view=self)
 
     @discord.ui.button(label="Grind it", emoji="⚙️",
-                       style=discord.ButtonStyle.primary, row=2)
+                       style=discord.ButtonStyle.primary, row=3)
     async def go(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if not await self._guard(interaction):
             return

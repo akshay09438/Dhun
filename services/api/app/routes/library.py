@@ -35,6 +35,15 @@ class LibrarySong(BaseModel):
     url: str
     status: str = "ready"
     role_hint: str = ""  # "beat" | "vocals" | "" — a display nudge, not a restriction
+    # WHICH AUDIENCE THIS VOCAL IS FOR (2026-08-12): "bollywood" | "english" | "".
+    #
+    # Why it exists: the catalog is 14 Bollywood vocals to 4 English ones, so a US listener
+    # opening the picker met a wall of songs they had never heard of. The clients FILTER on this;
+    # the engine does NOT — any beat still mixes with any vocal, so the cross-language pairs that
+    # produce the best results (Father Ocean x Tere Bina) stay reachable by switching the toggle.
+    #
+    # Empty on beats by design: a beat is an instrumental bed and belongs to neither audience.
+    language: str = ""
 
 
 def _manifest_path():
@@ -90,5 +99,6 @@ def get_library() -> dict:
             original_name=name,
             url=f"/songs/{sid}/audio",
             role_hint=str(e.get("role_hint", "")),
+            language=str(e.get("language", "")),
         ))
     return {"songs": [s.model_dump() for s in songs]}

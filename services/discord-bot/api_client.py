@@ -23,6 +23,10 @@ class Song:
     id: str
     name: str
     role_hint: str = ""
+    # "bollywood" | "english" | "" - which audience a VOCAL is for. Empty on beats, which are
+    # instrumental and belong to neither. Used only to filter what the picker SHOWS; the engine
+    # will still mix any beat with any vocal.
+    language: str = ""
 
 
 @dataclasses.dataclass
@@ -85,7 +89,8 @@ class PromptDJClient:
         r.raise_for_status()
         data = r.json()
         return [
-            Song(id=s["id"], name=s.get("original_name", ""), role_hint=s.get("role_hint", ""))
+            Song(id=s["id"], name=s.get("original_name", ""), role_hint=s.get("role_hint", ""),
+                 language=s.get("language", ""))
             for s in data.get("songs", [])
         ]
 
