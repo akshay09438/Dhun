@@ -42,7 +42,16 @@ That is the wall broken. A Discord bot holds one voice connection per SERVER, so
 2. **Finish the Panda diagnosis — it is one minute of work.** The plan puts Panda's vocal in 40% of the clip the founder heard, so it is not a planning failure. The measurement that decides between "too quiet" and "never made it into the render" could not run because the mix file was swept off disk mid-sweep. **A mix id is a hash of its inputs, so re-rendering Father Ocean × Panda regenerates a byte-identical file.** Re-render, then run `scratchpad/panda_probe.py`. **Do not touch the vocal chain until that verdict is in.**
 3. **Open and merge the PR** for `feat/second-grinder-voice`.
 4. **Build the render waiting list.** Agreed with the founder as the next job, and the costing document argues it is now the highest-value thing on the list: no queue exists, so past ~8–10 at once people's mixes fail rather than wait.
-5. **The leftover staged card `disk-sweep-floors-and-age`** on `services/api/app/storage.py` is STILL unapplied in `.zuko/goodnight/queue/`. Tonight's disk fall is the argument for it. Surface it; do not apply it.
+5. **APPLY THE DISK CLEANUP CARD — the founder has already read it and said yes, next session.**
+   `disk-sweep-floors-and-age` on `services/api/app/storage.py`, waiting in `.zuko/goodnight/queue/`.
+   They were walked through it in full on 2026-08-12 and chose to defer, not decline — **do not
+   re-explain the whole card, and do not treat it as an open question.** Confirm they still want it,
+   record the approval with `.zuko/approve.js`, apply it, run the suite, open a PR.
+   What it does: start tidying at 4 GB free instead of 2 GB (2 GB is already inside the zone where
+   mixes fail), plus delete finished mixes untouched for 7 days. Originals, stems and analyses can
+   never be touched — it only matches five known throwaway endings at the top level.
+   The two consequences they were told about: it will fire during heavy use (the disk sawtooths), and
+   week-old mixes rebuild on demand instead of returning instantly.
 
 ---
 
