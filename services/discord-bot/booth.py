@@ -73,6 +73,14 @@ def _seams_of(row) -> list:
         return []
 
 
+def _ref_of(row) -> str | None:
+    """The engine's set id for a past grind, if the row has one."""
+    try:
+        return row["ref_id"]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
 class Booth:
     """All Booth state in one object so nothing is a module-level global that a test cannot reset."""
 
@@ -97,6 +105,10 @@ class Booth:
         self._now_started: float | None = None
         self._now_seams: list[float] = []
         self._paused_at: tuple[str, float, list] | None = None
+        self._last_guild = None      # so _advance still knows the server when the STATION ends
+        # Looks up a set's track boundaries from the engine, given its set id. Injected by bot.py
+        # so the booth needs no HTTP client of its own and stays unit-testable. None = no lookup.
+        self.seam_lookup = None
 
     # -- the rooms ------------------------------------------------------------------------
     def is_a_room(self, channel) -> bool:
@@ -195,7 +207,10 @@ class Booth:
             # A SET is one continuous file; its seams are where each member's crossfade begins,
             # which is what a listener hears as "the next track". Without them /skip could only
             # throw away all five.
-            self._mark_playing(ctx.audio_path, seams=getattr(ctx, "seams", None))
+            seams = await self._resolve_seams(getattr(ctx, "number", None),
+                                              getattr(ctx, "ref_id", None),
+                                              getattr(ctx, "seams", None))
+            self._mark_playing(ctx.audio_path, seams=seams, guild=room.guild)
         except Exception:  # noqa: BLE001 - the room going quiet must never kill the bot
             log.exception("booth: could not play grind #%s in %s", ctx.number, room.name)
             await self._say_it_did_not_play(ctx)
@@ -236,7 +251,12 @@ class Booth:
         if nxt is not None:
             await self._play(nxt)
             return
-        await self._play_station(getattr(getattr(last, "interaction", None), "guild", None))
+        # WHICH SERVER. Taking it from the finished grind's interaction works only when a GRIND
+        # was playing - while the STATION is on air `now_playing` is None, so that read produced
+        # None, `rooms(None)` returned [], and the room went silent for good. `_last_guild` is set
+        # every time anything is put on air, so it survives both cases.
+        guild = getattr(getattr(last, "interaction", None), "guild", None) or self._last_guild
+        await self._play_station(guild)
 
     # -- the station ---------------------------------------------------------------------------
     async def _play_station(self, guild) -> None:
@@ -279,6 +299,31 @@ class Booth:
             return await self._play_station(guild)
         log.info("booth: nothing on disk to air - the room stays quiet until the next grind")
 
+    async def _resolve_seams(self, number: int | None, ref_id: str | None,
+                             stored: list | None) -> list:
+        """Track boundaries for what is about to play, looked up if they were never recorded.
+
+        WHY THIS IS NOT JUST `stored`: seams began being written on 2026-08-12, so every set made
+        before that has none - and /skip on one of them silently degraded to "stop", which is
+        exactly what the founder hit. The engine has always known them (`seam_at` per member), so
+        ask it once and write the answer back rather than depending on when a grind happened to be
+        made."""
+        if stored:
+            return stored
+        if not ref_id or self.seam_lookup is None:
+            return []
+        try:
+            seams = await self.seam_lookup(ref_id)
+        except Exception:  # noqa: BLE001 - no boundaries is a worse skip, not a broken room
+            log.warning("booth: could not look up seams for %s", ref_id, exc_info=True)
+            return []
+        if seams and number:
+            try:
+                store.set_seams(number, seams)      # so it is a lookup once, not every play
+            except Exception:  # noqa: BLE001
+                pass
+        return seams or []
+
     async def _air(self, room, row, path: str) -> None:
         """Put one past grind on air. Silent by design - no card, no announcement, no verdict."""
         self._recently_aired.append(row["number"])
@@ -287,7 +332,8 @@ class Booth:
         self.station_number = row["number"]
         try:
             await voice_player.play_in(room, path, on_finished=self._advance)
-            self._mark_playing(path, seams=_seams_of(row))
+            seams = await self._resolve_seams(row["number"], _ref_of(row), _seams_of(row))
+            self._mark_playing(path, seams=seams, guild=room.guild)
             log.info("booth: station aired grind #%s in %s", row["number"], room.name)
         except Exception:  # noqa: BLE001 - a failed replay must not end the station
             log.exception("booth: station could not air grind #%s", row["number"])
@@ -308,7 +354,10 @@ class Booth:
     # file this playback STARTED, and when. Everything below - skipping inside a set, and picking
     # up where /stop left off - is arithmetic on those two numbers.
 
-    def _mark_playing(self, path: str, *, offset: float = 0.0, seams: list | None = None) -> None:
+    def _mark_playing(self, path: str, *, offset: float = 0.0, seams: list | None = None,
+                      guild=None) -> None:
+        if guild is not None:
+            self._last_guild = guild
         self._now_path = str(path)
         self._now_offset = float(offset)
         self._now_started = time.monotonic()

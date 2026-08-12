@@ -265,6 +265,7 @@ class GrindContext:
         # Track boundaries inside a SET, filled in when one renders. Empty for a single mix, which
         # has nothing to skip between.
         self.seams: list[float] = []
+        self.ref_id: str | None = None       # engine mix_id / set_id, so seams can be looked up
         self._last_line: str | None = None       # the live "what's happening" line, so we only edit on a change
 
     # -- naming -------------------------------------------------------------------------
@@ -364,6 +365,7 @@ class GrindContext:
                     return None
                 await bot.api.fetch_set_audio(set_id, wav)
                 store.set_pairs(self.number, self._store_pairs(), ref_id=set_id)
+                self.ref_id = set_id
                 # A set is ONE continuous file. `seam_at` is where each member's crossfade begins,
                 # which is what a listener hears as "the next track" - so /skip can move BETWEEN
                 # the five instead of only abandoning all of them. Some members legitimately have
@@ -822,6 +824,23 @@ async def help_cmd(interaction: discord.Interaction) -> None:
         embed=ui.help_embed(rooms=booth.rooms(interaction.guild),
                             banner_name=name if files else None),
         files=files, ephemeral=True)
+
+
+async def _lookup_seams(set_id: str) -> list:
+    """Where each member of a set starts, straight from the engine.
+
+    THE BUG THIS FIXES: seams only began being WRITTEN on 2026-08-12, so every set made before
+    that had none, and /skip on one silently degraded to "stop" - which is exactly what the
+    founder hit ("it just pauses"). The engine has always known them, so ask rather than depend on
+    when a grind happened to be made. The booth caches the answer back into its own store, so this
+    is one call per set, ever.
+    """
+    res = await bot.api.set_status(set_id)
+    return [m.get("seam_at") for m in (res.members or [])
+            if isinstance(m, dict) and m.get("seam_at")]
+
+
+booth.seam_lookup = _lookup_seams
 
 
 def configured_channel_ids() -> dict:

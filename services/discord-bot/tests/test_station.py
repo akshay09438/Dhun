@@ -14,6 +14,7 @@ gets recorded - and never claim the audio came out. The audio needs a real room 
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -373,3 +374,82 @@ def test_play_on_a_swept_file_falls_back_to_the_station_instead_of_failing(booth
 
     assert asyncio.run(booth.play(member)) == "Playing."
     assert booth.station_number is not None
+
+
+# --- the "it just pauses" bug (founder-reported 2026-08-12) ----------------------------------------
+# Seams only began being WRITTEN on 2026-08-12, so every set made before that had none stored, and
+# /skip on one silently degraded to "stop". The engine has always known them.
+
+def test_skip_looks_up_seams_when_they_were_never_stored(booth, tmp_path, monkeypatch):
+    """THE REPORTED BUG. A set made before seams existed must still be skippable, by asking the
+    engine rather than depending on when the grind happened to be made."""
+    guild, room, member = _room_with(booth)
+    audio = tmp_path / "oldset.wav"; audio.write_bytes(b"RIFF")
+
+    asked = []
+    async def fake_lookup(ref_id):
+        asked.append(ref_id)
+        return [173.12]                       # what the engine's manifest actually holds
+    booth.seam_lookup = fake_lookup
+
+    seeks = []
+    async def fake_play_in(ch, path, on_finished=None, start_at=0.0):
+        seeks.append(start_at)
+    monkeypatch.setattr(booth_mod.voice_player, "play_in", fake_play_in)
+
+    n = store.new_grind(user_id=7, user_name="a", pairs=[["b", "v", "B", "V"]],
+                        created_at="2026-08-12T00:00:00+00:00")
+    store.set_audio_path(n, str(audio))
+    row = {"number": n, "audio_path": str(audio), "ref_id": "set-abc", "seams": None}
+
+    class Row(dict):
+        def __getitem__(self, k):
+            return dict.__getitem__(self, k)
+
+    asyncio.run(booth._air(room, Row(row), str(audio)))
+    assert asked == ["set-abc"], "it must ask the engine when nothing was stored"
+    assert booth._now_seams == [173.12]
+
+    booth._now_started = booth._now_started - 100
+    asyncio.run(booth.skip(member))
+    assert seeks[-1] == 173.12, "skip must now seek to the real boundary instead of stopping"
+
+
+def test_a_looked_up_seam_is_written_back_so_it_is_asked_once(booth, tmp_path, monkeypatch):
+    guild, room, member = _room_with(booth)
+    audio = tmp_path / "s.wav"; audio.write_bytes(b"RIFF")
+    calls = []
+
+    async def fake_lookup(ref_id):
+        calls.append(ref_id)
+        return [90.0]
+    booth.seam_lookup = fake_lookup
+    monkeypatch.setattr(booth_mod.voice_player, "play_in",
+                        lambda *a, **k: asyncio.sleep(0))
+
+    n = store.new_grind(user_id=7, user_name="a", pairs=[], created_at="x")
+    store.set_audio_path(n, str(audio))
+    seams = asyncio.run(booth._resolve_seams(n, "set-xyz", None))
+    assert seams == [90.0]
+    assert json.loads(store.get(n)["seams"]) == [90.0], "the answer must be cached in the store"
+
+
+def test_the_station_can_still_advance_after_a_station_track_ends(booth, tmp_path, monkeypatch):
+    """SECOND BUG FOUND WHILE FIXING THE FIRST. `_advance` read the guild off the finished GRIND's
+    interaction - but while the STATION is on air `now_playing` is None, so the guild came out
+    None, rooms(None) returned [], and the room went silent permanently."""
+    guild, room, member = _room_with(booth)
+    a = _grind_on_disk(tmp_path, "a", fires=2)
+    b = _grind_on_disk(tmp_path, "b", fires=1)
+
+    async def fake_play_in(ch, path, on_finished=None, start_at=0.0):
+        pass
+    monkeypatch.setattr(booth_mod.voice_player, "play_in", fake_play_in)
+
+    asyncio.run(booth._play_station(guild))     # station on air; now_playing stays None
+    first = booth.station_number
+    assert first is not None
+
+    asyncio.run(booth._advance())               # the track ends
+    assert booth.station_number is not None and booth.station_number != first, \
+        "the room must keep playing after a station track ends, not fall silent"
