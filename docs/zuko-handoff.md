@@ -71,9 +71,27 @@ Run on `zuko/goodnight-2026-08-12-night2`. Real output.
 
 ---
 
+## ⚠️ The catalog sweep FINISHED — and its answer is WRONG. Do not act on it.
+
+`scripts/loadtest/failure_sweep.csv`, all 216 pairs: **152 succeeded, 64 failed (29.6%)**, with three beats failing **18 out of 18** — Closer, Hey Brother, Silence. On its face that says withdraw three songs and the failure rate drops to 6.2%.
+
+**It is an artifact. All three were re-tested individually and ALL THREE SUCCEEDED:**
+
+| Pair                          | Sweep said   | Retried alone     |
+| ----------------------------- | ------------ | ----------------- |
+| Hey Brother × Don't Start Now | failed 18/18 | **ready**         |
+| Closer × Der Lagi Lekin       | failed       | **ready**, 24.4s  |
+| Silence × Der Lagi Lekin      | failed       | **ready**, 112.6s |
+
+**Why the sweep lied.** It renders ten at a time, and it ran alongside the full backend suite on a machine whose free disk fell to 4.3 GB. Failures averaged **7.6s against 92.5s for successes** — they died fast, before rendering, which is the signature of a starved machine rather than an incompatible pair. **This exact mistake is already in the repo's history** (`fa18e67 docs(diagnosis): correction — the failing songs were mostly a starved machine`). It has now been made twice.
+
+**And the sweep could not say why: 58 of the 64 failures recorded an error of `"?"` — no reason at all.** The failure taxonomy built for precisely this (declined / quality / resources / bug) is **not wired into this script**, which is why a starved-machine failure was again counted as a bad pair. Wiring it in is the fix; re-running on an idle machine is the re-measurement.
+
+**Nothing about the catalog should change on the strength of this file.**
+
 ## Parked, honestly
 
-- **The catalog sweep was STILL RUNNING when this was written.** Started 13:46 on the remaining pairs, batch-by-batch with clean-up between batches (disk oscillated 8.3 → 6.9 → 7.7 GB, exactly as intended). **Its result is not in this document.** The CSV lands at `scripts/loadtest/` — check it before assuming anything about which pairs work. Partial coverage is still useful; a disk-starved run reporting false "bad pair" verdicts is not.
+- **The catalog sweep result is UNRELIABLE — see above.** Started 13:46 on the remaining pairs, batch-by-batch with clean-up between batches (disk oscillated 8.3 → 6.9 → 7.7 GB, exactly as intended). **Its result is not in this document.** The CSV lands at `scripts/loadtest/` — check it before assuming anything about which pairs work. Partial coverage is still useful; a disk-starved run reporting false "bad pair" verdicts is not.
 - **Windows Update's 7.81 GB could not be reclaimed** — administrator rights. Only the founder can do it.
 
 ## Open escalations and things to RE-VERIFY (claims, not facts)
