@@ -1,41 +1,38 @@
 {
-  "session": "2026-08-12-goodnight-the-second-voice",
+  "session": "2026-08-12-goodnight-night3-hygiene-panda-and-the-costing",
   "invoked": "/zuko:goodnight",
-  "kickoff_context": "The founder asked for a second Discord bot identity so Bollywood_House and Hollywood_Blends can BOTH have sound at the same time. Established during kickoff, in their words: a Discord bot holds ONE voice connection per SERVER, so today the bot ping-pongs between rooms - every ~3 minutes it walks out of the room it is in, leaving those people in silence, to serve one person next door. Rendering is NOT the bottleneck (measured ~5.5x parallel, ten mixes in 52s). The founder explicitly understood and confirmed that a second identity adds ZERO mix-making capacity - it is a second seat, not a second kitchen. The engine's own ceiling (~8-10 at once, no queue, failures instead of waiting) is a separate job they have parked for later.",
+  "kickoff_context": "Runs straight after the founder confirmed BY EAR that two listening rooms play at the same time and that nothing starts on its own any more. Tonight's hour of confusion was caused by a GHOST BOT - a Grinder process from 18:34 still running invisibly with the old code; it was killed live, and it explains the auto-play, the 'only one room' refusal and the Unknown-interaction 404s. Free disk at kickoff: 8.68 GB.",
   "decisions": [
     {
       "id": "D1",
-      "question": "What can the second room do?",
-      "answer": "A FULL, EQUAL ROOM.",
-      "detail": "A mix made by someone sitting in Room 2 plays in Room 2 immediately. Its own waiting list, its own /skip, /stop and /play, its own station when it falls quiet. Nobody can tell which room is the 'real' one. Explicitly rejected: making room 2 a replay-only background station, because a mix made there would still wait for room 1's voice and /skip behaving differently per room reads as broken."
+      "question": "How much will a typical member actually make mixes (for the costing)?",
+      "answer": "SHOW ALL THREE CASES SIDE BY SIDE - light (mostly listeners), baseline (a few a week each), heavy (constant grinding).",
+      "detail": "Chosen so the founder can see where the cost cliff is and decide how hard to push growth. Listening is free once a mix exists; only MAKING mixes costs money, so member count alone does not drive the bill."
     },
     {
       "id": "D2",
-      "question": "What is the second identity called and what does it look like?",
-      "answer": "AN IDENTICAL TWIN - same name 'Grinder', same '# GRINDER' disc.",
-      "detail": "From a listener's side there is simply Grinder, in both rooms; the community never learns there are two. Accepted cost: the server member list shows 'Grinder' twice. The avatar is applied FROM CODE on the speaker's own login, so the founder never opens an image editor or the Developer Portal for artwork."
+      "question": "'Make all songs play no matter what' - how far does that go?",
+      "answer": "SWEEP AND REPORT, DO NOT WEAKEN THE REFEREE.",
+      "detail": "Stated to the founder at kickoff and not objected to. The never-decline rule already means no pair is refused for tempo or key. The only remaining refusal is the quality referee catching a render that genuinely sounds bad, and disabling that is the one thing the project's own rules forbid - it is what stops the app quietly shipping mush. Instead: sweep every pair, and report each one that cannot ship WITH ITS REAL REASON, so the founder decides per song."
     },
     {
       "id": "D3",
-      "question": "What does a person see when every voice is busy?",
-      "answer": "TELL THEM WHERE THEY ARE IN LINE.",
-      "detail": "The grind card says the mix is ready and waiting for a free room voice, with a position ('2nd in line'). Grounded in docs/concurrency-diagnosis.md, which ranked 'no queue position shown' as problem #5: people stare at 'grinding...', assume it broke, and press again, which genuinely makes it worse. This is the only case where the app admits out loud that voices are finite."
-    },
-    {
-      "id": "D4",
-      "question": "How fast does a voice leave a room everybody has walked out of?",
-      "answer": "HOLD IT FOR ABOUT 60 SECONDS FIRST.",
-      "detail": "A grace period, deliberately chosen over releasing immediately: stepping out for twenty seconds should not kill the music you were listening to. Accepted cost: for up to a minute a seat is held by an empty room, so another room could be briefly silent while a voice waits. If somebody returns within the grace period the music must still be playing - it is a HOLD, not a stop-and-restart."
+      "question": "The Panda fix - can it be applied overnight?",
+      "answer": "NO. STAGED FOR A HUMAN YES.",
+      "detail": "Not a preference - the deterministic floor. If the cause is where the evidence points (the vocal chain or the referee) the fix touches a dangerous-path file, so it is built and reviewed but left on the founder's desk. Expect one decision card in the morning, not a finished fix."
     }
   ],
-  "standing_rules_that_apply_tonight": [
-    "The founder's Discord server is hand-tuned and OFF LIMITS. Never run /setup, with any flag. Do not touch channels, categories, roles or the server icon.",
-    "The bot NEVER judges a mix - no rating, score, verdict, tempo or key, anywhere, including anything new built tonight.",
-    "Nothing merges to main overnight. One branch, one PR in the morning.",
-    "The founder must paste the second token themselves (it lives behind their Discord login). Until they do, behaviour must be IDENTICAL to today."
+  "already_known_at_kickoff": [
+    "The clip the founder heard was mix 221.5s-441.1s of a 474.7s render (envelope alignment, match 0.68 vs next-best 0.65 - weak, state the confidence).",
+    "The PLAN places Panda's vocal for 87.4s of that 220s clip (40%), so it is not a planning failure - the question is whether it survived the render.",
+    "Two suspects: the parked vocal-loudness issue (vocals ~6-8 dB under the beat, no makeup gain, recorded 2026-08-08) and half_time_pair (122 BPM beat vs 72 BPM vocal, vocal_stretch 0.85 - right at the recorded 15% warble threshold).",
+    "A vocal-band energy check was inconclusive and confounded by the arrangement's energy arc. Do not present it as evidence."
   ],
-  "not_tonight": [
-    "The engine's render ceiling / admission control (the 'kitchen waiting list') - the founder chose the second voice first, and agreed this is the next job.",
-    "The leftover staged card 'disk-sweep-floors-and-age' on services/api/app/storage.py from a previous night - still unapplied, surfaced to the founder at kickoff, deliberately left alone."
+  "standing_rules_that_apply_tonight": [
+    "The founder's Discord server is hand-tuned and OFF LIMITS. Never run /setup, with any flag.",
+    "The bot NEVER judges a mix - no rating, score, verdict, tempo or key, anywhere.",
+    "Never weaken, skip or delete a test to reach green.",
+    "Nothing merges to main overnight. One branch, one PR.",
+    "Disk: the catalog sweep must delete each render as soon as it is judged. Free space at kickoff is 8.68 GB; below 2 GB, stop and say so."
   ]
 }

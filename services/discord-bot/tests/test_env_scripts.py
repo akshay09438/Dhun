@@ -167,7 +167,7 @@ def test_without_a_main_token_nothing_changes():
 # script. Renamed to Ask-For-Token.ps1; these two make sure it cannot happen again.
 
 REPO = Path(__file__).resolve().parents[3]
-BATS = [REPO / "Set-Grinder-Token.bat", REPO / "Add-Grinder-Rooms.bat"]
+BATS = [REPO / "Set-Grinder-Token.bat", REPO / "Add-Grinder-Rooms.bat", REPO / "Start-Grinder.bat"]
 
 
 def _referenced_scripts():
@@ -193,3 +193,44 @@ def test_those_helpers_are_actually_committed():
         r = subprocess.run(["git", "check-ignore", rel], cwd=REPO,
                            capture_output=True, text=True, timeout=30)
         assert r.returncode != 0, f"{bat_name} calls {rel}, which git is ignoring - it will not ship"
+
+
+# --- one Grinder on shift at a time ---------------------------------------------------------------
+# THE HOUR THIS COST, 2026-08-12: a Grinder from 18:34 was still running after its window was closed.
+# The founder started a new one and two bots raced every command - the old one still had the
+# auto-play station and knew nothing about the second room, so it started music on its own and
+# answered "only one room can have sound" long after startup had said two. Every symptom looked like
+# a bug in the new code. None of them were.
+
+GUARD = REPO / "services" / "discord-bot" / "scripts" / "Stop-Other-Grinders.ps1"
+
+
+def test_the_launcher_clears_the_shift_before_starting():
+    """A second Grinder must never be able to start beside a first."""
+    launcher = (REPO / "Start-Grinder.bat").read_text(encoding="utf-8")
+    assert "Stop-Other-Grinders.ps1" in launcher
+    assert launcher.index("Stop-Other-Grinders.ps1") < launcher.index('"%BOTPY%" bot.py'), \
+        "it has to run BEFORE the new bot starts, or both are alive at once"
+
+
+@needs_powershell
+def test_the_guard_never_reaches_the_engine():
+    """The engine runs python too, and killing it would take the whole app down rather than one
+    duplicate bot. -WhatIf lists what it WOULD stop and stops nothing."""
+    r = subprocess.run(
+        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(GUARD), "-WhatIf"],
+        capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stderr
+    named = [ln for ln in r.stdout.splitlines() if "would stop" in ln.lower()]
+    assert not any("uvicorn" in ln.lower() for ln in named), \
+        f"the guard must never name the engine: {named}"
+
+
+@needs_powershell
+def test_the_guard_is_quiet_and_harmless_when_nothing_is_running():
+    """It runs on every single launch, so its do-nothing path has to be clean."""
+    r = subprocess.run(
+        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(GUARD), "-WhatIf"],
+        capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0
+    assert "error" not in r.stderr.lower(), r.stderr
