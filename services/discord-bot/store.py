@@ -46,9 +46,39 @@ CREATE TABLE IF NOT EXISTS reactions (
     created_at   TEXT    NOT NULL,
     PRIMARY KEY (grind_number, user_id, emoji)
 );
+CREATE TABLE IF NOT EXISTS room_sessions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id     INTEGER,
+    room_id      INTEGER NOT NULL,        -- which listening room
+    room_name    TEXT,
+    user_id      INTEGER NOT NULL,        -- who was listening
+    user_name    TEXT,
+    joined_at    TEXT    NOT NULL,
+    left_at      TEXT,                    -- NULL while they are still in the room
+    seconds      REAL,                    -- filled in on leave; the drop-off signal
+    playing_number INTEGER                -- which grind was out loud when they arrived, if any
+);
 CREATE INDEX IF NOT EXISTS ix_grinds_user ON grinds(user_id);
 CREATE INDEX IF NOT EXISTS ix_reactions_grind ON reactions(grind_number);
+CREATE INDEX IF NOT EXISTS ix_sessions_open ON room_sessions(user_id, room_id, left_at);
 """
+
+# Columns added after the first release. SQLite has no "ADD COLUMN IF NOT EXISTS", and an existing
+# grinder.db in the wild predates these, so they are applied by inspection at connect time rather
+# than by a migration tool this app does not have.
+_ADDED_COLUMNS = (
+    # Where the finished audio sits on disk. The station replays it straight from there, so a
+    # replay costs no download and writes no new file - and when the disk janitor sweeps an old
+    # render, that mix simply drops out of rotation instead of erroring.
+    ("grinds", "audio_path", "TEXT"),
+)
+
+
+def _apply_added_columns(c: sqlite3.Connection) -> None:
+    for table, column, decl in _ADDED_COLUMNS:
+        existing = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
+        if column not in existing:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
 def connect() -> sqlite3.Connection:
@@ -58,6 +88,7 @@ def connect() -> sqlite3.Connection:
         _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         _conn.row_factory = sqlite3.Row
         _conn.executescript(SCHEMA)
+        _apply_added_columns(_conn)
         _conn.commit()
     return _conn
 
@@ -171,3 +202,104 @@ def count_for_user(user_id: int) -> int:
         row = connect().execute("SELECT COUNT(*) n FROM grinds WHERE user_id=?",
                                 (user_id,)).fetchone()
     return int(row["n"])
+
+
+# --- the station ------------------------------------------------------------------------------
+# When a room's queue empties it replays what the community has already made, favouring the mixes
+# people reacted to with 🔥. THE BOT STILL NEVER JUDGES A MIX: this is an ordering over the
+# community's own votes, never Grinder's opinion, and nothing about the ordering is ever shown or
+# announced. A visible ranking would prejudice the reaction data, which is the real product signal.
+
+FIRE = "🔥"
+
+
+def set_audio_path(number: int, path: str) -> None:
+    """Remember where a finished grind's audio lives, so the station can replay it from disk
+    without re-rendering or re-downloading."""
+    with _lock:
+        c = connect()
+        c.execute("UPDATE grinds SET audio_path=? WHERE number=?", (str(path), number))
+        c.commit()
+
+
+def station_candidates(limit: int = 50) -> list[sqlite3.Row]:
+    """Past grinds that could go out on air, best-first.
+
+    Ordered by 🔥 count, then most recent. Only grinds that actually have audio recorded - a grind
+    still rendering, or one whose file the disk janitor has since swept, must never be offered
+    (the caller checks the file still exists; this just avoids obviously dead rows).
+
+    A LEFT JOIN rather than a subquery so a grind with no reactions at all still appears, at the
+    back. A room that has only ever made unreacted mixes must still have something to play.
+    """
+    with _lock:
+        return connect().execute(
+            "SELECT g.*, COALESCE(SUM(CASE WHEN r.emoji=? THEN 1 ELSE 0 END), 0) AS fires "
+            "FROM grinds g LEFT JOIN reactions r ON r.grind_number = g.number "
+            "WHERE g.audio_path IS NOT NULL "
+            "GROUP BY g.number "
+            "ORDER BY fires DESC, g.number DESC LIMIT ?", (FIRE, limit)).fetchall()
+
+
+# --- listening data ---------------------------------------------------------------------------
+# The two gaps recorded as blocking the community phase: do people actually listen, and when do
+# they drop off. Neither is answerable without knowing who was in a room and for how long.
+
+def room_arrival(*, guild_id: int | None, room_id: int, room_name: str, user_id: int,
+                 user_name: str, when: str, playing_number: int | None = None) -> None:
+    """Someone joined a listening room. Idempotent per open session: Discord fires voice-state
+    updates for mute/deafen/camera as well as joins, so re-recording an arrival for somebody
+    already in the room would invent listeners who never arrived."""
+    with _lock:
+        c = connect()
+        open_row = c.execute(
+            "SELECT id FROM room_sessions WHERE user_id=? AND room_id=? AND left_at IS NULL",
+            (user_id, room_id)).fetchone()
+        if open_row is not None:
+            return
+        c.execute(
+            "INSERT INTO room_sessions (guild_id, room_id, room_name, user_id, user_name, "
+            "joined_at, playing_number) VALUES (?,?,?,?,?,?,?)",
+            (guild_id, room_id, room_name, user_id, user_name, when, playing_number))
+        c.commit()
+
+
+def open_session(*, user_id: int, room_id: int):
+    """The still-open listening session for this person in this room, or None. Used to work out
+    how long they stayed without putting clock arithmetic into SQL."""
+    with _lock:
+        return connect().execute(
+            "SELECT * FROM room_sessions WHERE user_id=? AND room_id=? AND left_at IS NULL "
+            "ORDER BY id DESC LIMIT 1", (user_id, room_id)).fetchone()
+
+
+def room_departure(*, room_id: int, user_id: int, when: str, seconds: float | None = None) -> None:
+    """Someone left. Closes the most recent open session for that person in that room; a departure
+    with no matching arrival (a restart mid-session) is ignored rather than inventing a row."""
+    with _lock:
+        c = connect()
+        row = c.execute(
+            "SELECT id, joined_at FROM room_sessions WHERE user_id=? AND room_id=? "
+            "AND left_at IS NULL ORDER BY id DESC LIMIT 1", (user_id, room_id)).fetchone()
+        if row is None:
+            return
+        c.execute("UPDATE room_sessions SET left_at=?, seconds=? WHERE id=?",
+                  (when, seconds, row["id"]))
+        c.commit()
+
+
+def listening_summary() -> dict:
+    """The plain answer to 'is anybody actually listening, and for how long'."""
+    with _lock:
+        c = connect()
+        row = c.execute(
+            "SELECT COUNT(*) sessions, COUNT(DISTINCT user_id) people, "
+            "       AVG(seconds) avg_secs, MAX(seconds) max_secs, SUM(seconds) total_secs "
+            "FROM room_sessions WHERE left_at IS NOT NULL").fetchone()
+        open_now = c.execute(
+            "SELECT COUNT(*) n FROM room_sessions WHERE left_at IS NULL").fetchone()
+    return {"sessions": int(row["sessions"] or 0), "people": int(row["people"] or 0),
+            "avg_secs": round(row["avg_secs"], 1) if row["avg_secs"] else 0.0,
+            "max_secs": round(row["max_secs"], 1) if row["max_secs"] else 0.0,
+            "total_secs": round(row["total_secs"], 1) if row["total_secs"] else 0.0,
+            "in_a_room_now": int(open_now["n"] or 0)}

@@ -392,6 +392,13 @@ class GrindContext:
                                 attachments=[clip] if clip else [],
                                 view=GrindView(self))
         await _seed_reactions(self.message)
+        # Remember where the audio lives so the station can replay it later straight off disk -
+        # no re-render, no download, no new file. If the janitor sweeps it, it simply drops out
+        # of rotation.
+        try:
+            store.set_audio_path(self.number, str(wav))
+        except Exception:  # noqa: BLE001 - never fail a finished grind over bookkeeping
+            log.warning("could not record the audio path for grind #%s", self.number, exc_info=True)
         await booth.on_grind_finished(self)
 
     async def _fail(self, msg: str) -> None:
@@ -710,6 +717,29 @@ async def mygrinds_cmd(interaction: discord.Interaction) -> None:
         embed=ui.mygrinds_embed(user=interaction.user,
                                 total=store.count_for_user(interaction.user.id), rows=rows),
         ephemeral=True)
+
+
+@bot.tree.command(name="skip", description="Skip whatever is playing in your listening room.")
+async def skip_cmd(interaction: discord.Interaction) -> None:
+    """ANYONE IN THE ROOM MAY SKIP (founder decision 2026-08-12).
+
+    Deliberately not owner-only: a bad mix whose owner has wandered off would otherwise hold the
+    room hostage for three minutes. Deliberately not a skip-vote either - fair in a big room,
+    faintly silly when there are two people in it, and this is a validation-scale community where
+    social pressure works better than machinery.
+
+    Ephemeral, so skipping does not litter the channel with notices.
+    """
+    await interaction.response.send_message(await booth.skip(interaction.user), ephemeral=True)
+
+
+@bot.tree.command(name="stop", description="Stop the music in your listening room.")
+async def stop_cmd(interaction: discord.Interaction) -> None:
+    """Stop means stop: it clears the room's queue AND parks the station, so the room does not
+    immediately start replaying something. The next grind, or the next person to walk in, starts
+    it up again."""
+    await interaction.response.send_message(
+        await booth.stop_playback(interaction.user), ephemeral=True)
 
 
 # --------------------------------------------------------------------------------------
