@@ -38,27 +38,41 @@ def test_launcher_exists() -> None:
     assert LAUNCHER.is_file(), f"the launcher went missing: {LAUNCHER}"
 
 
+def _all_batch_files() -> list[Path]:
+    """EVERY double-clickable script we ship, not just the one that broke.
+
+    Generalised on 2026-08-12 after a second .bat was added: a guard that protects one file while
+    the next one is written freehand only catches the bug we already know about."""
+    return sorted(LAUNCHER.parent.glob("*.bat"))
+
+
+def test_there_is_something_to_check() -> None:
+    assert _all_batch_files(), "no .bat files found - this guard would pass vacuously"
+
+
 def test_echo_lines_escape_their_parentheses() -> None:
-    """Any `echo` inside the file must escape ( and ) as ^( ^).
+    """Any `echo` in any of our .bat files must escape ( and ) as ^( ^).
 
     Checked on every echo rather than only the ones inside blocks: telling "inside a block" from
     "outside" needs a real batch parser, and escaping everywhere is harmless - `echo ^(x^)` prints
     exactly the same text as `echo (x)` when it does parse.
     """
     offenders: list[str] = []
-    for num, raw in _lines():
-        line = raw.strip()
-        if not re.match(r"^echo\b", line, flags=re.IGNORECASE):
-            continue
-        # Strip the legal escaped forms, then anything left is a bare parenthesis.
-        stripped = line.replace("^(", "").replace("^)", "")
-        if "(" in stripped or ")" in stripped:
-            offenders.append(f"  line {num}: {line}")
+    for bat in _all_batch_files():
+        text = bat.read_text(encoding="utf-8", errors="replace")
+        for num, raw in enumerate(text.splitlines(), start=1):
+            line = raw.strip()
+            if not re.match(r"^echo\b", line, flags=re.IGNORECASE):
+                continue
+            # Strip the legal escaped forms, then anything left is a bare parenthesis.
+            stripped = line.replace("^(", "").replace("^)", "")
+            if "(" in stripped or ")" in stripped:
+                offenders.append(f"  {bat.name} line {num}: {line}")
 
     assert not offenders, (
         "These echo lines contain unescaped parentheses. Inside an if/else block cmd.exe treats a "
-        "bare ')' as the end of the block and the launcher dies with '... was unexpected at this "
-        "time' BEFORE it starts the bot - even if the line is on a branch that never runs.\n"
+        "bare ')' as the end of the block and the script dies with '... was unexpected at this "
+        "time' BEFORE reaching its real work - even if the line is on a branch that never runs.\n"
         "Write them as ^( and ^).\n" + "\n".join(offenders)
     )
 
@@ -81,18 +95,34 @@ def test_launcher_prefers_the_environment_where_voice_works() -> None:
     )
 
 
-def test_launcher_tells_people_a_command_that_exists() -> None:
-    """The launcher window is the first instruction a newcomer reads. It pointed at `/mix` for a
-    while, which is not a command the bot has."""
-    text = LAUNCHER.read_text(encoding="utf-8", errors="replace")
+def test_no_script_names_a_command_the_bot_does_not_have() -> None:
+    """A launcher window is the first instruction a newcomer reads.
+
+    Start-Grinder.bat pointed at `/mix` for a while, which does not exist. Generalising this check
+    across every .bat immediately found the SAME bug hiding in Set-Grinder-Server.bat - which is
+    the whole argument for not guarding one file at a time."""
     bot_py = (LAUNCHER.parent / "services" / "discord-bot" / "bot.py").read_text(
         encoding="utf-8", errors="replace"
     )
-    for m in re.finditer(r"type\s+/(\w+)", text):
-        name = m.group(1)
-        assert f'command(name="{name}"' in bot_py, (
-            f"the launcher tells people to type /{name}, but the bot has no such command"
-        )
+    real = set(re.findall(r'command\(name="(\w+)"', bot_py))
+    assert real, "could not read the bot's command list - the check would pass vacuously"
+
+    offenders = []
+    for bat in _all_batch_files():
+        text = bat.read_text(encoding="latin-1")
+        # Only slash-words that read as an instruction, so a path like a/b is not mistaken for one.
+        for name in re.findall(r"(?<![\w/])/(\w+)\b", text):
+            if name in {"c", "d", "f", "s", "q", "k", "b", "v", "a", "e", "r", "l", "y", "n",
+                        "online", "sagerun", "NoProfile", "Command", "Verb"}:
+                continue        # cmd.exe and PowerShell switches, not Discord commands
+            if name not in real and name.lower() in {"mix", "set", "songs", "grind", "play",
+                                                     "skip", "stop", "help", "setup", "mygrinds"}:
+                offenders.append(f"  {bat.name}: /{name}")
+
+    assert not offenders, (
+        "These scripts tell people to type a command the bot does not have:\n"
+        + "\n".join(offenders) + f"\nreal commands: {sorted(real)}"
+    )
 
 
 @pytest.mark.parametrize("bad", ["echo  Installing voice support (best-effort)..."])

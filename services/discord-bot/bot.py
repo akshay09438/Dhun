@@ -23,6 +23,7 @@ import discord
 from discord import app_commands
 
 import brand
+import editbudget
 import media
 import server_setup
 import showcase
@@ -261,6 +262,10 @@ class GrindContext:
         self.audio_path: Path | None = None      # the WAV, kept for The Booth
         self.number: int | None = None
         self.duration: float = 0.0
+        # Track boundaries inside a SET, filled in when one renders. Empty for a single mix, which
+        # has nothing to skip between.
+        self.seams: list[float] = []
+        self.ref_id: str | None = None       # engine mix_id / set_id, so seams can be looked up
         self._last_line: str | None = None       # the live "what's happening" line, so we only edit on a change
 
     # -- naming -------------------------------------------------------------------------
@@ -296,6 +301,16 @@ class GrindContext:
                                eta_secs=getattr(res, "queue_eta_secs", None))
         if line == self._last_line:
             return
+
+        # Each card is already polite on its own - but politeness per card is not politeness per
+        # CHANNEL, and Discord rate-limits edits per channel. Ten cards moving in #get-shit-done
+        # know nothing about each other, so they share one budget here. A skipped progress edit
+        # costs nothing: the next tick is two seconds away and knows more. The FINAL edit that
+        # delivers the mix bypasses this entirely - see run().
+        channel = getattr(self.message, "channel", None)
+        if not editbudget.budget.allow(getattr(channel, "id", 0)):
+            return          # deliberately do NOT record _last_line: the next tick retries
+
         self._last_line = line
         try:
             await self.message.edit(embed=self._submit_embed(
@@ -350,6 +365,15 @@ class GrindContext:
                     return None
                 await bot.api.fetch_set_audio(set_id, wav)
                 store.set_pairs(self.number, self._store_pairs(), ref_id=set_id)
+                self.ref_id = set_id
+                # A set is ONE continuous file. `seam_at` is where each member's crossfade begins,
+                # which is what a listener hears as "the next track" - so /skip can move BETWEEN
+                # the five instead of only abandoning all of them. Some members legitimately have
+                # no seam (no crossfade was created), so the Nones are dropped rather than faked.
+                self.seams = [m.get("seam_at") for m in (res.members or [])
+                              if isinstance(m, dict) and m.get("seam_at")]
+                if self.seams:
+                    store.set_seams(self.number, self.seams)
         except EngineError as e:
             await self._fail(str(e))
             return None
@@ -392,6 +416,13 @@ class GrindContext:
                                 attachments=[clip] if clip else [],
                                 view=GrindView(self))
         await _seed_reactions(self.message)
+        # Remember where the audio lives so the station can replay it later straight off disk -
+        # no re-render, no download, no new file. If the janitor sweeps it, it simply drops out
+        # of rotation.
+        try:
+            store.set_audio_path(self.number, str(wav))
+        except Exception:  # noqa: BLE001 - never fail a finished grind over bookkeeping
+            log.warning("could not record the audio path for grind #%s", self.number, exc_info=True)
         await booth.on_grind_finished(self)
 
     async def _fail(self, msg: str) -> None:
@@ -712,6 +743,47 @@ async def mygrinds_cmd(interaction: discord.Interaction) -> None:
         ephemeral=True)
 
 
+@bot.tree.command(name="play", description="Start the music in your listening room, or pick up where you stopped.")
+async def play_cmd(interaction: discord.Interaction) -> None:
+    """The command that was missing. Before this, the ONLY way to get Grinder into a room was to
+    finish a grind while sitting in one - somebody who just wanted music had nothing to type.
+
+    DEFER FIRST. Discord kills an interaction that has not been acknowledged within 3 SECONDS, and
+    /play may have to open a voice connection (a real handshake, seconds) and ask the engine for a
+    set's boundaries. Observed live on 2026-08-12: "The application did not respond", while /skip
+    beside it succeeded - because /skip runs when the bot is ALREADY connected and never pays that
+    cost."""
+    await interaction.response.defer(ephemeral=True)
+    await interaction.followup.send(await booth.play(interaction.user), ephemeral=True)
+
+
+@bot.tree.command(name="skip", description="Skip to the next track in your listening room.")
+async def skip_cmd(interaction: discord.Interaction) -> None:
+    """ANYONE IN THE ROOM MAY SKIP (founder decision 2026-08-12).
+
+    Deliberately not owner-only: a bad mix whose owner has wandered off would otherwise hold the
+    room hostage for three minutes. Deliberately not a skip-vote either - fair in a big room,
+    faintly silly when there are two people in it, and this is a validation-scale community where
+    social pressure works better than machinery.
+
+    Ephemeral, so skipping does not litter the channel with notices. Deferred for the same reason
+    as /play: a seek re-opens the audio stream and may first ask the engine for the set's
+    boundaries, which can outrun Discord's 3-second acknowledgement window.
+    """
+    await interaction.response.defer(ephemeral=True)
+    await interaction.followup.send(await booth.skip(interaction.user), ephemeral=True)
+
+
+@bot.tree.command(name="stop", description="Stop the music in your listening room.")
+async def stop_cmd(interaction: discord.Interaction) -> None:
+    """Stop means stop: it clears the room's queue AND parks the station, so the room does not
+    immediately start replaying something. The next grind, or the next person to walk in, starts
+    it up again."""
+    await interaction.response.defer(ephemeral=True)
+    await interaction.followup.send(
+        await booth.stop_playback(interaction.user), ephemeral=True)
+
+
 # --------------------------------------------------------------------------------------
 # Reactions - the actual product signal.
 #
@@ -753,10 +825,33 @@ async def on_voice_state_update(member, before, after) -> None:
 
 @bot.tree.command(name="help", description="What Grinder does and how to use it.")
 async def help_cmd(interaction: discord.Interaction) -> None:
-    # The wordmark rides along as an attachment; the embed references it as attachment://logo.png.
-    logo = brand.image_bytes(brand.LOGO)
-    files = [discord.File(brand.LOGO, filename="logo.png")] if logo else []
-    await interaction.response.send_message(embed=ui.help_embed(), files=files, ephemeral=True)
+    """The "Remix anything." banner, not the wordmark disc - the same image #read-this-first uses,
+    so a newcomer sees one identity rather than two. Rooms are passed in as real channels so they
+    render as live links that survive a rename."""
+    name = "remix-banner.jpg"
+    files = ([discord.File(brand.REMIX_BANNER, filename=name)]
+             if brand.image_bytes(brand.REMIX_BANNER) is not None else [])
+    await interaction.response.send_message(
+        embed=ui.help_embed(rooms=booth.rooms(interaction.guild),
+                            banner_name=name if files else None),
+        files=files, ephemeral=True)
+
+
+async def _lookup_seams(set_id: str) -> list:
+    """Where each member of a set starts, straight from the engine.
+
+    THE BUG THIS FIXES: seams only began being WRITTEN on 2026-08-12, so every set made before
+    that had none, and /skip on one silently degraded to "stop" - which is exactly what the
+    founder hit ("it just pauses"). The engine has always known them, so ask rather than depend on
+    when a grind happened to be made. The booth caches the answer back into its own store, so this
+    is one call per set, ever.
+    """
+    res = await bot.api.set_status(set_id)
+    return [m.get("seam_at") for m in (res.members or [])
+            if isinstance(m, dict) and m.get("seam_at")]
+
+
+booth.seam_lookup = _lookup_seams
 
 
 def configured_channel_ids() -> dict:
@@ -765,6 +860,13 @@ def configured_channel_ids() -> dict:
     return {"grind": CFG.grinder_channel_id, "showcase": CFG.fresh_grinds_channel_id}
 
 
+# ADMINS ONLY, AND HIDDEN FROM EVERYONE ELSE (founder-reported 2026-08-12: "remove /setup from the
+# user interface, otherwise users will play with it"). `default_permissions` makes Discord itself
+# omit the command from the picker for members without the permission - it is not merely a check
+# that fires after they run it, so ordinary members never see it exists. `guild_only` because it
+# restructures a server and is meaningless in a DM.
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.guild_only()
 @bot.tree.command(name="setup", description="Set up this server: channels, roles, emojis and branding.")
 @app_commands.describe(
     refresh_branding="Replace the server icon with Grinder's current artwork (default: leave it alone).")

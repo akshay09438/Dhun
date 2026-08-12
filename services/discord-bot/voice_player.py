@@ -72,7 +72,7 @@ async def play_in_channel(interaction: "discord.Interaction", audio_path) -> str
     return f"▶️ Playing in **{channel.name}**. Tap **Leave voice** to stop."
 
 
-async def play_in(channel, audio_path, *, on_finished=None) -> None:
+async def play_in(channel, audio_path, *, on_finished=None, start_at: float = 0.0) -> None:
     """Play into ONE named channel, and call `on_finished` when the audio ends.
 
     Different from `play_in_channel` above in the two ways that matter for The Booth: it targets a
@@ -102,7 +102,12 @@ async def play_in(channel, audio_path, *, on_finished=None) -> None:
         if on_finished is not None:
             asyncio.run_coroutine_threadsafe(on_finished(), loop)
 
-    vc.play(discord.FFmpegPCMAudio(str(audio_path)), after=_after)
+    # `-ss` BEFORE `-i` so ffmpeg seeks by keyframe index instead of decoding and discarding
+    # everything up to the offset. On a 12-minute set that is the difference between instant and
+    # several seconds of silence. This is what makes both "skip to the next track inside a set"
+    # and "resume from where /stop left off" possible - discord.py has no notion of a position.
+    opts = f"-ss {max(0.0, float(start_at)):.3f}" if start_at else None
+    vc.play(discord.FFmpegPCMAudio(str(audio_path), before_options=opts), after=_after)
 
 
 async def leave(interaction: "discord.Interaction") -> str:

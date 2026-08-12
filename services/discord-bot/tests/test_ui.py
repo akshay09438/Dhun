@@ -36,8 +36,41 @@ def test_cards_carry_the_grinder_mark_once_the_avatar_url_is_known():
         ui.set_avatar_url(None)   # module-level state — don't leak into other tests
 
 
-def test_help_card_shows_the_wordmark():
-    assert ui.help_embed().thumbnail.url == "attachment://logo.png"
+def test_help_card_shows_the_remix_banner_not_the_wordmark():
+    """Changed 2026-08-12 on the founder's instruction: /help used the GRINDER wordmark disc while
+    #read-this-first used the "Remix anything." banner, so a newcomer met two different identities.
+    One image, used in both places."""
+    e = ui.help_embed(banner_name="remix-banner.jpg")
+    assert e.image.url == "attachment://remix-banner.jpg"
+
+
+def test_help_card_names_the_real_rooms_as_live_links():
+    """It used to say "The Booth" - a channel that has not existed since the rooms were split into
+    Bollywood_House and Hollywood_Blends. Typed names rot the moment the founder renames a room;
+    a <#id> mention follows the rename. This is the same failure that left #read-this-first
+    advertising three deleted commands for two versions."""
+    class R:
+        def __init__(self, i):
+            self.id = i
+
+    text = "\n".join(f.value for f in ui.help_embed(rooms=[R(111), R(222)]).fields)
+    assert "<#111>" in text and "<#222>" in text
+    assert "The Booth" not in text
+
+
+def test_help_card_still_reads_without_any_rooms_configured():
+    """A server with no listening rooms yet must still get a help card, not a crash or a dangling
+    sentence."""
+    text = "\n".join(f.value for f in ui.help_embed(rooms=[]).fields)
+    assert "a listening room" in text
+
+
+def test_help_card_teaches_the_playback_controls():
+    """They were unreachable knowledge before: /skip and /stop existed with nothing telling anyone
+    they did."""
+    text = "\n".join(f.value for f in ui.help_embed().fields)
+    for cmd in ("/skip", "/stop", "/play"):
+        assert cmd in text
 
 
 def test_mmss():

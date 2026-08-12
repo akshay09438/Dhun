@@ -1,28 +1,44 @@
 {
-  "session": "2026-08-11-goodnight-concurrency-and-the-consumer",
+  "session": "2026-08-12-goodnight-the-station-and-the-janitor",
   "invoked": "/zuko:goodnight",
+  "kickoff_context": "Ran immediately after the session where voice became FOUNDER-CONFIRMED for the first time (a real mix played in #Bollywood_House), and after the launcher bug that had stopped the bot starting at all was found and fixed. The listening rooms are real as of today, which is what unblocks most of tonight's bundle.",
   "founder_lenses": [
     "DEVELOPER: build it properly.",
-    "CONSUMER: a person arrives in Discord wanting an INSTANT mix. There are exactly two places to make one - the #get-shit-done text channel, and the 2-3 listening (voice) rooms. Judge every change by what that person feels.",
-    "FOUNDER: maximum convenience for the user, but ZERO money to spend. At every blockage, reason from first principles about what can be done for FREE."
-  ],
-  "bundle": [
-    "Jobs 1-8 from docs/zuko-handoff.md (the approved concurrency batch)",
-    "Plus three consumer-lens additions surfaced at kickoff and approved (see decisions below)"
+    "CONSUMER: a person arrives in Discord wanting an INSTANT mix. Two places to make one - the #get-shit-done text channel, and the listening (voice) rooms. Judge every change by what that person feels.",
+    "FOUNDER: maximum convenience for the user, but ZERO money to spend. At every blockage, reason from first principles to a FREE solution."
   ],
   "decisions": {
-    "job6_drop_the_wav": "SKIP - do NOT build it. Founder's call. A repeat mix currently returns in 0.03s because the full render is kept; in a busy Discord room that instant repeat IS the product. Job 10 (age-based sweep) reclaims the same disk on demand. Revisit only if disk becomes the proven wall.",
-    "resource_failure_behaviour": "RETRY QUIETLY AND SAY 'BUSY'. When a grind fails because the MACHINE was out of memory/disk (not because the pair is bad), the app must NOT say 'try another pair' - that blames the user for the host's problem. It re-queues the grind automatically and the card says the grinder is slammed, with a place in line. The user does nothing.",
-    "voice_x64_experiment": "YES - attempt it tonight, installing is permitted. Voice is 100% dead on this Windows-ARM machine (no ARM build of the Discord voice audio library), which makes the listening rooms SILENT rooms. Windows 11 on ARM has built-in x86-64 emulation; an x86-64 Python + the Intel wheels may work. Free. Deliver a straight yes/no by morning with evidence.",
-    "the_waiting_card": "YES - make the 'grinding...' card MOVE. Today it sits frozen for 25-30s, which reads as broken to a first-timer. It must tick through what is happening, and show queue position ('6th, ~3 min') whenever there is a line."
+    "the_station": "RE-PLAY PAST MIXES, BEST-FIRST. When a room's queue empties it must NOT go silent - it becomes a radio of what the community has already made, ordered favouring mixes people reacted to with fire. Costs no Replicate credit and no new disk, and it makes the reaction data load-bearing. Explicitly NOT auto-grinding fresh pairs on idle (burns credits and disk with nobody necessarily listening).",
+    "the_station_hard_constraint": "THE BOT STILL NEVER JUDGES A MIX. Ordering by human reactions is allowed because those are the community's votes, not Grinder's opinion. But the station must NEVER announce a ranking, call a mix good, show a score, or say anything that reads as a verdict. Silent ordering only. Violating this prejudices the fire/skull/neutral reaction data, which is the real product signal.",
+    "playback_controls": "ANYONE IN THE ROOM can skip or stop. Matches how small friendly Discord rooms actually behave, and at validation scale social pressure handles abuse. Deliberately NOT a skip-vote (fiddly and silly with two people) and NOT owner-only (a bad mix whose owner has left would hold the room for three minutes).",
+    "hosting_research": "HARD ZERO BUDGET. Research genuinely FREE always-on options only, and report honestly on what they can and cannot run - including a straight answer on whether free is possible at all for an always-on bot + engine. No paid comparison shopping. Research only; NO code, NO migration, NO signing up for anything.",
+    "windows_disk_reclaim": "YES - reclaim Windows Update's 7.81 GB download cache plus our own temp/scratch junk, using Windows' own supported cleanup. Found at kickoff: free disk fell 9.28 -> 5.86 GB during the session and Prompt-DJ was NOT the cause (its data folder was unchanged; the founder's test grinds added only 0.51 GB).",
+    "listening_data": "RECORD WHO, WHEN, AND HOW LONG. Discord user id, join time, leave time, and which mix was playing. This is the founder's own server and own members, and it is the minimum that answers 'do people actually listen, and when do they drop off' - the two data gaps recorded as blocking the Discord community phase. Deliberately NOT also linking reactions to individuals this round (more personal data than the question needs).",
+    "catalog_sweep": "RUN IT LAST, CLEAN-AS-YOU-GO. 134 pairs remain of 216. Each render is deleted once judged so disk never accumulates. If it runs out of time or space it PARKS HONESTLY with partial results - partial coverage is still useful, a disk-starved machine reporting false 'bad pair' verdicts is not.",
+    "events_db_cleanup": "YES - clear the placeholder and load-test rows so real numbers are not polluted. Back the file up first and report exactly how many rows went."
   },
   "hard_constraints": [
-    "DANGEROUS surfaces are STAGED, never self-applied overnight (ZUKO_OVERNIGHT). services/api/app/storage.py is the one in scope tonight (job 10).",
-    "storage.py scored 48 = 'human-required' (deletes user audio, irreversible). It is NOT a one-tap card in the morning - it gets a full attended review.",
+    "DANGEROUS surfaces are STAGED, never self-applied overnight (ZUKO_OVERNIGHT). Nothing in tonight's bundle is expected to need one - the janitor was deliberately REDESIGNED to leave services/api/app/storage.py byte-identical.",
+    "services/api/app/storage.py MUST NOT be modified. The janitor is a NEW file that calls the existing sweep(target_free_gb=...) and sweep(dry_run=True), both of which already exist. If a task appears to require editing storage.py, STOP and stage it instead.",
     "workers/render.py and services/api/app/planner/validate.py must NOT be modified. Nothing tonight changes how a mix SOUNDS.",
     "Never weaken, skip or delete a test to make code pass.",
     "The 0.03s cache hit is a protected product property - no change may regress it.",
-    "Free only. No paid service, no cloud spend, no new subscription - the founder has no budget."
+    "Free only. No paid service, no cloud spend, no new subscription, no sign-ups.",
+    "The bot never judges a mix - see the_station_hard_constraint.",
+    "Nothing merges to main. One integration branch, one morning PR."
   ],
-  "acceptance_owner": "founder (ear + eyes); the agent may not self-certify anything voice-shaped, which cannot be exercised on this machine"
+  "known_state_at_kickoff": {
+    "voice": "FOUNDER-CONFIRMED - a real mix played in #Bollywood_House. No longer a claim.",
+    "launcher": "fixed and merged (PR #32). Was dying on an unescaped bracket before reaching the line that starts the bot.",
+    "disk_free_gb": 5.86,
+    "windows_update_cache_gb": 7.81,
+    "promptdj_data_gb": 12.66,
+    "evictable_renders_gb": 3.54,
+    "protected_songs_stems_analyses_gb": 4.03,
+    "real_render_time_secs": "queue's own rolling average reads 67.4s, against the 25.68s the previous night's profile reported. The profile measured only the mixing stages, not the whole wait. Re-measuring is task 5.",
+    "failures_ever_recorded": "329 events, exactly ONE failure (kind=bug). The declined/quality/resources messages have never fired in reality.",
+    "catalog_coverage": "82 of 216 pairs swept; 8 of 12 beats untested.",
+    "speakers_py": "built and tested, still NOT wired to playback. Multi-room needs founder-created bot identities (GRINDER_ROOM_TOKENS absent from .env)."
+  },
+  "acceptance_owner": "founder (ear + eyes). The agent may not self-certify anything that has to SOUND right, or anything whose proof is 'a person heard it'."
 }

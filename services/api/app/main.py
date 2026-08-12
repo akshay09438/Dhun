@@ -24,7 +24,27 @@ from app.routes.set import router as set_router  # noqa: E402
 from app.routes.songs import router as songs_router  # noqa: E402
 from app.routes.stems import router as stems_router  # noqa: E402
 
-app = FastAPI(title="Prompt-DJ API")
+from contextlib import asynccontextmanager  # noqa: E402
+
+from app import janitor  # noqa: E402
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Start the disk janitor with the engine, stop it with the engine.
+
+    It only WATCHES: every cycle asks storage for a dry run first, and sweeps only when a sweep
+    would actually reach the cushion. On a healthy disk it deletes nothing and costs one
+    disk-usage call a minute. See app/janitor.py for why the trigger lives apart from the policy.
+    """
+    janitor.start()
+    try:
+        yield
+    finally:
+        await janitor.stop()
+
+
+app = FastAPI(title="Prompt-DJ API", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
