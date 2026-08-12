@@ -122,6 +122,62 @@ class SpeakerPool:
             s.room_id = None
 
 
+async def bring_online(pool: "SpeakerPool", make_client, *, ready_timeout: float = 30.0,
+                       on_ready=None) -> list["Speaker"]:
+    """Log each extra identity in, and drop the ones that do not come up.
+
+    A SICK EXTRA MUST NEVER TAKE THE MAIN GRINDER DOWN. There are three ways one fails to arrive and
+    all three are things the founder can plausibly do by accident: pasting a token that has since
+    been reset, creating the application but never inviting it to the server, or pasting the token of
+    an application whose bot user was never created. Each of those must cost exactly one line in the
+    log and nothing else - the community still gets the rooms the working identities can cover.
+
+    `make_client` is injected rather than imported so this can be tested without Discord. The real
+    one hands back a discord.Client; the tests hand back a fake that can be made to fail on purpose,
+    which is the only way any of this gets exercised before it is in front of real people.
+    """
+    import asyncio
+
+    live: list[Speaker] = []
+    for s in pool.speakers:
+        client = make_client()
+        start = asyncio.ensure_future(client.start(s.token))
+        ready = asyncio.ensure_future(client.wait_until_ready())
+        done, _pending = await asyncio.wait({start, ready}, timeout=ready_timeout,
+                                            return_when=asyncio.FIRST_COMPLETED)
+        # `start` finishing FIRST means it died - a successful login never returns; it runs for the
+        # life of the process. So "ready won the race" is the only good outcome.
+        if ready in done and not start.done():
+            s.client = client
+            live.append(s)
+            log.info("speakers: extra voice #%d is online", s.index)
+            if on_ready is not None:
+                try:
+                    await on_ready(s)
+                except Exception:  # noqa: BLE001 - branding an extra is cosmetic
+                    log.warning("speakers: could not finish setting up extra voice #%d",
+                                s.index, exc_info=True)
+            continue
+
+        why = "timed out"
+        if start.done():
+            exc = start.exception()
+            why = f"{type(exc).__name__}: {exc}" if exc else "the login ended immediately"
+        log.warning("speakers: extra voice #%d did not come online (%s). Check the token is current "
+                    "and that this application has been INVITED to the server. Carrying on without "
+                    "it - the rooms it would have covered will wait their turn as before.",
+                    s.index, why)
+        for task in (start, ready):
+            task.cancel()
+        try:
+            await client.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    pool.speakers = live
+    return live
+
+
 def describe(pool: "SpeakerPool") -> str:
     """One honest line for the startup log, so the founder can see at a glance how many rooms
     can actually have sound - rather than discovering the limit when a room stays quiet."""

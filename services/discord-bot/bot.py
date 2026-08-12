@@ -27,8 +27,10 @@ import editbudget
 import media
 import server_setup
 import showcase
+import speakers as speakers_mod
 import store
 import voice_player
+import voices as voices_mod
 from booth import booth
 from api_client import EngineError, PromptDJClient, Song
 from botconfig import load_config
@@ -67,6 +69,7 @@ class PromptDJBot(discord.Client):
 
     async def setup_hook(self) -> None:
         await self.refresh_catalog()
+        await self.bring_extra_voices_online()
         try:
             if CFG.guild_id:
                 guild = discord.Object(id=CFG.guild_id)
@@ -142,7 +145,58 @@ class PromptDJBot(discord.Client):
             except Exception as e:  # noqa: BLE001 — one guild refusing must not affect the others
                 log.warning("couldn't sync commands to guild %s: %s", guild.id, e)
 
-    async def _clear_stale_voice(self) -> None:
+    async def bring_extra_voices_online(self) -> None:
+        """Log in the extra Grinder identities, so more than one room can have sound at once.
+
+        A bot application holds ONE voice connection per SERVER, so a single Grinder means one room
+        with music and every other one silent - and worse, it WALKS OUT of a busy room to serve one
+        person next door. Extra identities are free and are the only fix; see voices.py.
+
+        ZERO CONFIGURED IS THE DEFAULT AND CHANGES NOTHING. With no GRINDER_ROOM_TOKENS the box holds
+        exactly one voice - this bot - and every decision the booth makes is the one it made before
+        any of this existed. Nothing changes for the founder until they choose to paste a token.
+
+        Runs in `setup_hook` rather than `on_ready` deliberately: on_ready fires again on every
+        reconnect, and logging the extras in again each time would burn Discord's identify budget for
+        no gain."""
+        pool = speakers_mod.SpeakerPool(CFG.room_tokens)
+        if len(pool):
+            await speakers_mod.bring_online(
+                pool,
+                lambda: discord.Client(intents=discord.Intents.default()),
+                on_ready=self._set_up_extra_voice)
+        booth.voices = voices_mod.VoiceBox(pool, main_client=self)
+        # The single most useful line the founder can read at startup. Discovering this limit from a
+        # room that stayed quiet all night is how the whole feature came to be needed.
+        log.info(voices_mod.describe(booth.voices))
+
+    async def _set_up_extra_voice(self, speaker) -> None:
+        """Give a freshly logged-in extra the same face as the main Grinder, and clear any voice
+        session it left behind.
+
+        THE FOUNDER'S CALL: an identical twin. Somebody in the second room just sees Grinder, and
+        never learns there are two - so the picture is applied here, from code, rather than being one
+        more thing to do by hand in the Developer Portal.
+
+        Each identity keeps its OWN record of what it last uploaded, because Discord's avatar rate
+        limit is strict and counted per bot."""
+        await self._clear_stale_voice(speaker.client)
+        user = getattr(speaker.client, "user", None)
+        if user is None:
+            return
+        slot = f"avatar-{user.id}"
+        if getattr(user, "avatar", None) is not None and not brand.slot_needs_upload(slot):
+            log.info("brand: extra voice #%d already wears the disc", speaker.index)
+            return
+        data = brand.image_bytes(brand.ICON)
+        if data is None:
+            return
+        await user.edit(avatar=data)
+        brand.mark_slot_applied(slot)
+        log.info("brand: extra voice #%d avatar uploaded from %s (%s)",
+                 speaker.index, brand.ICON.name, brand.icon_fingerprint())
+
+    async def _clear_stale_voice(self, client=None) -> None:
         """Tell Discord we are not in any voice channel, before we try to join one.
 
         THE BUG THIS FIXES, observed 2026-08-11: kill the bot while it is connected to voice and
@@ -153,8 +207,12 @@ class PromptDJBot(discord.Client):
 
         A bot that has just logged in is, by definition, not in a call. Saying so explicitly costs
         one gateway message and clears any leftover. Safe to run always: if there is nothing stale,
-        it is a no-op."""
-        for guild in self.guilds:
+        it is a no-op.
+
+        `client` lets an EXTRA identity be cleared too. Each one holds its own voice session, so each
+        one can leave its own zombie behind - and a stale session on the second Grinder presents as
+        "the second room never plays", which is indistinguishable from the feature not working."""
+        for guild in (client or self).guilds:
             try:
                 await guild.change_voice_state(channel=None)
             except Exception:  # noqa: BLE001 - never let housekeeping stop the bot starting
