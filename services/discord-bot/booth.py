@@ -211,7 +211,7 @@ class Booth:
         if taken is None:
             return False
         deck.go_quiet()
-        deck.release_voice()
+        await deck.release_voice()
         await self.start(taken)
         return True
 
@@ -493,15 +493,9 @@ class Booth:
             return False
         if deck.empty_since is None and deck.voice is None:
             return False                     # nothing to let go of
-        vc = deck.voice_client(room) if room is not None else None
         deck.go_quiet()
         deck.empty_since = None
-        deck.release_voice()
-        if vc is not None:
-            try:
-                await vc.disconnect(force=True)
-            except Exception:  # noqa: BLE001
-                log.warning("booth: could not leave room %s cleanly", room_id, exc_info=True)
+        await deck.release_voice()           # gives the claim back AND leaves the channel
         log.info("booth: let go of room %s - nobody came back", room_id)
         return True
 
@@ -567,23 +561,19 @@ class Booth:
         an audience of nobody. Each deck's pause flag is cleared too, so the next person to walk in
         gets music rather than inheriting somebody's earlier /stop."""
         self.queue.clear()
-        seen = []
         for deck in self.decks.values():
             deck.go_quiet()
             deck.empty_since = None
-            room = self.room_by_id(guild, deck.room_id)
-            vc = deck.voice_client(room) if room is not None else None
-            if vc is not None and vc not in seen:
-                seen.append(vc)
-            deck.release_voice()
+            await deck.release_voice()       # each identity gives back its claim AND leaves
         self.voices.release_all()
+        # Belt and braces for an identity that was connected without ever holding a claim - a bot
+        # left over from a previous run, say. It costs one call and it is the difference between a
+        # clean server and a Grinder sitting silently in an empty room.
         guild_vc = getattr(guild, "voice_client", None)
-        if guild_vc is not None and guild_vc not in seen:
-            seen.append(guild_vc)
-        for vc in seen:
+        if guild_vc is not None:
             log.info("booth: room empty, disconnecting")
             try:
-                await vc.disconnect(force=True)
+                await guild_vc.disconnect(force=True)
             except Exception:  # noqa: BLE001
                 log.warning("booth: could not disconnect cleanly", exc_info=True)
 

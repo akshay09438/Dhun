@@ -92,6 +92,17 @@ class Voice:
             log.warning("voices: %s could not look up room %s", self.label, room_id, exc_info=True)
             return None
 
+    def connections(self) -> list:
+        """Every voice connection THIS identity is currently holding, wherever it is.
+
+        Needed because a claim and a connection are two different lifetimes, and letting them drift
+        apart is how two Grinders ended up in one channel: the claim came back, the identity stayed
+        sitting in the room, and the next identity to legitimately claim that room got walked in on
+        top of it. Asked of the client rather than of a room, precisely because the whole problem is
+        that the identity may be somewhere we are not looking."""
+        client = self.client if self.is_main else getattr(self.speaker, "client", None)
+        return list(getattr(client, "voice_clients", None) or [])
+
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<Voice {self.label} room={self.room_id}>"
 

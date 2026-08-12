@@ -90,13 +90,19 @@ class FakeMember:
 
 
 class SpeakerClient:
-    """An extra identity's login: it sees its OWN copies of the channels."""
+    """An extra identity's login: it sees its OWN copies of the channels, and - like the real
+    discord.Client - it knows every voice connection it currently holds."""
 
     def __init__(self, channels):
         self._by_id = {c.id: c for c in channels}
+        self.voice_clients = []
 
     def get_channel(self, cid):
         return self._by_id.get(cid)
+
+
+class MainClient(SpeakerClient):
+    """The main bot's own login. Same shape; kept separate for readability in the tests."""
 
 
 class Server:
@@ -120,7 +126,9 @@ class Server:
         pool = speakers.SpeakerPool([f"tok-{i}" for i in range(extras)])
         for s in pool.speakers:
             s.client = SpeakerClient(spk_channels)
-        self.booth = booth_mod.Booth(voicebox=voices_mod.VoiceBox(pool))
+        self.main_client = MainClient([self.a, self.b])
+        self.booth = booth_mod.Booth(
+            voicebox=voices_mod.VoiceBox(pool, main_client=self.main_client))
 
     def sit(self, uid, room):
         """Put somebody in a room - in the MAIN client's copy, which is what Discord hands us."""
@@ -370,6 +378,87 @@ def test_skipping_in_a_silent_room_says_so_rather_than_moving_the_other(plays):
     assert s.main_guild.voice_client.stops == 0, "room A's track must not have been skipped"
 
 
+# --- TWO GRINDERS IN ONE CHANNEL (founder-reported, 2026-08-12) ---------------------------------------
+# What they saw: Hollywood_Blends listing "Grinder" TWICE. speakers.py says in its own words that
+# this must never happen - "two speakers in the same room would play two different grinds over each
+# other, which is worse than silence".
+#
+# The cause is that a voice's CLAIM and a voice's CONNECTION were two different lifetimes. Letting go
+# of a room only gave the claim back; the identity stayed sitting in the channel. Later, another
+# identity could quite legally claim that room, and `voice_player.play_in` calls `vc.move_to(...)` -
+# which walks it in on top of the one still sitting there.
+
+class _LiveConnection:
+    """Stands in for a real voice connection, which knows its channel and can be disconnected."""
+
+    def __init__(self, room_id):
+        self.channel = type("Ch", (), {"id": room_id})()
+        self.disconnected = False
+
+    def is_playing(self):
+        return not self.disconnected
+
+    def stop(self):
+        pass
+
+    async def disconnect(self, force=False):
+        self.disconnected = True
+
+
+def test_letting_go_of_a_room_also_leaves_the_channel(plays):
+    """A claim given back while the identity stays sitting in the room is how two Grinders end up in
+    one channel. Releasing must mean LEAVING."""
+    s = Server(extras=1)
+    ana = s.sit(1, s.a)
+    asyncio.run(s.booth.on_grind_finished(Ctx(1, ana)))
+
+    live = _LiveConnection(A_ID)
+    s.main_client.voice_clients = [live]                 # the main Grinder is sitting in room A
+
+    asyncio.run(s.booth.deck(s.a).release_voice())
+
+    assert s.booth.voices.holder_of(A_ID) is None, "the claim is given back"
+    assert live.disconnected is True, "and the identity actually leaves the channel"
+
+
+def test_a_freed_identity_is_never_walked_in_on_top_of_another(plays):
+    """THE FOUNDER'S SYMPTOM, end to end. Room A's identity is let go while room B is being held by
+    the other one. Nothing may end up with two Grinders in it."""
+    s = Server(extras=1)
+    ana, ben = s.sit(1, s.a), s.sit(2, s.b)
+    asyncio.run(s.booth.on_grind_finished(Ctx(1, ana)))   # main takes room A
+    asyncio.run(s.booth.on_grind_finished(Ctx(2, ben)))   # the extra takes room B
+
+    stale = _LiveConnection(A_ID)
+    s.main_client.voice_clients = [stale]
+
+    s.a.members.remove(ana)                              # room A empties
+    s.booth.deck(s.a).empty_since = 1.0
+    asyncio.run(s.booth.release_if_still_empty(s.main_guild, A_ID))
+
+    assert stale.disconnected is True, \
+        "the main Grinder must leave room A, or it can be moved into room B on top of the extra"
+    assert s.booth.voices.holder_of(A_ID) is None
+    assert s.booth.voices.holder_of(B_ID) is not None, "room B is untouched"
+
+
+def test_when_every_room_empties_every_identity_leaves(plays):
+    """Not one of them, and not only the ones whose connection happens to be where we expect."""
+    s = Server(extras=1)
+    ana, ben = s.sit(1, s.a), s.sit(2, s.b)
+    asyncio.run(s.booth.on_grind_finished(Ctx(1, ana)))
+    asyncio.run(s.booth.on_grind_finished(Ctx(2, ben)))
+
+    main_conn, extra_conn = _LiveConnection(A_ID), _LiveConnection(B_ID)
+    s.main_client.voice_clients = [main_conn]
+    s.booth.voices.all_voices[1].speaker.client.voice_clients = [extra_conn]
+
+    asyncio.run(s.booth._room_empty(s.main_guild))
+
+    assert main_conn.disconnected is True
+    assert extra_conn.disconnected is True, "an extra left sitting in an empty room is the same bug"
+
+
 # --- an identity that cannot do its job ------------------------------------------------------------
 def test_an_identity_that_cannot_see_the_room_does_not_swallow_it(plays):
     """BY FAR the likeliest real-world misconfiguration: the second bot was invited to the server
@@ -426,6 +515,10 @@ def test_a_room_still_empty_after_the_grace_period_lets_its_voice_go(plays):
     ana = s.sit(1, s.a)
     asyncio.run(s.booth.on_grind_finished(Ctx(1, ana)))
     deck_a = s.booth.deck(s.a)
+    # The connection lives on the IDENTITY's client, which is how discord.py holds it and how the
+    # booth now finds it. Reading it off the guild was what let a released identity keep its seat.
+    conn = _LiveConnection(A_ID)
+    s.main_client.voice_clients = [conn]
     s.a.members.remove(ana)                           # really empty now
     deck_a.empty_since = 1.0
 
@@ -434,7 +527,7 @@ def test_a_room_still_empty_after_the_grace_period_lets_its_voice_go(plays):
     assert released is True
     assert s.booth.voices.holder_of(A_ID) is None, "another room can have it now"
     assert deck_a.now_playing is None
-    assert s.main_guild.voice_client.disconnected is True, "no identity sits connected and silent"
+    assert conn.disconnected is True, "no identity sits connected and silent"
 
 
 def test_the_freed_voice_can_immediately_serve_another_room(plays):

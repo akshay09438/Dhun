@@ -134,9 +134,25 @@ class Deck:
         self.voice = voice
         return channel
 
-    def release_voice(self) -> None:
-        """Give this room's identity back so another room can use it."""
-        if self.voice is not None or self.booth.voices.holder_of(self.room_id) is not None:
+    async def release_voice(self) -> None:
+        """Give this room's identity back AND make it leave the channel.
+
+        FOUNDER-REPORTED, 2026-08-12: Hollywood_Blends listed "Grinder" twice. A CLAIM AND A
+        CONNECTION ARE TWO DIFFERENT LIFETIMES, and this is where they drifted apart - letting go of
+        a room used to hand back only the claim, leaving the identity still sitting in the channel.
+        Another identity could then quite legally claim that room, and `voice_player.play_in` calls
+        `vc.move_to(...)`, which walks it straight in on top of the one already there. Two Grinders,
+        one room, playing over each other - which speakers.py names as worse than silence.
+
+        Leaving is best-effort: a room that will not let go must not stop the claim being freed, or
+        one failed disconnect would cost that room its sound for the rest of the night."""
+        voice = self.voice or self.booth.voices.holder_of(self.room_id)
+        if voice is not None:
+            for vc in voice.connections():
+                try:
+                    await vc.disconnect(force=True)
+                except Exception:  # noqa: BLE001
+                    log.warning("booth: %s could not leave cleanly", voice.label, exc_info=True)
             self.booth.voices.release(self.room_id)
         self.voice = None
 
