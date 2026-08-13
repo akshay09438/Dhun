@@ -240,12 +240,23 @@ class Inspector(discord.Client):
         print(f"    server owner            : {owner or 'unknown'} "
               f"(only the owner can delete or hand over the server)")
 
+        # Discord gates a set of permissions behind the server's MFA level, and `manage_roles` -
+        # the one the Door needs to hand out @Member - is on that list. So switching this on while
+        # the OWNER's account has no 2FA does not merely fail to help: it stops the bot granting
+        # roles. Approvals would record as approved and the person would still see nothing, which
+        # is the exact silent failure this project has already chased once. Say so here rather than
+        # leaving it in somebody's memory.
         mfa = getattr(g, "mfa_level", None)
         if mfa is discord.MFALevel.require_2fa:
             print("    2FA for admin actions   : REQUIRED  OK")
+            print("       reminder: this gates Manage Roles. If the owner's 2FA is ever removed,")
+            print("       the Door stops granting @Member - silently. Re-run this check first.")
         elif mfa is discord.MFALevel.disabled:
-            print("    2FA for admin actions   : NOT required  <- turn this on "
-                  "(Server Settings > Safety Setup). You must have 2FA on your own account first.")
+            print("    2FA for admin actions   : not required")
+            print("       Deliberate for now (2026-08-13): worth little at this size, and it is a")
+            print("       TRAP if switched on carelessly - it gates Manage Roles, so with no 2FA")
+            print("       on the OWNER's account the Door stops granting @Member without saying")
+            print("       so. If you ever turn it on: owner 2FA first, then re-run this check.")
         else:
             print(f"    2FA for admin actions   : couldn't read ({mfa})")
 
