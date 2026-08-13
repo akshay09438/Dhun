@@ -387,3 +387,23 @@ def approved_count() -> int:
     with _lock:
         return connect().execute(
             "SELECT COUNT(*) FROM applications WHERE state='approved'").fetchone()[0]
+
+
+def add_answer(user_id: int, key: str, value: str) -> bool:
+    """Merge one extra answer into an existing application (the email, added after the form).
+
+    Kept in the same `answers` JSON rather than a new column so everything the applicant told us
+    lives in one place and `pending_applications(search)` searches it for free. False if there is
+    no application to add to."""
+    import json
+    with _lock:
+        c = connect()
+        row = c.execute("SELECT answers FROM applications WHERE user_id=?", (user_id,)).fetchone()
+        if row is None:
+            return False
+        answers = json.loads(row["answers"])
+        answers[key] = value
+        c.execute("UPDATE applications SET answers=? WHERE user_id=?",
+                  (json.dumps(answers), user_id))
+        c.commit()
+        return True

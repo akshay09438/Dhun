@@ -44,6 +44,13 @@ QUESTIONS: tuple[tuple[str, str, int], ...] = (
     ("What you expect", "What are you hoping to get out of it?", 400),
 )
 
+# EMAIL IS A SECOND STEP, NOT A SIXTH QUESTION. Discord allows exactly five text inputs in one
+# modal and the founder's five fill it, so asking for an email inside the same form would mean
+# dropping one of their questions. Instead the confirmation offers a button that opens a one-field
+# modal. Optional on purpose: a required email at the end of a form loses applicants, and the DM
+# already reaches anyone who has not shut their DMs.
+EMAIL_LABEL = "Email"
+
 # The first fifty seats. Changeable in one place; raising it is painless, lowering it means removing
 # people, so it starts where the validation bar is (~50 real casual creators).
 MEMBER_CAP = 50
@@ -97,8 +104,75 @@ class ApplicationModal(discord.ui.Modal, title="Ask to join Grinder"):
         await interaction.response.send_message(
             "Got it. Your application is in.\n\n"
             "This is a small room on purpose, so it is not instant - you will hear back here or by "
-            "DM. Nothing else to do for now.", ephemeral=True)
+            "DM.\n\n"
+            "If your DMs are shut you might miss it, so you can leave an email as a backup. "
+            "Optional, and only used to tell you the outcome.",
+            view=EmailPromptView(), ephemeral=True)
         await post_for_review(interaction.client, user, answers)
+
+
+def looks_like_an_email(value: str) -> bool:
+    """Deliberately loose. The point is to catch a typo like "akshay at gmail", not to police what
+    is a valid address - every strict email regex on the internet rejects somebody's real one, and
+    a rejected applicant is a worse outcome than an address that bounces."""
+    v = (value or "").strip()
+    if " " in v or v.count("@") != 1:
+        return False
+    local, _, domain = v.partition("@")
+    return bool(local) and "." in domain and not domain.startswith(".") \
+        and not domain.endswith(".")
+
+
+class EmailModal(discord.ui.Modal, title="Your email (optional)"):
+    email = discord.ui.TextInput(label=EMAIL_LABEL, placeholder="you@example.com",
+                                 max_length=200, required=False)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        value = (self.email.value or "").strip()
+        if value and not looks_like_an_email(value):
+            await interaction.response.send_message(
+                f"`{value}` does not look like an email address. Press the button and try again.",
+                ephemeral=True)
+            return
+        store.add_answer(interaction.user.id, EMAIL_LABEL, value)
+        await interaction.response.send_message(
+            "Saved." if value else "No email saved, that is fine.", ephemeral=True)
+        # The review card was posted before this, so bring it up to date rather than leaving the
+        # founder looking at an application that says nothing about how to reach them.
+        await _refresh_review_card(interaction.client, interaction.user.id)
+
+
+class EmailPromptView(discord.ui.View):
+    """Shown on the confirmation. Short-lived on purpose: it belongs to one ephemeral message the
+    applicant is looking at right now, so it does not need to survive a restart the way the lobby
+    button does."""
+
+    def __init__(self) -> None:
+        super().__init__(timeout=900)
+
+    @discord.ui.button(label="Add your email", emoji="✉️", style=discord.ButtonStyle.secondary)
+    async def add_email(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.send_modal(EmailModal())
+
+
+async def _refresh_review_card(client, user_id: int) -> None:
+    """Re-render an application's card in place. Never fatal: the answers are stored either way,
+    and `/applications` reads the store, not the card."""
+    row = store.application(user_id)
+    if row is None or not row["message_id"]:
+        return
+    for guild in getattr(client, "guilds", []):
+        channel = _review_channel(guild)
+        if channel is None:
+            continue
+        try:
+            msg = await channel.fetch_message(row["message_id"])
+            await msg.edit(embed=application_embed(
+                user_name=row["user_name"] or str(user_id), user_id=user_id,
+                answers=json.loads(row["answers"]), taken=store.approved_count()))
+            return
+        except (discord.HTTPException, discord.NotFound):
+            continue
 
 
 class DoorView(discord.ui.View):
@@ -135,6 +209,11 @@ def application_embed(*, user_name: str, user_id: int, answers: dict,
     for label, _, _ in QUESTIONS:
         value = (answers.get(label) or "").strip()
         e.add_field(name=label, value=value[:1024] if value else "(left blank)", inline=False)
+    email = (answers.get(EMAIL_LABEL) or "").strip()
+    if email:
+        # Only when they gave one. A permanent "Email: (none)" row on every card is noise, and the
+        # DM is the primary route anyway - this is the backup for somebody with DMs shut.
+        e.add_field(name=EMAIL_LABEL, value=email[:1024], inline=False)
     if account_created is not None:
         e.add_field(name="Discord account created", value=account_created.strftime("%d %b %Y"),
                     inline=True)

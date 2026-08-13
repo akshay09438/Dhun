@@ -311,3 +311,63 @@ def test_the_grind_command_checks_membership_before_anything_else():
     assert "door.blocked_reason" in body, "/grind does not check membership at all"
     assert body.index("door.blocked_reason") < body.index("_grinding_allowed_here"), \
         "the membership check must run BEFORE the where-am-I check"
+
+
+# --- the email, added as a second step -------------------------------------------------------
+# Discord allows exactly five text inputs in one modal and the founder's five questions fill it,
+# so email is a follow-up button rather than a sixth box - none of their questions get dropped.
+def test_email_is_a_second_step_so_none_of_the_five_questions_are_lost():
+    assert len(door.QUESTIONS) == 5
+    assert door.EMAIL_LABEL not in [label for label, _, _ in door.QUESTIONS]
+
+
+def test_an_email_can_be_added_after_the_form_and_shows_on_the_card():
+    _apply(1, "Akshay")
+    assert store.add_answer(1, door.EMAIL_LABEL, "akshay@example.com") is True
+    answers = json.loads(store.application(1)["answers"])
+    assert answers[door.EMAIL_LABEL] == "akshay@example.com"
+    e = door.application_embed(user_name="Akshay", user_id=1, answers=answers, taken=0)
+    assert any(f.name == door.EMAIL_LABEL and "akshay@example.com" in f.value for f in e.fields)
+
+
+def test_adding_an_email_keeps_every_original_answer():
+    """A merge, not a replace. Losing the five answers to save an email would be a bad trade."""
+    _apply(1, "Akshay")
+    store.add_answer(1, door.EMAIL_LABEL, "a@b.com")
+    answers = json.loads(store.application(1)["answers"])
+    for label, _, _ in door.QUESTIONS:
+        assert label in answers
+
+
+def test_a_card_with_no_email_does_not_show_an_empty_email_row():
+    e = door.application_embed(user_name="A", user_id=1, answers=ANSWERS, taken=0)
+    assert not any(f.name == door.EMAIL_LABEL for f in e.fields)
+
+
+def test_the_email_is_searchable_like_every_other_answer():
+    _apply(1, "Akshay")
+    store.add_answer(1, door.EMAIL_LABEL, "someone@gmail.com")
+    assert len(store.pending_applications("gmail")) == 1
+
+
+@pytest.mark.parametrize("good", [
+    "a@b.co", "akshay.09@gmail.com", "first+tag@sub.domain.org", "x@y.io",
+])
+def test_real_looking_addresses_are_accepted(good):
+    assert door.looks_like_an_email(good) is True
+
+
+@pytest.mark.parametrize("bad", [
+    "akshay at gmail", "no-at-sign.com", "two@@at.com", "trailing@dot.", "@nolocal.com",
+    "spaces in@email.com", "nodot@domain", "",
+])
+def test_typos_are_caught_before_they_are_stored(bad):
+    """Loose on purpose - the job is catching "akshay at gmail", not policing what a valid address
+    is. Every strict email regex rejects somebody's real address, and a rejected applicant is a
+    worse outcome than one bounced email."""
+    assert door.looks_like_an_email(bad) is False
+
+
+def test_adding_an_email_to_nothing_does_not_invent_an_application():
+    assert store.add_answer(999, door.EMAIL_LABEL, "a@b.com") is False
+    assert store.application(999) is None
