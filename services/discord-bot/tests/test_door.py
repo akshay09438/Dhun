@@ -521,3 +521,68 @@ def test_a_channel_is_left_open_rather_than_locked_with_nobody_able_to_see_it():
     body = src[src.index("for c in to_close:"):src.index("# ---- 5.")]
     assert body.count("continue") >= 2, \
         "a failed grant must skip the channel, not fall through to closing it"
+
+
+# --- the card actually reaching the founder ---------------------------------------------------
+class _PostSpy:
+    def __init__(self, cid):
+        self.id = cid
+        self.sent = []
+
+    async def send(self, **kw):
+        self.sent.append(kw)
+        return type("M", (), {"id": 555})()
+
+
+class _GuildStub:
+    def __init__(self, channel):
+        self._channel = channel
+
+    def get_channel(self, cid):
+        return self._channel if self._channel and cid == self._channel.id else None
+
+    def get_member(self, _uid):
+        """Always None - exactly what the real bot does. It runs on Intents.default(), so it keeps
+        NO member cache and this returns None for everybody, including people standing in the
+        server. Any code that decides something from it is already broken."""
+        return None
+
+
+class _InteractionStub:
+    def __init__(self, guild, user_id=7, name="Akshay"):
+        self.guild = guild
+        self.user = type("U", (), {"id": user_id, "display_name": name, "created_at": None})()
+        self.client = type("C", (), {"guilds": [guild]})()
+
+
+def test_the_application_card_reaches_the_review_channel(monkeypatch):
+    """THE BUG THE FOUNDER FOUND ON THEIR FIRST REAL TEST, 2026-08-13.
+
+    The form worked and the application was stored, but no card ever appeared. `post_for_review`
+    located the server by asking each guild "is this user a member of yours?" - which needs a
+    member cache the bot does not keep, so it answered None for everybody, no guild was found, and
+    every application was silently filed and never shown.
+
+    `_GuildStub.get_member` returns None deliberately: this test only passes if the code takes the
+    guild from the INTERACTION rather than from a member lookup."""
+    chan = _PostSpy(999)
+    monkeypatch.setattr(door.CFG, "applications_channel_id", 999, raising=False)
+    guild = _GuildStub(chan)
+    _apply(7, "Akshay")
+
+    asyncio.run(door.post_for_review(_InteractionStub(guild), ANSWERS))
+
+    assert len(chan.sent) == 1, "the application never reached the review channel"
+    embed = chan.sent[0]["embed"]
+    blob = " ".join(f.name + " " + f.value for f in embed.fields)
+    assert "akshay@example.com" in blob
+    assert store.application(7)["message_id"] == 555, "the card was not linked to the application"
+
+
+def test_nothing_is_posted_when_no_review_channel_is_configured(monkeypatch):
+    """It must stay silent rather than crash - the application is stored either way, and
+    /applications still finds it."""
+    monkeypatch.setattr(door.CFG, "applications_channel_id", None, raising=False)
+    _apply(8, "Sam")
+    asyncio.run(door.post_for_review(_InteractionStub(_GuildStub(None), user_id=8), ANSWERS))
+    assert store.application(8) is not None

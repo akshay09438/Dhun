@@ -125,7 +125,7 @@ class ApplicationModal(discord.ui.Modal, title="Ask to join Grinder"):
                        "rather than adding another.")
 
         await interaction.response.send_message(waiting_message() + warning, ephemeral=True)
-        await post_for_review(interaction.client, user, answers)
+        await post_for_review(interaction, answers)
 
 
 def looks_like_an_email(value: str) -> bool:
@@ -269,9 +269,17 @@ async def _grant_member(guild, user_id: int) -> str:
     role = discord.utils.get(guild.roles, name=MEMBER_ROLE)
     if role is None:
         return _ROLE_MISSING
+    # fetch, not get: `get_member` reads a cache this bot does not keep (Intents.default()), so it
+    # returns None for everybody and an approval would report "not in the server any more" about
+    # somebody standing right there. Same root cause as the review card never posting.
     member = guild.get_member(user_id)
     if member is None:
-        return "They are not in the server any more, so there was no one to give the role to."
+        try:
+            member = await guild.fetch_member(user_id)
+        except discord.NotFound:
+            return "They are not in the server any more, so there was no one to give the role to."
+        except discord.HTTPException as e:
+            return f"Could not look them up: {e}"
     try:
         await member.add_roles(role, reason="Application approved")
     except discord.Forbidden:
@@ -315,15 +323,21 @@ def _review_channel(guild):
     return guild.get_channel(CFG.applications_channel_id)
 
 
-async def post_for_review(client, user, answers: dict) -> None:
+async def post_for_review(interaction, answers: dict) -> None:
     """Put an application in front of the founder. Silent if no review channel is configured -
-    the application is already stored, so it is never lost, and `/applications` still finds it."""
-    guild = None
-    for g in getattr(client, "guilds", []):
-        if g.get_member(user.id) is not None:
-            guild = g
-            break
-    channel = _review_channel(guild)
+    the application is already stored, so it is never lost, and `/applications` still finds it.
+
+    THE GUILD COMES FROM THE INTERACTION, not from a search. The first version asked every guild
+    "is this user one of your members?" and took the one that said yes - which needs a member
+    cache the bot does not have, because it runs on `Intents.default()`. So `get_member` returned
+    None for everybody, the search found no guild, and every application was silently stored and
+    never shown. Found on the founder's first real test, 2026-08-13: the form worked, the card
+    never appeared.
+
+    An interaction already carries the server it happened in. Asking it is both simpler and free
+    of any dependency on what happens to be cached."""
+    user = interaction.user
+    channel = _review_channel(getattr(interaction, "guild", None))
     if channel is None:
         log.info("no applications channel configured; %s's application is stored only", user.id)
         return
