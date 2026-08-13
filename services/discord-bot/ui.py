@@ -206,11 +206,9 @@ def booth_live_embed(*, listeners: int, grinds_this_session: int,
     return discord.Embed(title="🔴  SOMEONE IS LISTENING", description=body, color=ACCENT)
 
 
-def booth_quiet_embed() -> discord.Embed:
-    return discord.Embed(
-        title="⚫  Nobody is listening right now.",
-        description="Somebody go start something.",
-        color=brand.DEEP)
+# `booth_quiet_embed` ("⚫ Nobody is listening right now. Somebody go start something.") was here
+# and is DELETED (founder decision 2026-08-13). A quiet room now shows nothing at all: the live
+# sign is taken down instead of being swapped for a card announcing that nothing is happening.
 
 
 # `arrival_line` was here and is DELETED, not disabled (founder decision 2026-08-13). Nothing

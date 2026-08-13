@@ -261,11 +261,17 @@ class _SpyText:
 class _SpyMessage:
     """`edit` and `pin` are awaited by refresh_status, so they must be real coroutines."""
 
+    def __init__(self):
+        self.deleted = False
+
     async def edit(self, **kw):
         return None
 
     async def pin(self):
         return None
+
+    async def delete(self):
+        self.deleted = True
 
 
 def _room_arrivals(b, monkeypatch, *, joins):
@@ -418,3 +424,45 @@ def test_a_failed_playout_does_not_count_as_a_session_grind(b, monkeypatch):
     room = _Room()
     asyncio.run(b.deck(room).play_grind(_Ctx(1, room), room))
     assert b.grinds_this_session == 0
+
+
+# --- a quiet room shows nothing at all -------------------------------------------------------
+def test_a_quiet_room_posts_no_card(b, monkeypatch):
+    """Founder, 2026-08-13: the "Nobody is listening right now" card is gone.
+
+    It was meant to be ONE message edited in place, but the handle to it lives only in memory, so
+    every restart posted a fresh one and the channel collected a column of identical quiet cards.
+    An empty room is the normal state; a sign announcing it is nagging, not information."""
+    chan = _SpyText(4242)
+    room = _Room(members=[])
+    guild = _Guild(rooms=[room])
+    guild.text_channels = [chan]
+    monkeypatch.setattr(boothmod.CFG, "grinder_channel_id", chan.id, raising=False)
+
+    for _ in range(5):                       # several refreshes, as a restart loop would do
+        asyncio.run(b.refresh_status(guild))
+
+    assert chan.embeds == [], f"a quiet room posted {len(chan.embeds)} card(s)"
+    assert chan.texts == []
+
+
+def test_the_live_sign_is_TAKEN_DOWN_when_the_room_falls_quiet(b, monkeypatch):
+    """Not replaced with a quiet card - removed. Otherwise the last thing left on screen would be
+    a stale "SOMEONE IS LISTENING" for an empty room, which is worse than either."""
+    chan = _SpyText(4242)
+    room = _Room(members=[_Member("a"), _Member("b")])   # >= LIVE_THRESHOLD
+    guild = _Guild(rooms=[room])
+    guild.text_channels = [chan]
+    monkeypatch.setattr(boothmod.CFG, "grinder_channel_id", chan.id, raising=False)
+
+    asyncio.run(b.refresh_status(guild))
+    assert len(chan.embeds) == 1, "a room with listeners should still raise the live sign"
+    sign = b.status_message
+    assert sign is not None
+
+    room.members.clear()                                 # everybody leaves
+    asyncio.run(b.refresh_status(guild))
+
+    assert sign.deleted is True, "the live sign was left up over an empty room"
+    assert b.status_message is None, "the handle was kept, so the next live room would edit a ghost"
+    assert len(chan.embeds) == 1, "falling quiet posted something new"

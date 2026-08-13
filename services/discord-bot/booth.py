@@ -358,14 +358,22 @@ class Booth:
         if channel is None:
             return
         heard = self.total_listeners(guild)
-        if heard >= LIVE_THRESHOLD:
-            embed = ui.booth_live_embed(listeners=heard,
-                                        grinds_this_session=self.grinds_this_session,
-                                        last_up=self.last_up)
-        else:
-            embed = ui.booth_quiet_embed()
+        if heard < LIVE_THRESHOLD:
+            # QUIET MEANS NOTHING ON SCREEN (founder decision 2026-08-13). There used to be a
+            # "⚫ Nobody is listening right now. Somebody go start something." card here. It was
+            # meant to be ONE message the bot edited in place, but the handle to it lives only in
+            # memory (`self.status_message`), so every restart lost it and posted a fresh one - the
+            # founder's channel ended up holding a column of identical quiet cards. And a sign that
+            # announces an empty room is nagging, not information: an empty room is the normal
+            # state, and the room list already shows it.
             if heard == 0:
                 self.grinds_this_session = 0     # a new session starts when the room refills
+            await self._clear_status()
+            return
+
+        embed = ui.booth_live_embed(listeners=heard,
+                                    grinds_this_session=self.grinds_this_session,
+                                    last_up=self.last_up)
         try:
             if self.status_message is None:
                 self.status_message = await channel.send(embed=embed)
@@ -377,6 +385,21 @@ class Booth:
                 await self.status_message.edit(embed=embed)
         except discord.HTTPException:
             log.warning("booth: could not update the status message", exc_info=True)
+
+    async def _clear_status(self) -> None:
+        """Take the live sign down when the room falls quiet, rather than replacing it with a card
+        that says nothing is happening.
+
+        The handle is dropped even if the delete fails, so a message we can no longer control (an
+        old one from a previous run, one somebody deleted by hand) can never strand the sign - the
+        next live room posts a fresh one instead of editing into the void."""
+        msg, self.status_message = self.status_message, None
+        if msg is None:
+            return
+        try:
+            await msg.delete()
+        except discord.HTTPException:
+            log.debug("booth: could not remove the live sign", exc_info=True)
 
     async def on_voice_state_update(self, member, before, after) -> None:
         """Arrivals and departures. Also the only thing that makes the sign change."""
