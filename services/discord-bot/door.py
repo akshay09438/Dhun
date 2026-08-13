@@ -298,6 +298,47 @@ async def post_for_review(client, user, answers: dict) -> None:
         log.warning("could not post application for review", exc_info=True)
 
 
+def is_open() -> bool:
+    """Is the door actually in use on this server?
+
+    Keyed on the lobby channel being configured, so with no door set up NOTHING below changes and
+    the server behaves exactly as it did before this feature existed."""
+    return bool(getattr(CFG, "door_channel_id", None))
+
+
+def blocked_reason(interaction) -> str | None:
+    """None if this person may use the bot, otherwise the sentence to send back.
+
+    WHY THIS EXISTS, and it is not belt-and-braces. Until this, the gate was ONLY channel
+    permissions: an unapproved person could not see a grind channel, so they could not grind there.
+    Two ways that fails, both real:
+
+      * `_grinding_allowed_here` in bot.py allows grinding EVERYWHERE when no grind category is
+        configured - including the lobby, which every unapproved person can see by design;
+      * a channel created later, or one overwrite set wrongly, is open until somebody notices.
+
+    A permission mistake should cost visibility, not the whole gate. The founder's ask was that
+    approved people use the bot, so the bot itself checks.
+
+    Admins are never blocked - locking the owner out of their own bot to enforce their own rule
+    would be absurd, and they are the one who approves people."""
+    if not is_open():
+        return None                                  # the door is not in use; nothing changes
+    member = getattr(interaction, "user", None)
+    perms = getattr(member, "guild_permissions", None)
+    if perms is not None and (perms.manage_guild or perms.administrator):
+        return None
+    roles = getattr(member, "roles", None)
+    if roles is not None and any(getattr(r, "name", None) == MEMBER_ROLE for r in roles):
+        return None
+    row = store.application(getattr(member, "id", 0))
+    if row is not None and row["state"] == "pending":
+        return ("Your application is in. Grinder is invite only while it is small, so hold tight - "
+                "you will hear back.")
+    return ("Grinder is invite only right now. Head to the door and ask to join: "
+            f"<#{CFG.door_channel_id}>")
+
+
 def lobby_embed() -> discord.Embed:
     """The only thing a newcomer can see. Says what this is, that it is small on purpose, and what
     to press. No hype, and no promise about how fast a decision comes."""

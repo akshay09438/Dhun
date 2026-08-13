@@ -235,3 +235,79 @@ def test_the_lock_script_is_a_dry_run_unless_told_otherwise():
         encoding="utf-8")
     assert 'apply = "--apply" in sys.argv' in src
     assert 'input(' in src, "applying must require a typed confirmation"
+
+
+# --- the gate the founder actually asked for -------------------------------------------------
+# "Once I approve those users, they will only get to use the Discord bot."
+# Channel permissions alone cannot carry that: `_grinding_allowed_here` allows grinding EVERYWHERE
+# when no grind category is configured, and the lobby is a channel every unapproved person can see
+# by design. So the bot checks who you are, not only where you are.
+class _Perms:
+    def __init__(self, admin=False):
+        self.manage_guild = admin
+        self.administrator = admin
+
+
+class _Role:
+    def __init__(self, name):
+        self.name = name
+
+
+class _User:
+    def __init__(self, uid, roles=(), admin=False):
+        self.id = uid
+        self.roles = [_Role(r) for r in roles]
+        self.guild_permissions = _Perms(admin)
+
+
+class _Interaction:
+    def __init__(self, user):
+        self.user = user
+
+
+@pytest.fixture
+def _door_open(monkeypatch):
+    monkeypatch.setattr(door.CFG, "door_channel_id", 12345, raising=False)
+
+
+def test_with_no_door_configured_nothing_is_blocked(monkeypatch):
+    """The feature is dormant until the founder switches it on. A bot that started refusing people
+    the moment this shipped would be a change to the live server by accident."""
+    monkeypatch.setattr(door.CFG, "door_channel_id", None, raising=False)
+    assert door.blocked_reason(_Interaction(_User(1))) is None
+
+
+def test_a_stranger_cannot_use_the_bot_once_the_door_is_open(_door_open):
+    reason = door.blocked_reason(_Interaction(_User(1)))
+    assert reason is not None and "invite only" in reason
+    assert "<#12345>" in reason, "it should point them at the door"
+
+
+def test_somebody_waiting_is_told_they_are_waiting_not_told_to_apply_again(_door_open):
+    """A pending applicant reading "go and apply" would apply twice and think it was broken."""
+    _apply(1, "Akshay")
+    reason = door.blocked_reason(_Interaction(_User(1)))
+    assert reason is not None and "application is in" in reason
+
+
+def test_an_approved_member_can_use_the_bot(_door_open):
+    assert door.blocked_reason(_Interaction(_User(1, roles=[door.MEMBER_ROLE]))) is None
+
+
+def test_the_founder_is_never_locked_out_of_their_own_bot(_door_open):
+    """They have no @Member role - they are the one who hands it out. Enforcing their own rule
+    against them would be absurd, and would strand them the moment the door closed."""
+    assert door.blocked_reason(_Interaction(_User(1, admin=True))) is None
+
+
+def test_the_grind_command_checks_membership_before_anything_else():
+    """Read as source: /grind needs a gateway to run. The ORDER matters - the membership check has
+    to come before the where-am-I check, because the where-check allows everywhere when no grind
+    category is configured, which would let a stranger grind from the lobby."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "bot.py").read_text(encoding="utf-8")
+    body = src[src.index("async def grind_cmd"):]
+    body = body[:body.index("@bot.tree.command", 1)] if "@bot.tree.command" in body[1:] else body
+    assert "door.blocked_reason" in body, "/grind does not check membership at all"
+    assert body.index("door.blocked_reason") < body.index("_grinding_allowed_here"), \
+        "the membership check must run BEFORE the where-am-I check"

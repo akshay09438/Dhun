@@ -849,6 +849,13 @@ async def grind_cmd(interaction: discord.Interaction) -> None:
     """No options at all, on purpose. `/grind` used to offer `beat` and `vocal` as optional fields,
     and a first-timer reading two blanks cannot tell that leaving them empty is the right move -
     they look like something you have to fill in. Type it, press enter, the picker opens."""
+    # WHO, before WHERE. The door is the founder's rule that only approved people use the bot, and
+    # channel permissions alone cannot carry it: one wrongly-set overwrite, or simply no grind
+    # category configured, and an unapproved person can grind from the lobby.
+    blocked = door.blocked_reason(interaction)
+    if blocked is not None:
+        await interaction.response.send_message(blocked, ephemeral=True)
+        return
     where = _grinding_allowed_here(interaction)
     if where is not None:
         await interaction.response.send_message(where, ephemeral=True)
