@@ -436,3 +436,106 @@ def lobby_embed() -> discord.Embed:
             "There is nothing else to do here until then."),
         colour=discord.Colour(0xA824CC))
     return e
+
+
+# --------------------------------------------------------------------------------------
+# Vouch links: somebody the founder invites personally, who never sees the form.
+# --------------------------------------------------------------------------------------
+# Founder, 2026-08-13: "if I personally want to invite someone who I know, they don't have to fill
+# out the form to enter... whatever is the simplest way for my friend of mine to enter without
+# filling the form."
+#
+# For the FRIEND this is one click and nothing else - which is the whole point, and the reason a
+# link beat asking the founder for a friend's 18-digit user id.
+#
+# Discord cannot attach a role to an invite, so the bot has to work out WHICH link somebody used.
+# The trick is counting: remember every invite's use count, and when somebody joins, look for the
+# one that changed. A single-use invite does not come back with a higher count - it VANISHES once
+# spent, so a disappeared code counts as used too. Both cases are handled below; missing that
+# second one is the classic way this feature half-works.
+
+_invite_uses: dict[int, dict[str, int]] = {}   # guild id -> {code: uses}
+
+
+async def remember_invites(guild) -> None:
+    """Snapshot every invite's use count. Called at startup and after each join."""
+    try:
+        _invite_uses[guild.id] = {inv.code: (inv.uses or 0) for inv in await guild.invites()}
+    except discord.Forbidden:
+        log.warning("cannot read invites (needs Manage Server) - vouch links will not work")
+    except discord.HTTPException:
+        log.warning("could not refresh the invite list", exc_info=True)
+
+
+async def which_invite_was_used(guild) -> str | None:
+    """The code somebody just joined on, or None if it cannot be told apart.
+
+    None is a normal answer, not a failure: two people joining in the same instant, or a join
+    through a vanity URL, are genuinely ambiguous. The caller treats None as "not vouched", which
+    means the person lands in the lobby like anybody else - the safe direction to be wrong in."""
+    before = _invite_uses.get(guild.id, {})
+    try:
+        current = {inv.code: (inv.uses or 0) for inv in await guild.invites()}
+    except (discord.Forbidden, discord.HTTPException):
+        return None
+
+    grew = [c for c, n in current.items() if n > before.get(c, 0)]
+    # A single-use invite is DELETED the moment it is used, so it is absent rather than higher.
+    vanished = [c for c in before if c not in current]
+    _invite_uses[guild.id] = current
+
+    candidates = grew + vanished
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        log.info("two invites changed at once - cannot tell which was used: %s", candidates)
+    return None
+
+
+async def create_vouch_invite(channel, created_by: int) -> str | None:
+    """A single-use link that lets one person straight in, no form.
+
+    Single use on purpose: a vouch is for one named friend. A link that keeps working is a hole in
+    the door that widens every time it is forwarded."""
+    try:
+        inv = await channel.create_invite(max_age=604800, max_uses=1, unique=True,
+                                          reason=f"Vouch invite created by {created_by}")
+    except discord.HTTPException:
+        log.warning("could not create a vouch invite", exc_info=True)
+        return None
+    store.add_vouch(code=inv.code, created_by=created_by, when=_now())
+    _invite_uses.setdefault(channel.guild.id, {})[inv.code] = 0
+    return inv.url
+
+
+async def on_member_join(member) -> bool:
+    """Let a vouched arrival straight in. True if they were vouched and are now a member.
+
+    Everybody else is untouched and simply lands in the lobby, exactly as before."""
+    if member.bot or not is_open():
+        return False
+    guild = member.guild
+    code = await which_invite_was_used(guild)
+    if code is None or code not in store.open_vouch_codes():
+        return False
+    if not store.claim_vouch(code=code, used_by=member.id, when=_now()):
+        return False
+
+    role = discord.utils.get(guild.roles, name=MEMBER_ROLE)
+    if role is None:
+        log.warning("vouched arrival but no @%s role exists", MEMBER_ROLE)
+        return False
+    try:
+        await member.add_roles(role, reason="Invited personally - skipped the form")
+    except discord.HTTPException:
+        log.warning("could not let a vouched member in", exc_info=True)
+        return False
+
+    log.info("vouched: %s came in on %s without the form", member, code)
+    try:
+        await member.send(
+            "You are in - somebody vouched for you, so you can skip the queue.\n\n"
+            "Head to the grind channel and type `/grind` to make your first mix.")
+    except (discord.Forbidden, discord.HTTPException):
+        pass    # DMs shut; they can see the server either way, which is the part that matters
+    return True

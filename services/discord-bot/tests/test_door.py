@@ -729,3 +729,135 @@ def test_a_card_the_store_does_not_know_is_answered_rather_than_left_hanging():
     inter = _Recorder(calls, guild=None, message_id=123456)   # no application for this message
     asyncio.run(door._decide(inter, type("B", (), {"custom_id": "door:approve"})(), approved=True))
     assert "send_message" in calls, "an unknown card was left with no response at all"
+
+
+# --- vouch links: a friend the founder invites personally ------------------------------------
+class _Invite:
+    def __init__(self, code, uses=0):
+        self.code, self.uses = code, uses
+
+
+class _VouchGuild:
+    def __init__(self, invites, gid=1):
+        self.id = gid
+        self._invites = invites
+        self.roles = [type("R", (), {"name": door.MEMBER_ROLE})()]
+        self.granted = []
+
+    async def invites(self):
+        return list(self._invites)
+
+
+class _Joiner:
+    def __init__(self, guild, uid=42, bot=False):
+        self.id, self.bot, self.guild = uid, bot, guild
+        self.roles = []
+
+    async def add_roles(self, role, **kw):
+        self.guild.granted.append(role.name)
+
+    async def send(self, *a, **k):
+        pass
+
+
+@pytest.fixture
+def _open_door(monkeypatch):
+    monkeypatch.setattr(door.CFG, "door_channel_id", 12345, raising=False)
+    door._invite_uses.clear()
+    yield
+    door._invite_uses.clear()
+
+
+def test_a_friend_on_a_vouch_link_is_let_straight_in_without_the_form(_open_door):
+    """Founder, 2026-08-13: "if I personally want to invite someone who I know, they don't have to
+    fill out the form to enter"."""
+    store.add_vouch(code="FRIEND1", created_by=1, when="t")
+    guild = _VouchGuild([_Invite("FRIEND1", 0), _Invite("PUBLIC", 5)])
+    door._invite_uses[guild.id] = {"FRIEND1": 0, "PUBLIC": 5}
+    # They use it: a single-use invite VANISHES rather than counting up.
+    guild._invites = [_Invite("PUBLIC", 5)]
+
+    assert asyncio.run(door.on_member_join(_Joiner(guild))) is True
+    assert guild.granted == [door.MEMBER_ROLE]
+    assert store.vouch("FRIEND1")["used_by"] == 42
+
+
+def test_a_vanished_single_use_invite_is_recognised_as_used(_open_door):
+    """THE case that is easy to miss. A single-use invite is DELETED the moment it is spent, so it
+    never shows a higher count - it simply disappears. Code that only looks for "uses went up"
+    would send every vouched friend to the lobby, and the feature would look like it did nothing."""
+    store.add_vouch(code="GONE", created_by=1, when="t")
+    guild = _VouchGuild([_Invite("GONE", 0)])
+    door._invite_uses[guild.id] = {"GONE": 0}
+    guild._invites = []                       # spent, therefore gone
+    assert asyncio.run(door.on_member_join(_Joiner(guild))) is True
+
+
+def test_a_multi_use_vouch_link_only_ever_lets_ONE_person_skip_the_form(_open_door):
+    """The founder can make a link with more uses. The second arrival on it must NOT walk in - a
+    vouch is for one named person, and a link that keeps working is a hole that widens every time
+    it is forwarded."""
+    store.add_vouch(code="SHARED", created_by=1, when="t")
+    guild = _VouchGuild([_Invite("SHARED", 0)])
+    door._invite_uses[guild.id] = {"SHARED": 0}
+
+    guild._invites = [_Invite("SHARED", 1)]
+    assert asyncio.run(door.on_member_join(_Joiner(guild, uid=1))) is True
+    guild._invites = [_Invite("SHARED", 2)]
+    assert asyncio.run(door.on_member_join(_Joiner(guild, uid=2))) is False, \
+        "a second person walked in on a spent vouch"
+    assert guild.granted == [door.MEMBER_ROLE]
+
+
+def test_somebody_on_an_ordinary_invite_still_meets_the_door(_open_door):
+    store.add_vouch(code="FRIEND1", created_by=1, when="t")
+    guild = _VouchGuild([_Invite("FRIEND1", 0), _Invite("PUBLIC", 5)])
+    door._invite_uses[guild.id] = {"FRIEND1": 0, "PUBLIC": 5}
+    guild._invites = [_Invite("FRIEND1", 0), _Invite("PUBLIC", 6)]   # the public one grew
+
+    assert asyncio.run(door.on_member_join(_Joiner(guild))) is False
+    assert guild.granted == [], "a stranger was let past the door"
+
+
+def test_two_people_joining_at_once_are_sent_to_the_lobby_rather_than_guessed_at(_open_door):
+    """Ambiguity resolves to NOT vouched. A stranger let in by mistake is the failure that
+    matters; a vouched friend who has to fill the form is an inconvenience."""
+    store.add_vouch(code="FRIEND1", created_by=1, when="t")
+    guild = _VouchGuild([_Invite("FRIEND1", 0), _Invite("PUBLIC", 5)])
+    door._invite_uses[guild.id] = {"FRIEND1": 0, "PUBLIC": 5}
+    guild._invites = [_Invite("FRIEND1", 1), _Invite("PUBLIC", 6)]   # both changed
+
+    assert asyncio.run(door.on_member_join(_Joiner(guild))) is False
+
+
+def test_nothing_happens_to_arrivals_when_the_door_is_not_switched_on(monkeypatch):
+    monkeypatch.setattr(door.CFG, "door_channel_id", None, raising=False)
+    guild = _VouchGuild([])
+    assert asyncio.run(door.on_member_join(_Joiner(guild))) is False
+
+
+def test_a_bot_joining_is_never_vouched(_open_door):
+    store.add_vouch(code="FRIEND1", created_by=1, when="t")
+    guild = _VouchGuild([])
+    door._invite_uses[guild.id] = {"FRIEND1": 0}
+    assert asyncio.run(door.on_member_join(_Joiner(guild, bot=True))) is False
+
+
+def test_a_vouch_code_can_only_be_claimed_once_even_in_a_race():
+    """The INNER guard, pinned directly.
+
+    `on_member_join` already refuses a code that is no longer in `open_vouch_codes()`, which is why
+    the multi-use test above passes with this guard removed - it never reaches it. But those are
+    two separate reads with a gap between them, and two people joining in the same instant both
+    pass the first check. The atomic `WHERE used_by IS NULL` is what actually decides it, so it
+    gets its own test rather than living behind a check that happens to shadow it."""
+    store.add_vouch(code="RACE", created_by=1, when="t")
+    first = store.claim_vouch(code="RACE", used_by=100, when="t1")
+    second = store.claim_vouch(code="RACE", used_by=200, when="t2")
+    assert first is True
+    assert second is False, "two people claimed the same vouch"
+    assert store.vouch("RACE")["used_by"] == 100, "the second claim overwrote the first"
+
+
+def test_claiming_a_code_that_was_never_vouched_does_nothing():
+    assert store.claim_vouch(code="NEVER-EXISTED", used_by=1, when="t") is False

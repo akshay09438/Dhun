@@ -71,6 +71,13 @@ CREATE TABLE IF NOT EXISTS applications (
 CREATE INDEX IF NOT EXISTS ix_grinds_user ON grinds(user_id);
 CREATE INDEX IF NOT EXISTS ix_reactions_grind ON reactions(grind_number);
 CREATE INDEX IF NOT EXISTS ix_sessions_open ON room_sessions(user_id, room_id, left_at);
+CREATE TABLE IF NOT EXISTS vouches (
+    code        TEXT PRIMARY KEY,        -- the invite code, e.g. "6j2evh8N"
+    created_by  INTEGER NOT NULL,        -- who vouched, so a bad invite can be traced back
+    created_at  TEXT    NOT NULL,
+    used_by     INTEGER,                 -- filled in when somebody joins on it
+    used_at     TEXT
+);
 CREATE INDEX IF NOT EXISTS ix_applications_state ON applications(state, applied_at);
 """
 
@@ -401,3 +408,39 @@ def application_by_message(message_id: int) -> sqlite3.Row | None:
     with _lock:
         return connect().execute("SELECT * FROM applications WHERE message_id=?",
                                  (message_id,)).fetchone()
+
+
+# --- vouch links: people the founder invites personally, who skip the form -------------------
+
+def add_vouch(*, code: str, created_by: int, when: str) -> None:
+    """Mark an invite code as one that lets somebody straight in."""
+    with _lock:
+        c = connect()
+        c.execute("INSERT OR REPLACE INTO vouches (code, created_by, created_at) VALUES (?,?,?)",
+                  (code, created_by, when))
+        c.commit()
+
+
+def vouch(code: str) -> sqlite3.Row | None:
+    with _lock:
+        return connect().execute("SELECT * FROM vouches WHERE code=?", (code,)).fetchone()
+
+
+def claim_vouch(*, code: str, used_by: int, when: str) -> bool:
+    """True if this join is the one that used the code. False if it was already used.
+
+    A single-use invite cannot be used twice anyway, but the founder can make a multi-use one, and
+    a claim that could fire repeatedly would keep letting strangers past the door on an old link."""
+    with _lock:
+        c = connect()
+        cur = c.execute("UPDATE vouches SET used_by=?, used_at=? WHERE code=? AND used_by IS NULL",
+                        (used_by, when, code))
+        c.commit()
+        return cur.rowcount == 1
+
+
+def open_vouch_codes() -> set[str]:
+    """Every vouch code nobody has walked in on yet."""
+    with _lock:
+        return {r["code"] for r in
+                connect().execute("SELECT code FROM vouches WHERE used_by IS NULL")}

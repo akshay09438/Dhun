@@ -59,7 +59,15 @@ DEFAULT_LANGUAGE = "english"
 # --------------------------------------------------------------------------------------
 class PromptDJBot(discord.Client):
     def __init__(self) -> None:
-        super().__init__(intents=discord.Intents.default())  # slash cmds need no privileged intents
+        # MEMBERS is privileged and is requested for exactly one reason: `on_member_join`, which is
+        # what makes a vouch link work - somebody the founder invited personally has to be let
+        # straight in, and the bot cannot notice an arrival it is never told about. It also gives
+        # the booth a real member list instead of an empty cache.
+        # If it is ever turned off in the Developer Portal the bot will refuse to start with a
+        # clear error, which is better than silently never letting a vouched friend in.
+        _intents = discord.Intents.default()
+        _intents.members = True
+        super().__init__(intents=_intents)
         self.tree = app_commands.CommandTree(self)
         self.api = PromptDJClient(CFG.api_base)
         self.songs: list[Song] = []
@@ -125,6 +133,10 @@ class PromptDJBot(discord.Client):
                  ", ".join(f"{g.name} ({g.id})" for g in guilds) or "none")
         for g in guilds:
             booth.check_config(g)     # say so loudly if a configured channel has been deleted
+            # The vouch feature works by spotting which invite's count changed, so it needs a
+            # BEFORE picture. Without this the very first join after a restart is unattributable
+            # and a vouched friend would be sent to the lobby like a stranger.
+            await door.remember_invites(g)
         await self.sync_to_guilds(guilds)
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
@@ -871,6 +883,36 @@ async def grind_cmd(interaction: discord.Interaction) -> None:
     await interaction.response.send_message(embed=view.embed(), view=view)
 
 
+@bot.tree.command(name="invitefriend",
+                  description="A one-use link that lets somebody in without the form.")
+async def invitefriend_cmd(interaction: discord.Interaction) -> None:
+    """For people the founder already knows. Their friend clicks the link and is in - no
+    lobby, no five questions, no waiting.
+
+    Single use, because a vouch is for one named person; a link that keeps working is a hole
+    in the door that widens every time it is forwarded."""
+    if not interaction.user.guild_permissions.manage_guild:
+        await interaction.response.send_message(
+            "That one is for whoever runs the server.", ephemeral=True)
+        return
+    if not door.is_open():
+        await interaction.response.send_message(
+            "The door is not switched on, so there is nothing to skip - anybody with an "
+            "ordinary invite can already get in.", ephemeral=True)
+        return
+    channel = interaction.guild.get_channel(CFG.door_channel_id) or interaction.channel
+    await interaction.response.defer(ephemeral=True)   # creating an invite is an API call
+    url = await door.create_vouch_invite(channel, interaction.user.id)
+    if url is None:
+        await interaction.followup.send(
+            "I could not make an invite. I need the Create Invite permission on that "
+            "channel.", ephemeral=True)
+        return
+    await interaction.followup.send(
+        f"Send this to your friend. One use, good for a week, and they walk straight in "
+        f"without the form:{chr(10)}{url}", ephemeral=True)
+
+
 @bot.tree.command(name="applications",
                   description="Read who is waiting to join. Add a word to narrow it down.")
 @app_commands.describe(contains="Only show applications mentioning this word, e.g. suno")
@@ -994,6 +1036,21 @@ async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent) -> Non
         return
     # A changed mind must not be counted twice, so a removal really removes.
     store.remove_reaction(grind_number=row["number"], user_id=payload.user_id, emoji=emoji)
+
+
+@bot.event
+async def on_member_join(member: discord.Member) -> None:
+    """Somebody arrived. If the founder vouched for them, they skip the form entirely.
+
+    Everybody else is deliberately left alone - they land in the lobby and see the door, which
+    is what the gate is for. This handler only ever ADDS access, never removes it.
+
+    Never fatal: a vouch that cannot be worked out sends somebody to the lobby, which is the
+    safe direction to be wrong in - a stranger let in by mistake is the failure that matters."""
+    try:
+        await door.on_member_join(member)
+    except Exception:  # noqa: BLE001 - an arrival must never crash the bot
+        log.warning("could not check whether %s was vouched for", member, exc_info=True)
 
 
 @bot.event
