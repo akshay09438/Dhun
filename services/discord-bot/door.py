@@ -420,7 +420,12 @@ def waiting_message() -> str:
     ]
     url = (getattr(CFG, "sample_mix_url", "") or "").strip()
     if url:
-        lines += ["", "While you wait, this is the kind of thing people make in here:", url]
+        # The founder's own framing: this is what people make in here, and once you are in you can
+        # make things like it. Said as a fact about the room, not as a promise about them.
+        lines += ["",
+                  "This is the kind of thing people are making in here. Once you are in, you can "
+                  "make things like this:",
+                  url]
     return "\n".join(lines)
 
 

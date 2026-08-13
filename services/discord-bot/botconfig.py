@@ -56,7 +56,11 @@ class Config:
     # A link to a real Grinder mix, shown to somebody the moment they apply. Between applying and
     # being approved they can see nothing and hear nothing, so this is the only proof that what
     # they are waiting for is worth waiting for. Blank is fine - the line is simply left out.
-    sample_mix_url: str = ""
+    #
+    # The default is the founder's pick of 2026-08-13. It lives here rather than in `.env` because
+    # it is not a secret - it is copy, and a link an outsider must be able to open. Override it
+    # with GRINDER_SAMPLE_MIX_URL to swap in a better mix without touching code.
+    sample_mix_url: str = "https://www.youtube.com/watch?v=axLwu4qkyZ4"
     # EXTRA VOICE IDENTITIES (2026-08-12). One bot application can hold ONE voice connection per
     # SERVER, so with a single Grinder every listening room but one is silent. Each token here is a
     # separate free Discord application that can hold its own connection, i.e. one more room with
@@ -97,5 +101,10 @@ def load_config() -> Config:
                   fresh_grinds_channel_id=_int_env("GRINDER_SHOWCASE_CHANNEL_ID"),
                   door_channel_id=_int_env("GRINDER_DOOR_CHANNEL_ID"),
                   applications_channel_id=_int_env("GRINDER_APPLICATIONS_CHANNEL_ID"),
-                  sample_mix_url=os.environ.get("GRINDER_SAMPLE_MIX_URL", "").strip(),
+                  # Falls back to the dataclass default, NOT to "" - defaulting the lookup to an
+                  # empty string would silently blank the configured link for everybody who has
+                  # not set the variable, which is everybody. Setting it to an empty value is
+                  # still how you deliberately turn the link off.
+                  sample_mix_url=os.environ.get(
+                      "GRINDER_SAMPLE_MIX_URL", Config.sample_mix_url).strip(),
                   room_tokens=_token_list("GRINDER_ROOM_TOKENS"))

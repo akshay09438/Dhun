@@ -682,3 +682,22 @@ def test_a_decision_still_lands_even_if_the_role_grant_fails(monkeypatch):
 
     assert store.application(9)["state"] == "approved"
     assert "followup" in calls, "the founder was never told the role could not be granted"
+
+
+def test_a_real_mix_link_ships_by_default(monkeypatch):
+    """The founder's pick, 2026-08-13. It lives in botconfig rather than .env because it is copy,
+    not a secret - and because an unset env var defaulting to "" would silently blank it for
+    everybody, which is exactly what the first version did."""
+    from botconfig import Config
+    assert Config.sample_mix_url.startswith("http"), "no sample mix ships by default"
+    monkeypatch.delenv("GRINDER_SAMPLE_MIX_URL", raising=False)
+    from botconfig import load_config
+    assert load_config().sample_mix_url == Config.sample_mix_url, (
+        "an unset environment variable blanked the configured link")
+
+
+def test_the_link_is_openable_by_somebody_who_is_not_in_the_server():
+    """A Discord message link would be useless here: the applicant cannot see a single channel yet,
+    so the one thing they are shown must live outside Discord."""
+    from botconfig import Config
+    assert "discord.com/channels" not in Config.sample_mix_url
