@@ -82,6 +82,11 @@ HOOKS: dict[str, tuple[float, float]] = {
     #     not reach the app until it is copied here against the song's content id). ---
     # Location (Khalid) — founder-marked hook 0:14–0:37, the "send me your location" chorus.
     "74d3aac12e9256b7d9a8358a92e3632a5a2384352b4b3f9db78600029338b915": (14.08, 37.17),
+    # Old Town Road (Lil Nas X ft. Billy Ray Cyrus) — founder-marked hook 0:28.6–0:57.1, the "I'm
+    # gonna take my horse…" chorus. Its drop mark (0:28.55) is deliberately NOT wired: main_drops is
+    # keyed by the BEAT, and this is a vocal donor. Analysis read only ONE vocal region for the whole
+    # track (a degenerate/blob read), so this hand-mark is doing more work than usual here.
+    "d20b34a7c5953dae9915496740a21656928e89bac8d03994068ce50573df1ded": (28.57, 57.05),
     # Confusion (Drake, Honestly Nevermind Remix) — founder-marked hook 1:44–2:00. Uploaded as a
     # BEAT, so hook_for leaves this inert (it is called for the Song-2 vocal only); it is the same
     # window used as its guest verse in beat_guest_verse.py, and is captured here as ground truth
