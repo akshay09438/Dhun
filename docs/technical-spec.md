@@ -693,3 +693,39 @@ Owner `akshay5397`. **Require-2FA-for-moderator-actions is OFF.** Two roles hold
 `@Backup Admin` (1 member) and `@Grinder` (the bot). Read honestly, **the bot already holds every
 permission it needs in its own right, and its role already sits above `@Member`** — so removing
 Administrator is safe and approvals keep working. Its only other unused grant is `mention_everyone`.
+
+## As-built (the janitor SEES subfolders, and still cannot delete in them), 2026-08-13
+
+`data/tuning_renders` held **4.61 GB** of throwaway renders from the July vocal-chain tuning week
+and sat there for a **month** — larger than everything else in the project — while the janitor
+reported a clean bill of health every sixty seconds. It was scanning only the top level. It was
+found by hand, not by the app.
+
+**The obvious fix was rejected, deliberately.** Making `storage._evictable_files` recurse would have
+removed the **second of two independent guards** — the first being the five-suffix allowlist —
+standing between the deleter and `data/library/manifest.json`, which indexes the entire catalog.
+Recursing leaves that file surviving on the allowlist alone. The founder was given the choice and
+picked "warn, don't delete".
+
+**So: look everywhere, delete nowhere.** `janitor.subfolder_report()` walks the subfolders of the
+data dir, totals files matching **the same allowlist the sweep uses**, and returns any folder
+holding ≥ `SUBFOLDER_WARN_GB` (1.0). `run_once` logs it on every exit path — including the healthy
+one, because a disk can be quietly full of renders the policy will never look at — and puts it in
+the tick report as `unreachable`. There is no `unlink` in the path and a test fails if one appears.
+
+`keep/` and `library/` are never named: the first exists to hold files and the second is the
+manifest, so reporting either would train the reader to ignore the line that matters.
+
+**`storage.py` is byte-for-byte unchanged**, which is what that file's own docstring asks for:
+_"adding a background cleaner does not require editing the dangerous file at all."_
+
+### Two mistakes made building it, both recorded because they generalise
+
+1. **The first draft of the tests wrote real 1–2 GB files** to cross the 1 GB default and **filled
+   the disk mid-run** (`OSError: No space left on device`) — the exact failure this project already
+   has a headline bug about. They now write kilobytes and shrink `min_gb` to match; the real default
+   is pinned by `test_the_default_threshold_is_one_gigabyte` so shrinking the scale cannot quietly
+   shrink the feature. Suite time for that file went 30s → 0.76s.
+2. **The warning text contained em-dashes**, which the founder's Windows console renders as
+   mojibake — the same encoding bug found in `server_status.py` the same day. Plain hyphens now,
+   verified against a real 1.2 GB probe.
