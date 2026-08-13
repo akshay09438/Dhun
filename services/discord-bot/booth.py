@@ -53,9 +53,20 @@ CFG = load_config()
 # session; two is. Configurable because it is a taste call, not a fact.
 LIVE_THRESHOLD = 2
 
-# Arrival notes get boring fast in a busy room, so only the first few are announced.
-ANNOUNCE_FIRST = 1
-ANNOUNCE_EVERY = 3
+# ARRIVAL NOTES ARE GONE (founder decision 2026-08-13): "no notification should go when a person or
+# any individual joins a Bollywood house or a Hollywood house, because people can automatically see
+# people in their room. I think there is no requirement for the notification."
+#
+# They were throttled - the first arrival, then every third - but the counter reset every time the
+# room emptied, so one person stepping out and back in was announced as if they were the first
+# person again. Testing a room a few times filled #get-shit-done with a wall of "walked into" lines.
+# Discord's own member list already shows who is in a voice room, so the notice said nothing the
+# screen was not already saying.
+#
+# What is DELIBERATELY KEPT is `_record_arrival` / `_record_departure`: who listened and for how
+# long is the drop-off signal, one of the two data gaps recorded as blocking the community phase.
+# The announcement and the recording happened in the same moment but are different jobs; only the
+# talking is removed.
 
 # How long a room's identity is HELD after everybody walks out (founder decision 2026-08-12).
 # Stepping out for twenty seconds must not kill the music you were listening to. The cost, accepted
@@ -75,7 +86,6 @@ class Booth:
         self.grinds_this_session = 0
         self.last_up: str | None = None
         self.status_message: discord.Message | None = None
-        self._arrivals = 0
         self.lock = asyncio.Lock()
         self.last_guild = None       # so a deck still knows the server when the STATION ends
         # Looks up a set's track boundaries from the engine, given its set id. Injected by bot.py so
@@ -348,15 +358,22 @@ class Booth:
         if channel is None:
             return
         heard = self.total_listeners(guild)
-        if heard >= LIVE_THRESHOLD:
-            embed = ui.booth_live_embed(listeners=heard,
-                                        grinds_this_session=self.grinds_this_session,
-                                        last_up=self.last_up)
-        else:
-            embed = ui.booth_quiet_embed()
+        if heard < LIVE_THRESHOLD:
+            # QUIET MEANS NOTHING ON SCREEN (founder decision 2026-08-13). There used to be a
+            # "⚫ Nobody is listening right now. Somebody go start something." card here. It was
+            # meant to be ONE message the bot edited in place, but the handle to it lives only in
+            # memory (`self.status_message`), so every restart lost it and posted a fresh one - the
+            # founder's channel ended up holding a column of identical quiet cards. And a sign that
+            # announces an empty room is nagging, not information: an empty room is the normal
+            # state, and the room list already shows it.
             if heard == 0:
                 self.grinds_this_session = 0     # a new session starts when the room refills
-                self._arrivals = 0
+            await self._clear_status()
+            return
+
+        embed = ui.booth_live_embed(listeners=heard,
+                                    grinds_this_session=self.grinds_this_session,
+                                    last_up=self.last_up)
         try:
             if self.status_message is None:
                 self.status_message = await channel.send(embed=embed)
@@ -368,6 +385,21 @@ class Booth:
                 await self.status_message.edit(embed=embed)
         except discord.HTTPException:
             log.warning("booth: could not update the status message", exc_info=True)
+
+    async def _clear_status(self) -> None:
+        """Take the live sign down when the room falls quiet, rather than replacing it with a card
+        that says nothing is happening.
+
+        The handle is dropped even if the delete fails, so a message we can no longer control (an
+        old one from a previous run, one somebody deleted by hand) can never strand the sign - the
+        next live room posts a fresh one instead of editing into the void."""
+        msg, self.status_message = self.status_message, None
+        if msg is None:
+            return
+        try:
+            await msg.delete()
+        except discord.HTTPException:
+            log.debug("booth: could not remove the live sign", exc_info=True)
 
     async def on_voice_state_update(self, member, before, after) -> None:
         """Arrivals and departures. Also the only thing that makes the sign change."""
@@ -383,10 +415,8 @@ class Booth:
         now = datetime.now(timezone.utc).isoformat()
 
         if now_in:
+            # Recorded, never announced. Arriving in a room posts NOTHING anywhere.
             self._record_arrival(member, after.channel, now)
-            self._arrivals += 1
-            if self._should_announce():
-                await self._announce_arrival(guild, member, after.channel)
         else:
             self._record_departure(member, before.channel, now)
 
@@ -479,21 +509,6 @@ class Booth:
             return max(0.0, (datetime.fromisoformat(when) - joined).total_seconds())
         except Exception:  # noqa: BLE001
             return None
-
-    def _should_announce(self) -> bool:
-        return self._arrivals <= ANNOUNCE_FIRST or self._arrivals % ANNOUNCE_EVERY == 0
-
-    async def _announce_arrival(self, guild, member, room) -> None:
-        if not CFG.grinder_channel_id:
-            return
-        channel = guild.get_channel(CFG.grinder_channel_id)
-        if channel is None:
-            return
-        try:
-            await channel.send(ui.arrival_line(member.display_name, room.name,
-                                               self.listeners(room)))
-        except discord.HTTPException:
-            pass
 
     async def _room_empty(self, guild) -> None:
         """Nobody left to hear it, anywhere. Stop and get out - no identity may sit connected and

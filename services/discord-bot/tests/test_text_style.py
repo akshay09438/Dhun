@@ -61,7 +61,6 @@ def _all_card_text() -> list[tuple[str, str]]:
             number=150, user=None, pairs=[("A", "B")], total_secs=200, queued_behind=2)),
         ("booth_live_embed", ui.booth_live_embed(
             listeners=4, grinds_this_session=12, last_up="A x B")),
-        ("booth_quiet_embed", ui.booth_quiet_embed()),
         ("mygrinds_embed", ui.mygrinds_embed(user=None, total=3, rows=[(1, "A x B", None)])),
         ("mygrinds_embed empty", ui.mygrinds_embed(user=None, total=0, rows=[])),
         ("error_embed", ui.error_embed("Something went wrong.")),

@@ -161,7 +161,6 @@ def _every_card():
                        booth_listeners=4),
         ui.grind_embed(number=4, user=None, pairs=[("A", "B")], total_secs=200, queued_behind=1),
         ui.booth_live_embed(listeners=3, grinds_this_session=5, last_up="A x B"),
-        ui.booth_quiet_embed(),
         ui.mygrinds_embed(user=None, total=2, rows=[(1, "A x B", None)]),
         ui.help_embed(),
     ]

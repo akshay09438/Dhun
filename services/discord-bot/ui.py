@@ -206,16 +206,14 @@ def booth_live_embed(*, listeners: int, grinds_this_session: int,
     return discord.Embed(title="🔴  SOMEONE IS LISTENING", description=body, color=ACCENT)
 
 
-def booth_quiet_embed() -> discord.Embed:
-    return discord.Embed(
-        title="⚫  Nobody is listening right now.",
-        description="Somebody go start something.",
-        color=brand.DEEP)
+# `booth_quiet_embed` ("⚫ Nobody is listening right now. Somebody go start something.") was here
+# and is DELETED (founder decision 2026-08-13). A quiet room now shows nothing at all: the live
+# sign is taken down instead of being swapped for a card announcing that nothing is happening.
 
 
-def arrival_line(name: str, room: str, listeners: int) -> str:
-    people = "1 in there" if listeners == 1 else f"{listeners} in there"
-    return f"🚪 **{name}** walked into **{room}**. {people}."
+# `arrival_line` was here and is DELETED, not disabled (founder decision 2026-08-13). Nothing
+# announces somebody walking into a listening room any more - Discord's member list already shows
+# who is in there. See the note at the top of booth.py for why the throttle did not save it.
 
 
 # --------------------------------------------------------------------------------------
