@@ -58,9 +58,27 @@ CREATE TABLE IF NOT EXISTS room_sessions (
     seconds      REAL,                    -- filled in on leave; the drop-off signal
     playing_number INTEGER                -- which grind was out loud when they arrived, if any
 );
+CREATE TABLE IF NOT EXISTS applications (
+    user_id     INTEGER PRIMARY KEY,     -- one live application per person; re-applying replaces it
+    user_name   TEXT,
+    applied_at  TEXT    NOT NULL,
+    answers     TEXT    NOT NULL,        -- JSON {question: answer} - the founder's five questions
+    state       TEXT    NOT NULL,        -- pending | approved | declined
+    decided_at  TEXT,
+    decided_by  INTEGER,                 -- who pressed the button, so a decision is never anonymous
+    message_id  INTEGER                  -- the review card, so a decision can find and update it
+);
 CREATE INDEX IF NOT EXISTS ix_grinds_user ON grinds(user_id);
 CREATE INDEX IF NOT EXISTS ix_reactions_grind ON reactions(grind_number);
 CREATE INDEX IF NOT EXISTS ix_sessions_open ON room_sessions(user_id, room_id, left_at);
+CREATE TABLE IF NOT EXISTS vouches (
+    code        TEXT PRIMARY KEY,        -- the invite code, e.g. "6j2evh8N"
+    created_by  INTEGER NOT NULL,        -- who vouched, so a bad invite can be traced back
+    created_at  TEXT    NOT NULL,
+    used_by     INTEGER,                 -- filled in when somebody joins on it
+    used_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_applications_state ON applications(state, applied_at);
 """
 
 # Columns added after the first release. SQLite has no "ADD COLUMN IF NOT EXISTS", and an existing
@@ -293,3 +311,136 @@ def listening_summary() -> dict:
             "max_secs": round(row["max_secs"], 1) if row["max_secs"] else 0.0,
             "total_secs": round(row["total_secs"], 1) if row["total_secs"] else 0.0,
             "in_a_room_now": int(open_now["n"] or 0)}
+
+
+# --- the door: applications to join ---------------------------------------------------------
+# The founder picks the first 50 from a POOL, so these rows have to outlive a bot restart and stay
+# comparable side by side. That is the whole reason they are in SQLite and not in memory: an
+# in-memory queue emptied by a restart would silently throw away people who applied.
+
+def save_application(*, user_id: int, user_name: str, answers: dict, when: str) -> bool:
+    """Record (or replace) somebody's application. True if this is a NEW application.
+
+    Re-applying replaces the answers rather than adding a second row - somebody who fixes a typo
+    should not appear twice in a pool the founder is comparing. An already-approved person is left
+    alone: re-applying must never quietly revoke access somebody already has."""
+    import json
+    with _lock:
+        c = connect()
+        row = c.execute("SELECT state FROM applications WHERE user_id=?", (user_id,)).fetchone()
+        if row is not None and row["state"] == "approved":
+            return False
+        c.execute(
+            "INSERT INTO applications (user_id, user_name, applied_at, answers, state) "
+            "VALUES (?,?,?,?, 'pending') "
+            "ON CONFLICT(user_id) DO UPDATE SET user_name=excluded.user_name, "
+            "  applied_at=excluded.applied_at, answers=excluded.answers, state='pending', "
+            "  decided_at=NULL, decided_by=NULL",
+            (user_id, user_name, when, json.dumps(answers)))
+        c.commit()
+        return row is None
+
+
+def set_application_message(user_id: int, message_id: int) -> None:
+    """Remember which review card belongs to this application, so a decision can edit it."""
+    with _lock:
+        c = connect()
+        c.execute("UPDATE applications SET message_id=? WHERE user_id=?", (message_id, user_id))
+        c.commit()
+
+
+def application(user_id: int) -> sqlite3.Row | None:
+    with _lock:
+        return connect().execute("SELECT * FROM applications WHERE user_id=?",
+                                 (user_id,)).fetchone()
+
+
+def pending_applications(search: str | None = None) -> list[sqlite3.Row]:
+    """Everyone still waiting, newest first.
+
+    `search` is a plain case-insensitive substring over the stored answers - the mechanical version
+    of the founder's "I want to spot them": `/applications suno` narrows the pool to people who
+    mentioned Suno. It is a filing cabinet, NOT a judgement: the bot never ranks or recommends, it
+    only shows the rows matching a word the founder typed."""
+    with _lock:
+        rows = connect().execute(
+            "SELECT * FROM applications WHERE state='pending' ORDER BY applied_at DESC").fetchall()
+    if not search:
+        return list(rows)
+    needle = search.strip().lower()
+    return [r for r in rows if needle in (r["answers"] or "").lower()
+            or needle in (r["user_name"] or "").lower()]
+
+
+def decide_application(*, user_id: int, state: str, by: int, when: str) -> bool:
+    """Approve or decline. True if this call is the one that decided it.
+
+    False when it was already decided, which is what stops two presses of Approve granting the role
+    twice or a race between the founder and a second admin."""
+    if state not in ("approved", "declined"):
+        raise ValueError(f"unknown application state: {state!r}")
+    with _lock:
+        c = connect()
+        cur = c.execute(
+            "UPDATE applications SET state=?, decided_at=?, decided_by=? "
+            "WHERE user_id=? AND state='pending'", (state, when, by, user_id))
+        c.commit()
+        return cur.rowcount == 1
+
+
+def approved_count() -> int:
+    """How many seats are taken. Shown on every review card, because the founder is spending a
+    scarce thing and should see the cost at the moment of the decision."""
+    with _lock:
+        return connect().execute(
+            "SELECT COUNT(*) FROM applications WHERE state='approved'").fetchone()[0]
+
+
+def application_by_message(message_id: int) -> sqlite3.Row | None:
+    """Whose application a given review card belongs to.
+
+    This is what lets the Approve/Not-now buttons carry a FIXED custom_id. Discord matches a
+    persistent button by its exact id, so putting the applicant's id inside it
+    (`door:approve:1536...`) meant the one view registered at startup (`door:approve:0`) matched
+    nothing - the bot did not recognise its own buttons and never answered, which Discord shows to
+    the presser as "Grinder didn't respond in time". Found on the founder's first approval,
+    2026-08-13."""
+    with _lock:
+        return connect().execute("SELECT * FROM applications WHERE message_id=?",
+                                 (message_id,)).fetchone()
+
+
+# --- vouch links: people the founder invites personally, who skip the form -------------------
+
+def add_vouch(*, code: str, created_by: int, when: str) -> None:
+    """Mark an invite code as one that lets somebody straight in."""
+    with _lock:
+        c = connect()
+        c.execute("INSERT OR REPLACE INTO vouches (code, created_by, created_at) VALUES (?,?,?)",
+                  (code, created_by, when))
+        c.commit()
+
+
+def vouch(code: str) -> sqlite3.Row | None:
+    with _lock:
+        return connect().execute("SELECT * FROM vouches WHERE code=?", (code,)).fetchone()
+
+
+def claim_vouch(*, code: str, used_by: int, when: str) -> bool:
+    """True if this join is the one that used the code. False if it was already used.
+
+    A single-use invite cannot be used twice anyway, but the founder can make a multi-use one, and
+    a claim that could fire repeatedly would keep letting strangers past the door on an old link."""
+    with _lock:
+        c = connect()
+        cur = c.execute("UPDATE vouches SET used_by=?, used_at=? WHERE code=? AND used_by IS NULL",
+                        (used_by, when, code))
+        c.commit()
+        return cur.rowcount == 1
+
+
+def open_vouch_codes() -> set[str]:
+    """Every vouch code nobody has walked in on yet."""
+    with _lock:
+        return {r["code"] for r in
+                connect().execute("SELECT code FROM vouches WHERE used_by IS NULL")}

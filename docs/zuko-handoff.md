@@ -4,111 +4,79 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
-2026-08-12, **session 8/9 — the second voice, built and then FOUNDER-CONFIRMED BY EAR, followed by a `/zuko:goodnight` batch**. Branch `feat/second-grinder-voice`, **PR not opened yet**. `main` is at `2c1e9f9`. **Discord bot 307 passed, backend 768, web 78, typecheck + lint clean.** Nothing is staged and nothing is half-written.
+**2026-08-13.** A long attended session: four pieces of work, **three merged to `main`**, the fourth pushed with its PR open. **Backend 814 passed, Discord bot 378 passed / 1 skipped, web 78 passed, typecheck + lint clean** — all re-run at handoff, not carried over. Nothing is half-written and nothing is staged.
 
-**⚠️ READ FIRST: do NOT run `/setup` on the founder's live Discord server — any flag.** It recreates its default channels beside the ones the founder has renamed. They restored the layout by hand and said **"never change it from this now."** Use `scripts/refresh_copy.py` or do nothing.
+⚠️ **READ FIRST, still true: never run `/setup` on the founder's live Discord server, any flag.** It recreates its default channels beside the renamed ones.
 
-**Disk: fine, but it SAWTOOTHS during a sweep — do not panic at a single reading.** Free space swings between about **2.8 GB and 8.7 GB** while the catalog sweep runs: a batch of ten renders consumes roughly 1.2 GB, then the batch cleanup gives it all back. I raised a false alarm at 2.81 GB before realising it was a mid-batch snapshot; it recovered to 7 GB a minute later. **The number to act on is the reading BETWEEN batches, not during one.** The sweep's own guard stops it below 2.5 GB.
-
----
-
-## THE HEADLINE: two rooms play at the same time, and the founder heard it
-
-Their words after testing: _"it's quiet now, no music started and it works perfectly on both the channels at the same time."_
-
-That is the wall broken. A Discord bot holds one voice connection per SERVER, so until tonight one room had music and every other was silent — and worse, the bot **walked out** of a busy room to serve one person next door. Two identities now hold two rooms.
-
-**What it took, and what the founder's own testing found** (every one of these was invisible to a green test suite):
-
-1. **A ghost bot cost an hour.** A Grinder from 18:34 was still running invisibly after its window was closed. Two bots raced every command; the old one still had the auto-play station and knew nothing about the second room. It explains the music starting on its own, the "only one room can have sound" reply ten minutes after startup said two, and the `Unknown interaction` 404s. **Every symptom looked like a bug in the new code. None were.** `Start-Grinder.bat` now stops any running Grinder before starting one (`scripts/Stop-Other-Grinders.ps1`, narrow enough that it can never touch the engine, 4 tests).
-2. **One room read another room's connection.** `/play` in Hollywood_Blends answered about Bollywood_House's music. A room with no identity still has a guild, and that guild's `voice_client` is whatever the main bot is doing elsewhere. Fixed; the old test double had no `.channel`, which is exactly why it slipped through.
-3. **Two Grinders in one channel.** A claim and a connection were two different lifetimes: releasing a room handed back the claim and left the identity sitting there, and the next identity to claim it was walked in on top by `play_in`'s `move_to`. `release_voice()` now disconnects too. Three tests, all failed for the right reason before the fix.
-4. **The station is GONE, by founder decision.** Their words: it _"is starting a song by itself"_ and _"creating chaos without me giving instruction."_ Removed, not disabled — `play_station`, `air`, `station_number`, `_station_paused`, `_recently_aired`, `store.station_candidates`, and the ten tests that covered only them. **Nothing starts music now except `/grind`, or `/play` picking up what `/stop` paused.** Arriving in a room starts nothing. A mix ending with an empty queue leaves the room rather than sitting connected and silent.
-5. **The token scripts were dangerous.** `Set-Grinder-Token.bat` overwrote the whole `.env` — a second run would have silently discarded the server id and all four channel ids. Both scripts now edit one line, genuinely hide the token as it is typed, and refuse the main bot's own token as an "extra".
+⚠️ **NEW, and it supersedes an old belief: the disk janitor probably never ate the founder's mix.** The 2026-08-12 handoff recorded "the janitor's deletion path appears to have run for real". The real culprit is almost certainly the TEST SUITE — see the headline below. That is now fixed.
 
 ---
 
-## Documents written tonight (read these before re-deciding anything)
+## THE HEADLINE: the test suite was deleting the founder's real mixes
 
-- **`docs/launch-costing-200-500-users.md`** — the founder's ask. Three usage cases side by side. Headline: **listening and members are free**; the only per-mix cost is ~1.5¢ of Claude; a song is paid for once and then free forever. Baseline community ≈ **$20/month on free hosting**. **The cliff is the machine, not the money** — there is no queue in the render path, so a spike fails mixes instead of queueing them. Confidence is stated line by line.
-- **`docs/second-voice-hygiene-audit.md`** — the founder's "do both bots follow the same rules" question, answered structurally: the extra identity has no rule code. Four calls total. Includes the grep to re-run it.
-- **`docs/panda-not-singing-diagnosis.md`** — see below.
+Not in any change under review — found while reviewing something else, and the most valuable thing in the session.
+
+**Reproduced, not theorised:** a canary file was planted in the real `services/api/data`, a sweep was run the way a test runs one, and **the test deleted it**. Measured separately: the real folder went from **39 evictable renders / 1.21 GB to zero** across one full-suite run, free disk landing just under `_TARGET_FREE_GB` — `sweep()`'s exact signature — with **no server running**.
+
+**Cause.** `Settings` is a frozen dataclass shared by every module. Tests redirect it per test with `monkeypatch`, which is undone at teardown. But renders do not run on the test's thread — `renderq` hands them to daemon workers, and `maybe_sweep()` runs inside the job. A render still going when its test ended read the restored **real** path. No individual test was written wrongly; the isolation was scoped to the wrong **lifetime**.
+
+**Fixed** by a session-scoped `services/api/conftest.py`. Catalog inputs are hard-linked into the session folder so the six real-audio e2e tests keep running — without that they skip and the suite reports green while testing less (a first attempt scored 808 passed / 6 skipped and was rejected for exactly that).
+
+**What it exposed:** the suite had been staying alive BY deleting those renders. With the real folder unreachable, a full run filled the disk and pytest died with `ENOSPC` — 4.31 GB free down to 92 MB.
+
+---
+
+## What shipped
+
+1. **Routine stale-render cleanup — MERGED (PR #38).** Renders nobody has played in 7 days are tidied on the janitor's timer. **Anything pinned to `#best-mixes` is never removed** — founder rule, and it holds against the emergency sweep too. Emergency floors 2.0/3.0 and `maybe_sweep()` unchanged; `render.py` and `validate.py` untouched.
+2. **The Discord rooms went quiet — MERGED (PR #39).** Arrival notes and the "Nobody is listening" card deleted. `_record_arrival` deliberately kept — listening time and drop-off are one of the two data gaps blocking the community phase.
+3. **Test-suite isolation — MERGED (PR #40).** The headline above.
+4. **THE DOOR — pushed, PR open, branch `feat/the-door`.** Grinder is invite-only. Five questions with a **required email**, applications **pool** for comparison (`/applications`, `/applications suno`), 50 seats, `/invitefriend` gives a one-use link that skips the form. **Applied to the live server and walked end to end by the founder.**
 
 ---
 
 ## Do first next session
 
-1. **Let the catalog sweep finish, then read its CSV.** It was still running at ~61 of 216 pairs when this was written; disk sawtooths but recovers.
-2. **Finish the Panda diagnosis — it is one minute of work.** The plan puts Panda's vocal in 40% of the clip the founder heard, so it is not a planning failure. The measurement that decides between "too quiet" and "never made it into the render" could not run because the mix file was swept off disk mid-sweep. **A mix id is a hash of its inputs, so re-rendering Father Ocean × Panda regenerates a byte-identical file.** Re-render, then run `scratchpad/panda_probe.py`. **Do not touch the vocal chain until that verdict is in.**
-3. **Open and merge the PR** for `feat/second-grinder-voice`.
-4. **Build the render waiting list.** Agreed with the founder as the next job, and the costing document argues it is now the highest-value thing on the list: no queue exists, so past ~8–10 at once people's mixes fail rather than wait.
-5. **APPLY THE DISK CLEANUP CARD — the founder has already read it and said yes, next session.**
-   `disk-sweep-floors-and-age` on `services/api/app/storage.py`, waiting in `.zuko/goodnight/queue/`.
-   They were walked through it in full on 2026-08-12 and chose to defer, not decline — **do not
-   re-explain the whole card, and do not treat it as an open question.** Confirm they still want it,
-   record the approval with `.zuko/approve.js`, apply it, run the suite, open a PR.
-   What it does: start tidying at 4 GB free instead of 2 GB (2 GB is already inside the zone where
-   mixes fail), plus delete finished mixes untouched for 7 days. Originals, stems and analyses can
-   never be touched — it only matches five known throwaway endings at the top level.
-   The two consequences they were told about: it will fire during heavy use (the disk sawtooths), and
-   week-old mixes rebuild on demand instead of returning instantly.
+1. **Merge `feat/the-door`.** It is the only unmerged work and it is already running on the founder's live server, so the branch and reality are currently out of step.
+2. **The render waiting list.** Still unbuilt, still the highest-value item in `docs/launch-costing-200-500-users.md`, and **the door makes it more urgent rather than less** — the founder is about to deliberately invite 50 people to a machine that builds 8 mixes at once and fails the rest instead of queueing them.
+3. **Two-factor authentication on the founder's Discord account**, and the small pieces they flagged at the end of the session. Not started.
+4. **Answer the question that got lost:** the dev app keeps a play button for every mix ever made, and unpinned mixes older than 7 days will now 404. The founder was asked and answered with the best-mixes rule instead, which covers a different case. Options: rebuild on play, a longer window, or accept it.
 
 ---
 
 ## Verification evidence
 
-| Check                                      | Result                                                      |
-| ------------------------------------------ | ----------------------------------------------------------- |
-| Discord bot suite                          | **307 passed** _(245 at session start; +62 new, 0 removed)_ |
-| Backend, full                              | **768 passed** in 229s                                      |
-| Web / typecheck / lint                     | **78 passed** / clean / clean                               |
-| `storage.py` / `render.py` / `validate.py` | **untouched**                                               |
-| Mutation: shared voice connection          | re-injected → **6 tests failed**, reverted                  |
-| Mutation: the `.env`-overwriting behaviour | re-injected → **4 tests failed**, reverted                  |
-| Mutation: cross-room connection read       | re-injected → **3 tests failed**, reverted                  |
-| **Two rooms with sound at once**           | **FOUNDER-CONFIRMED BY EAR**                                |
-
----
-
-## ⚠️ FOUNDER CORRECTION: do NOT withdraw Khuda Jaane
-
-The catalog sweep says Khuda Jaane fails 3 of 6 renders — the worst in the catalog. **The founder's
-ear says it is the BEST song in the catalog for mixes so far.** Both are true, and the second one
-wins.
-
-**They are not in conflict, and the reason matters more than the fact.** The sweep measures ONE
-thing: whether a render survived to ship. It measures NOTHING about how good the ones that shipped
-sound. Nothing anywhere in this project measures that — only the founder's ears do.
-
-So a song can be the worst on the failure chart and the best in the room at the same time, and
-**a decision to withdraw a song must never be made on failure rate alone.** The 2026-08-11 session
-recommended withdrawing three songs on exactly that basis and was wrong about all three; this is the
-same mistake with better numbers.
-
-**Founder's instruction: leave the catalog exactly as it is.** No songs withdrawn, no songs
-demoted, nothing hidden. If Khuda Jaane's failure rate is ever worth acting on, the action is to
-make it FAIL LESS (it is 80 BPM against a 120–122 BPM catalog, so every pairing forces a big
-stretch), never to remove it.
+| Check                                      | Result                                                                                                         |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| Backend, full (`pytest -q`)                | **814 passed** in 217s, 0 skipped                                                                              |
+| Discord bot                                | **378 passed, 1 skipped** (pre-existing ARM `davey` skip)                                                      |
+| Web (`npm test`)                           | **78 passed** (9 files)                                                                                        |
+| `npm run typecheck` / `npm run lint`       | clean / clean                                                                                                  |
+| `workers/render.py`, `planner/validate.py` | **untouched all day** — no mix changes byte-for-byte                                                           |
+| Canary in the real data dir                | deleted by a test **before** the fix, survives after                                                           |
+| Mutation checks                            | ~15 run and reverted; each turned the suite red, except two that exposed hollow tests and were then backfilled |
+| Real data dir after the day                | 610 files, 4.03 GB; `tuning_renders` intact at 4.95 GB                                                         |
 
 ---
 
 ## Open escalations and things to RE-VERIFY (claims, not facts)
 
-- **The catalog sweep ran to 105 of 216 pairs and was then stopped by the founder** (deliberately - the machine was wanted back). Result: **12 of 105 failed (11.4%), of which 5 were the machine being full, so 7 - 6.7% - are genuine.** Read it back any time with `scripts/loadtest/sweep_report.py`; it reads the engine's own log, so stopping the sweep costs nothing. **The old CSV on disk is the stale 15:35 file claiming 29.6% - that number is now disproved on half the catalog and should be ignored.** The untested half is the second half of the beat list.
-- **(superseded) The old sweep CSV.** `scripts/loadtest/failure_sweep.csv` may still be the stale 15:35 file reporting 29.6% — that number was measured on a starved machine and the handoff has warned about it twice. Tonight's re-run got ~60 of 216 pairs before the disk guard stopped it. **The sweep now records WHY each pair failed** (read from the engine's own event log, no engine change), and the early evidence already splits them: some are the quality referee doing its job, some are _"the grinder ran out of room — nothing to do with your songs."_ **Re-run with real disk headroom before believing any catalog failure rate.**
-- **A correction to an old finding:** the concurrency diagnosis's #1 problem — "every failure reports the same sentence" — **is no longer true.** The engine now distinguishes a quality rejection from an out-of-resources failure in its own log. That document should be corrected.
-- **The disk janitor's deletion path appears to have run for real tonight** (a founder-made mix vanished from disk while free space fell). Previously recorded as never having run. Worth confirming from the engine log before treating as fact.
-- **`Add-Grinder-Rooms.bat` has now been run for real by the founder, successfully.** Its `.env`-writing half is tested; the interactive half was exercised by hand.
-- **The founder's Discord server is hand-tuned and OFF LIMITS.**
-- **95 mixes shipped with a 21–39% tempo stretch.** One heard and approved; the other 94 unheard; the recorded warble threshold is 15%.
-- **Queue position with several real people at once has never been seen.**
+- **The bot currently holds Administrator on the live server.** It was turned on to recover a half-locked server and appears not to have been turned off. It works, and it is why granting `@Member` succeeds — but it is more permission than the design intends. Re-check and decide.
+- **An approval was recorded but never granted the role, and the cause is UNKNOWN.** The bot was being restarted with `>`, which overwrote its log and destroyed the evidence. Logs now append to a gitignored `services/discord-bot/logs/`. The structural fragility that would produce exactly that symptom — a `@Member` role level with the bot's own role is ungrantable without Administrator — is now detected at startup and reported loudly, but **the actual cause was never proven**. Treat a repeat as new information, not as this same issue.
+- **129 leaked `pitch_*` directories** sit inside the real `services/api/data`. `app/audio/pitch.py` makes `tempfile.mkdtemp(dir=settings.data_dir)` and its cleanup is evidently not always reaching them. Near-empty, but litter in the one folder that must stay clean.
+- **The test suite needs ~2.5 GB of scratch per run** and regrows `%TEMP%\pytest-of-Akshay` every time. It used to make room by deleting the founder's renders; it cannot now, so this will bite again when the disk is low.
+- **The disk is tight.** 8.2 GB free after a clean-up that recovered 6.7 GB, including a 3.19 GB folder that resisted deletion because of the Windows long-path limit. Free space hit 92 MB mid-session.
+- **`bearwolf101` now holds a `@Backup Admin` role with Administrator**, at the founder's request, so a lockout cannot cost them the community. **An admin cannot transfer or delete the server** — only the owner can — so this is a strong safety net, not total insurance.
+- **The catalog sweep stopped at 105 of 216 pairs.** Half the catalog has never been checked for failure rate.
+- **95 mixes shipped with a 21–39% tempo stretch; 94 of them unheard.**
 - **The GitHub CLI is still not installed**, so PRs are opened by hand.
 
 ---
 
 ## Process notes
 
-- **Two wrong calls made and corrected this session.** I told the founder the auto-play was still happening because they had not restarted — they had; the real cause was the ghost bot, found only by listing processes on their machine. And I blamed the `Unknown interaction` errors on them clicking in the console window; that was wrong too, and it sent them chasing nothing. **Both were guesses offered with more confidence than the evidence supported.** The lesson recorded: on their machine, look at their machine before theorising.
-- **A promise that was too strong:** "all 245 existing tests pass untouched." 17 reached into single-room internals and were re-pointed (assertions unchanged).
-- **A discarded measurement is recorded as discarded** in the Panda diagnosis, rather than being dressed up as a finding.
+- **Three adversarial reviews all returned `unsafe`, and checking each finding was worth more than the reviews themselves.** Two of five blocking findings were wrong and one was overstated. Verifying before acting cost minutes and avoided chasing problems that did not exist.
+- **Two diagnoses were given to the founder with more confidence than the evidence supported, and both had to be corrected.** One claimed a live security hole that was only latent; one blamed a three-second timeout when the bot had in fact never received the click at all. The second was caught only by checking whether the approval had actually saved — check the state before explaining the cause.
+- **A test existed for the exact class of bug that then bit the live server.** `lock_the_door.py` was proven to hand out the role before restricting anything — and then denied `@everyone` before allowing `@Member` per channel, locking the bot out of the channels it was editing and leaving the server half-locked. The rule was right; the test was pointed one level too high.
+- **Mutation testing earned its place twice**: once finding three "fixes" with no test behind them at all, once finding a guard that an earlier check was shadowing so it was never exercised.
 - Every commit went to a branch, never to `main`.

@@ -26,6 +26,7 @@ import brand
 import editbudget
 import media
 import server_setup
+import door
 import showcase
 import speakers as speakers_mod
 import store
@@ -58,7 +59,15 @@ DEFAULT_LANGUAGE = "english"
 # --------------------------------------------------------------------------------------
 class PromptDJBot(discord.Client):
     def __init__(self) -> None:
-        super().__init__(intents=discord.Intents.default())  # slash cmds need no privileged intents
+        # MEMBERS is privileged and is requested for exactly one reason: `on_member_join`, which is
+        # what makes a vouch link work - somebody the founder invited personally has to be let
+        # straight in, and the bot cannot notice an arrival it is never told about. It also gives
+        # the booth a real member list instead of an empty cache.
+        # If it is ever turned off in the Developer Portal the bot will refuse to start with a
+        # clear error, which is better than silently never letting a vouched friend in.
+        _intents = discord.Intents.default()
+        _intents.members = True
+        super().__init__(intents=_intents)
         self.tree = app_commands.CommandTree(self)
         self.api = PromptDJClient(CFG.api_base)
         self.songs: list[Song] = []
@@ -68,6 +77,12 @@ class PromptDJBot(discord.Client):
         self._synced_guilds: set[int] = set()
 
     async def setup_hook(self) -> None:
+        # PERSISTENT VIEWS, re-registered on every start. The lobby button sits in a channel for
+        # weeks and the founder reads a pool of application cards that has been building for days;
+        # without this both go dead after a restart, and a dead "Ask to join" button reads to a
+        # newcomer as a community that does not work.
+        self.add_view(door.DoorView())
+        self.add_view(door.ReviewView())
         await self.refresh_catalog()
         await self.bring_extra_voices_online()
         try:
@@ -118,6 +133,16 @@ class PromptDJBot(discord.Client):
                  ", ".join(f"{g.name} ({g.id})" for g in guilds) or "none")
         for g in guilds:
             booth.check_config(g)     # say so loudly if a configured channel has been deleted
+            # The vouch feature works by spotting which invite's count changed, so it needs a
+            # BEFORE picture. Without this the very first join after a restart is unattributable
+            # and a vouched friend would be sent to the lobby like a stranger.
+            await door.remember_invites(g)
+            # Say it LOUDLY at startup if approvals cannot actually grant the role. Otherwise the
+            # first anybody knows is a person who was approved and still cannot see the server.
+            ok, why = door.can_grant_member(g)
+            if door.is_open() and not ok:
+                log.error("THE DOOR CANNOT LET ANYBODY IN: %s. Approvals will be recorded and the "
+                          "person will still see nothing.", why)
         await self.sync_to_guilds(guilds)
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
@@ -842,6 +867,13 @@ async def grind_cmd(interaction: discord.Interaction) -> None:
     """No options at all, on purpose. `/grind` used to offer `beat` and `vocal` as optional fields,
     and a first-timer reading two blanks cannot tell that leaving them empty is the right move -
     they look like something you have to fill in. Type it, press enter, the picker opens."""
+    # WHO, before WHERE. The door is the founder's rule that only approved people use the bot, and
+    # channel permissions alone cannot carry it: one wrongly-set overwrite, or simply no grind
+    # category configured, and an unapproved person can grind from the lobby.
+    blocked = door.blocked_reason(interaction)
+    if blocked is not None:
+        await interaction.response.send_message(blocked, ephemeral=True)
+        return
     where = _grinding_allowed_here(interaction)
     if where is not None:
         await interaction.response.send_message(where, ephemeral=True)
@@ -855,6 +887,69 @@ async def grind_cmd(interaction: discord.Interaction) -> None:
         return
     view = GrindBuilderView(interaction.user.id)
     await interaction.response.send_message(embed=view.embed(), view=view)
+
+
+@bot.tree.command(name="invitefriend",
+                  description="A one-use link that lets somebody in without the form.")
+async def invitefriend_cmd(interaction: discord.Interaction) -> None:
+    """For people the founder already knows. Their friend clicks the link and is in - no
+    lobby, no five questions, no waiting.
+
+    Single use, because a vouch is for one named person; a link that keeps working is a hole
+    in the door that widens every time it is forwarded."""
+    if not interaction.user.guild_permissions.manage_guild:
+        await interaction.response.send_message(
+            "That one is for whoever runs the server.", ephemeral=True)
+        return
+    if not door.is_open():
+        await interaction.response.send_message(
+            "The door is not switched on, so there is nothing to skip - anybody with an "
+            "ordinary invite can already get in.", ephemeral=True)
+        return
+    channel = interaction.guild.get_channel(CFG.door_channel_id) or interaction.channel
+    await interaction.response.defer(ephemeral=True)   # creating an invite is an API call
+    url = await door.create_vouch_invite(channel, interaction.user.id)
+    if url is None:
+        await interaction.followup.send(
+            "I could not make an invite. I need the Create Invite permission on that "
+            "channel.", ephemeral=True)
+        return
+    await interaction.followup.send(
+        f"Send this to your friend. One use, good for a week, and they walk straight in "
+        f"without the form:{chr(10)}{url}", ephemeral=True)
+
+
+@bot.tree.command(name="applications",
+                  description="Read who is waiting to join. Add a word to narrow it down.")
+@app_commands.describe(contains="Only show applications mentioning this word, e.g. suno")
+async def applications_cmd(interaction: discord.Interaction, contains: str = "") -> None:
+    """The POOL, not a feed. The founder is choosing the first fifty, so the applications have to
+    be readable side by side - a card that arrives, is decided and scrolls away is
+    first-come-first-served wearing a review flow.
+
+    `contains` is a plain substring search over the answers. It is a filing cabinet, never a
+    judgement: Grinder does not rank, score or recommend an applicant."""
+    if not interaction.user.guild_permissions.manage_guild:
+        await interaction.response.send_message(
+            "That one is for whoever runs the server.", ephemeral=True)
+        return
+    rows = store.pending_applications(contains or None)
+    taken = store.approved_count()
+    if not rows:
+        note = (f"Nobody waiting who mentions {contains!r}." if contains
+                else "Nobody is waiting.")
+        await interaction.response.send_message(
+            f"{note}  ({taken} of {door.MEMBER_CAP} seats taken)", ephemeral=True)
+        return
+    shown = rows[:5]      # five embeds is Discord's per-message limit
+    embeds = [door.application_embed(
+        user_name=r["user_name"] or str(r["user_id"]), user_id=r["user_id"],
+        answers=json.loads(r["answers"]), taken=taken) for r in shown]
+    more = ("" if len(rows) <= len(shown)
+            else f"\nShowing {len(shown)} of {len(rows)}. Narrow it with a word.")
+    await interaction.response.send_message(
+        f"{len(rows)} waiting  ({taken} of {door.MEMBER_CAP} seats taken){more}",
+        embeds=embeds, ephemeral=True)
 
 
 @bot.tree.command(name="mygrinds", description="Everything you have made.")
@@ -947,6 +1042,21 @@ async def on_raw_reaction_remove(payload: discord.RawReactionActionEvent) -> Non
         return
     # A changed mind must not be counted twice, so a removal really removes.
     store.remove_reaction(grind_number=row["number"], user_id=payload.user_id, emoji=emoji)
+
+
+@bot.event
+async def on_member_join(member: discord.Member) -> None:
+    """Somebody arrived. If the founder vouched for them, they skip the form entirely.
+
+    Everybody else is deliberately left alone - they land in the lobby and see the door, which
+    is what the gate is for. This handler only ever ADDS access, never removes it.
+
+    Never fatal: a vouch that cannot be worked out sends somebody to the lobby, which is the
+    safe direction to be wrong in - a stranger let in by mistake is the failure that matters."""
+    try:
+        await door.on_member_join(member)
+    except Exception:  # noqa: BLE001 - an arrival must never crash the bot
+        log.warning("could not check whether %s was vouched for", member, exc_info=True)
 
 
 @bot.event
