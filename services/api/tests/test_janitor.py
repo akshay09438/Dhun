@@ -24,6 +24,8 @@ but only AFTER it has emptied the cache. Warning after the damage is not a brake
 """
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from app import janitor
@@ -176,3 +178,99 @@ def test_the_cushion_can_be_overridden_by_environment(monkeypatch):
 def test_a_nonsense_cushion_falls_back_to_the_default_rather_than_crashing(monkeypatch):
     monkeypatch.setenv("PROMPTDJ_DISK_CUSHION_GB", "not-a-number")
     assert janitor.cushion_gb() == janitor.DEFAULT_CUSHION_GB
+
+
+# --- the subfolder watch: LOOK everywhere, DELETE nowhere -------------------------------------
+#
+# Added 2026-08-13 after data/tuning_renders held 4.61 GB of throwaway renders for a MONTH while
+# the janitor reported a clean bill of health every minute. The founder was offered a recursive
+# sweep and deliberately chose "warn, don't delete", so the deleter's blast radius is unchanged
+# and library/manifest.json stays behind two guards rather than one.
+#
+# THESE TESTS WRITE BYTES, NOT GIGABYTES. The first draft created real 1-2 GB files to cross the
+# default threshold and filled the disk mid-run (`OSError: No space left on device`) - the exact
+# failure this project already has a headline bug about. `subfolder_report` takes `min_gb` as an
+# argument precisely so the scale can be shrunk: the comparison under test is identical at 1 KB
+# and at 1 GB, and the real default is pinned by its own test below.
+
+_KB = 1_000
+
+
+def _mk(p, kb):
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(b"\0" * int(kb * _KB))
+
+
+_TINY = 2 / 1e6   # 2 KB expressed in GB - the threshold these tests compare against
+
+
+def test_a_big_subfolder_of_renders_is_reported(tmp_path, monkeypatch):
+    """The exact case that went unnoticed for a month."""
+    monkeypatch.setattr(janitor, "settings", dataclasses.replace(janitor.settings, data_dir=tmp_path))
+    _mk(tmp_path / "tuning_renders" / "a.mix.wav", 2)
+    _mk(tmp_path / "tuning_renders" / "b.mix.wav", 2)
+    report = janitor.subfolder_report(min_gb=_TINY)
+    assert [r["folder"] for r in report] == ["tuning_renders"]
+    assert report[0]["files"] == 2
+
+
+def test_it_reports_but_never_deletes(tmp_path, monkeypatch):
+    """THE test. This pass exists INSTEAD of making the sweep recursive; the moment it removes a
+    file it has become the thing the founder said no to."""
+    monkeypatch.setattr(janitor, "settings", dataclasses.replace(janitor.settings, data_dir=tmp_path))
+    f = tmp_path / "tuning_renders" / "a.mix.wav"
+    _mk(f, 4)
+    janitor.subfolder_report(min_gb=_TINY)
+    assert f.exists(), "the subfolder watch must never delete anything"
+
+
+def test_the_manifest_folder_is_never_named(tmp_path, monkeypatch):
+    """library/ holds the catalog index and keep/ holds the pinned-mix protection. Reporting on
+    either trains the reader to ignore the line, and it is the line that matters."""
+    monkeypatch.setattr(janitor, "settings", dataclasses.replace(janitor.settings, data_dir=tmp_path))
+    _mk(tmp_path / "library" / "big.mix.wav", 8)
+    _mk(tmp_path / "keep" / "big.mix.wav", 8)
+    assert janitor.subfolder_report(min_gb=_TINY) == []
+
+
+def test_only_sweep_eligible_files_are_counted(tmp_path, monkeypatch):
+    """It must describe what WOULD have been reclaimable one directory higher - not stems and
+    sources, which are paid for on Replicate and are throwaway in no sense at all."""
+    monkeypatch.setattr(janitor, "settings", dataclasses.replace(janitor.settings, data_dir=tmp_path))
+    _mk(tmp_path / "sandbox" / "keeper.vocals.mp3", 8)      # a paid stem
+    _mk(tmp_path / "sandbox" / "keeper.analysis.json", 8)   # a paid analysis
+    assert janitor.subfolder_report(min_gb=_TINY) == []
+
+
+def test_a_subfolder_under_the_threshold_is_not_worth_mentioning(tmp_path, monkeypatch):
+    monkeypatch.setattr(janitor, "settings", dataclasses.replace(janitor.settings, data_dir=tmp_path))
+    _mk(tmp_path / "listening" / "a.mix.wav", 1)
+    assert janitor.subfolder_report(min_gb=1.0) == []
+
+
+def test_top_level_renders_are_not_reported_here(tmp_path, monkeypatch):
+    """Those ARE swept, so naming them would be noise about a solved problem."""
+    monkeypatch.setattr(janitor, "settings", dataclasses.replace(janitor.settings, data_dir=tmp_path))
+    _mk(tmp_path / "a.mix.wav", 8)
+    assert janitor.subfolder_report(min_gb=_TINY) == []
+
+
+def test_the_default_threshold_is_one_gigabyte():
+    """The tests above shrink the scale to avoid writing gigabytes; this pins the real number so
+    shrinking the scale cannot quietly shrink the feature."""
+    assert janitor.SUBFOLDER_WARN_GB == 1.0
+
+
+def test_an_unreadable_data_dir_returns_empty_rather_than_raising(monkeypatch, tmp_path):
+    monkeypatch.setattr(janitor, "settings",
+                        dataclasses.replace(janitor.settings, data_dir=tmp_path / "nope"))
+    assert janitor.subfolder_report() == []
+
+
+def test_the_watch_reaches_run_once_and_survives_a_failure(tmp_path, monkeypatch):
+    """A reporting pass that can kill the tick costs more than the problem it describes."""
+    monkeypatch.setattr(janitor, "settings", dataclasses.replace(janitor.settings, data_dir=tmp_path))
+    monkeypatch.setattr(janitor, "subfolder_report",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
+    result = janitor.run_once(cushion_gb=0.0)
+    assert result["action"] in (janitor.SKIP_HEALTHY, janitor.SKIP_FUTILE, janitor.SWEEP, janitor.ERROR)
