@@ -190,44 +190,38 @@ class ReviewView(discord.ui.View):
     """Approve / Not now. Persistent for the same reason as the door button: the founder reads a
     pool that has been accumulating for days, and yesterday's cards must still work.
 
-    The applicant's id travels in the custom_id because a persistent view is rebuilt from nothing
-    after a restart - there is no instance state to remember it."""
+    THE IDS ARE FIXED, and the applicant is looked up from the MESSAGE. An earlier version put the
+    applicant's id inside the custom_id (`door:approve:1536...`), which reads as the obvious way to
+    carry it. It is not: Discord matches a persistent button by its EXACT id, so the single view
+    registered at startup (`door:approve:0`) matched none of the real cards. The bot did not
+    recognise its own buttons, never answered, and Discord told the founder "Grinder didn't respond
+    in time" - with nothing in the log, because no handler ever ran.
 
-    def __init__(self, user_id: int | None = None) -> None:
+    The card's message id is already stored against the application, so it is the natural key."""
+
+    def __init__(self) -> None:
         super().__init__(timeout=None)
-        if user_id is not None:
-            self.approve.custom_id = f"door:approve:{user_id}"
-            self.decline.custom_id = f"door:decline:{user_id}"
 
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.success,
-                       custom_id="door:approve:0")
+                       custom_id="door:approve")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await _decide(interaction, button, approved=True)
 
     @discord.ui.button(label="Not now", style=discord.ButtonStyle.secondary,
-                       custom_id="door:decline:0")
+                       custom_id="door:decline")
     async def decline(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await _decide(interaction, button, approved=False)
 
 
-def _applicant_id(custom_id: str) -> int | None:
-    try:
-        return int(custom_id.rsplit(":", 1)[1])
-    except (IndexError, ValueError):
-        return None
-
-
 async def _decide(interaction: discord.Interaction, button: discord.ui.Button, *,
                   approved: bool) -> None:
-    user_id = _applicant_id(button.custom_id or "")
-    if not user_id:
-        await interaction.response.send_message("Could not tell whose application this is.",
-                                                ephemeral=True)
-        return
-    row = store.application(user_id)
+    row = store.application_by_message(getattr(interaction.message, "id", 0))
     if row is None:
-        await interaction.response.send_message("That application is gone.", ephemeral=True)
+        await interaction.response.send_message(
+            "I cannot tell whose application this card is. It may predate a restart - "
+            "`/applications` still has them all.", ephemeral=True)
         return
+    user_id = row["user_id"]
     if row["state"] != "pending":
         await interaction.response.send_message(f"Already {row['state']}.", ephemeral=True)
         return
@@ -354,7 +348,7 @@ async def post_for_review(interaction, answers: dict) -> None:
         user_name=user.display_name, user_id=user.id, answers=answers,
         account_created=getattr(user, "created_at", None), taken=store.approved_count())
     try:
-        msg = await channel.send(embed=embed, view=ReviewView(user.id))
+        msg = await channel.send(embed=embed, view=ReviewView())
         store.set_application_message(user.id, msg.id)
     except discord.HTTPException:
         log.warning("could not post application for review", exc_info=True)

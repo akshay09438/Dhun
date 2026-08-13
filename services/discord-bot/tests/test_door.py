@@ -592,9 +592,10 @@ def test_nothing_is_posted_when_no_review_channel_is_configured(monkeypatch):
 class _Recorder:
     """An interaction that records the ORDER of what was done to it."""
 
-    def __init__(self, calls, guild=None, user_id=7):
+    def __init__(self, calls, guild=None, message_id=555):
         self.calls = calls
         self.guild = guild
+        self.message = type("M", (), {"id": message_id})()
         self.user = type("U", (), {"id": 1})()
         self.client = type("C", (), {"guilds": [], "get_user": lambda s, i: None})()
         outer = self
@@ -651,10 +652,11 @@ def test_approve_answers_discord_BEFORE_it_starts_making_api_calls(monkeypatch):
     Asserted as an ORDER, not as "defer is called somewhere": deferring after the slow part would
     be just as broken and would still contain the word defer."""
     _apply(7, "Akshay")
+    store.set_application_message(7, 555)      # the card this button belongs to
     calls = []
     guild = _SlowGuild(calls)
-    inter = _Recorder(calls, guild=guild)
-    button = type("B", (), {"custom_id": "door:approve:7"})()
+    inter = _Recorder(calls, guild=guild, message_id=555)
+    button = type("B", (), {"custom_id": "door:approve"})()
 
     asyncio.run(door._decide(inter, button, approved=True))
 
@@ -669,6 +671,7 @@ def test_a_decision_still_lands_even_if_the_role_grant_fails(monkeypatch):
     """The decision is recorded before the role work, so a permissions problem cannot leave an
     application stuck as pending forever with the founder believing they had decided it."""
     _apply(9, "Sam")
+    store.set_application_message(9, 777)
     calls = []
 
     class _NoRole(_SlowGuild):
@@ -676,8 +679,8 @@ def test_a_decision_still_lands_even_if_the_role_grant_fails(monkeypatch):
             super().__init__(c)
             self.roles = []               # @Member does not exist
 
-    inter = _Recorder(calls, guild=_NoRole(calls))
-    asyncio.run(door._decide(inter, type("B", (), {"custom_id": "door:approve:9"})(),
+    inter = _Recorder(calls, guild=_NoRole(calls), message_id=777)
+    asyncio.run(door._decide(inter, type("B", (), {"custom_id": "door:approve"})(),
                              approved=True))
 
     assert store.application(9)["state"] == "approved"
@@ -701,3 +704,28 @@ def test_the_link_is_openable_by_somebody_who_is_not_in_the_server():
     so the one thing they are shown must live outside Discord."""
     from botconfig import Config
     assert "discord.com/channels" not in Config.sample_mix_url
+
+
+def test_the_review_buttons_use_FIXED_ids_so_the_bot_recognises_its_own_cards():
+    """THE REAL CAUSE of "Grinder didn't respond in time" on the founder's first approval.
+
+    Discord matches a persistent button by its EXACT custom_id. Putting the applicant's id inside
+    it (`door:approve:1536...`) meant the single view registered at startup (`door:approve:0`)
+    matched no real card - the bot did not recognise its own buttons, never answered, and nothing
+    appeared in the log because no handler ran. The applicant is now looked up from the card's
+    message id, which is already stored.
+
+    An id containing a user id is the specific mistake, so that is what this forbids."""
+    ids = [c.custom_id for c in door.ReviewView().children]
+    assert sorted(ids) == ["door:approve", "door:decline"]
+    for cid in ids:
+        assert cid.count(":") == 1, f"{cid} carries per-application data - it will never match"
+
+
+def test_a_card_the_store_does_not_know_is_answered_rather_than_left_hanging():
+    """Better a plain sentence than a dead button: an unrecognised card must still get a reply,
+    or the presser sees the same "didn't respond in time" this whole fix is about."""
+    calls = []
+    inter = _Recorder(calls, guild=None, message_id=123456)   # no application for this message
+    asyncio.run(door._decide(inter, type("B", (), {"custom_id": "door:approve"})(), approved=True))
+    assert "send_message" in calls, "an unknown card was left with no response at all"

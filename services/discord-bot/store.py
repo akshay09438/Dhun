@@ -387,3 +387,17 @@ def approved_count() -> int:
     with _lock:
         return connect().execute(
             "SELECT COUNT(*) FROM applications WHERE state='approved'").fetchone()[0]
+
+
+def application_by_message(message_id: int) -> sqlite3.Row | None:
+    """Whose application a given review card belongs to.
+
+    This is what lets the Approve/Not-now buttons carry a FIXED custom_id. Discord matches a
+    persistent button by its exact id, so putting the applicant's id inside it
+    (`door:approve:1536...`) meant the one view registered at startup (`door:approve:0`) matched
+    nothing - the bot did not recognise its own buttons and never answered, which Discord shows to
+    the presser as "Grinder didn't respond in time". Found on the founder's first approval,
+    2026-08-13."""
+    with _lock:
+        return connect().execute("SELECT * FROM applications WHERE message_id=?",
+                                 (message_id,)).fetchone()
