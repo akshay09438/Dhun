@@ -239,13 +239,22 @@ async def _decide(interaction: discord.Interaction, button: discord.ui.Button, *
         await interaction.response.send_message(
             f"All {MEMBER_CAP} seats are taken. Press Approve again to go over the cap.",
             ephemeral=True)
-        button.style = discord.ButtonStyle.danger
-        button.label = "Approve anyway"
         return
+
+    # ANSWER DISCORD FIRST, THEN DO THE WORK. A button has THREE SECONDS to respond or Discord
+    # gives up and shows the presser "Grinder didn't respond in time" - which is what the founder
+    # got on their first real approval, 2026-08-13. Everything below this line makes API calls
+    # (fetch the member, add the role, DM them), and any one of them can outlast three seconds on
+    # a slow connection. Deferring acknowledges the press immediately and buys fifteen minutes.
+    #
+    # It has to be `defer()` on a BUTTON, which defers an UPDATE to the existing message - so the
+    # card is edited in place afterwards via `edit_original_response`, exactly as before. From here
+    # on nothing may use `interaction.response`; it is already used.
+    await interaction.response.defer()
 
     if not store.decide_application(user_id=user_id, state="approved" if approved else "declined",
                                     by=interaction.user.id, when=_now()):
-        await interaction.response.send_message("Somebody just decided that one.", ephemeral=True)
+        await interaction.followup.send("Somebody just decided that one.", ephemeral=True)
         return
 
     granted_note = ""
@@ -256,7 +265,7 @@ async def _decide(interaction: discord.Interaction, button: discord.ui.Button, *
     embed = application_embed(
         user_name=row["user_name"] or str(user_id), user_id=user_id, answers=answers,
         taken=store.approved_count(), state="approved" if approved else "declined")
-    await interaction.response.edit_message(embed=embed, view=None)
+    await interaction.edit_original_response(embed=embed, view=None)
     if granted_note:
         await interaction.followup.send(granted_note, ephemeral=True)
     await _tell_the_applicant(interaction, user_id, approved=approved)

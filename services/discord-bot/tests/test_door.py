@@ -586,3 +586,99 @@ def test_nothing_is_posted_when_no_review_channel_is_configured(monkeypatch):
     _apply(8, "Sam")
     asyncio.run(door.post_for_review(_InteractionStub(_GuildStub(None), user_id=8), ANSWERS))
     assert store.application(8) is not None
+
+
+# --- answering Discord in time ----------------------------------------------------------------
+class _Recorder:
+    """An interaction that records the ORDER of what was done to it."""
+
+    def __init__(self, calls, guild=None, user_id=7):
+        self.calls = calls
+        self.guild = guild
+        self.user = type("U", (), {"id": 1})()
+        self.client = type("C", (), {"guilds": [], "get_user": lambda s, i: None})()
+        outer = self
+
+        class _Resp:
+            async def defer(self, *a, **k):
+                outer.calls.append("defer")
+
+            async def send_message(self, *a, **k):
+                outer.calls.append("send_message")
+
+        class _Follow:
+            async def send(self, *a, **k):
+                outer.calls.append("followup")
+
+        self.response = _Resp()
+        self.followup = _Follow()
+
+    async def edit_original_response(self, **kw):
+        self.calls.append("edit")
+
+
+class _SlowGuild:
+    """Stands in for the real thing: looking a member up and adding a role are API calls, and on a
+    slow connection either can outlast Discord's three-second button deadline."""
+
+    def __init__(self, calls):
+        self.calls = calls
+        self.roles = [type("R", (), {"name": door.MEMBER_ROLE})()]
+
+    def get_member(self, _uid):
+        return None                       # no member cache, exactly like the real bot
+
+    async def fetch_member(self, _uid):
+        self.calls.append("fetch_member")
+        return type("M", (), {"add_roles": self._add_roles})()
+
+    async def _add_roles(self, *a, **k):
+        self.calls.append("add_roles")
+
+    def get_channel(self, _cid):
+        return None
+
+
+def test_approve_answers_discord_BEFORE_it_starts_making_api_calls(monkeypatch):
+    """THE BUG THE FOUNDER HIT ON THEIR FIRST APPROVAL, 2026-08-13: "Grinder didn't respond in
+    time".
+
+    A button gets THREE SECONDS to reply or Discord declares it broken to the person who pressed
+    it. Approve then looks the member up and adds a role - two API calls - before answering, and on
+    a slow connection that is easily over the limit. The fix is to acknowledge the press first and
+    do the work after.
+
+    Asserted as an ORDER, not as "defer is called somewhere": deferring after the slow part would
+    be just as broken and would still contain the word defer."""
+    _apply(7, "Akshay")
+    calls = []
+    guild = _SlowGuild(calls)
+    inter = _Recorder(calls, guild=guild)
+    button = type("B", (), {"custom_id": "door:approve:7"})()
+
+    asyncio.run(door._decide(inter, button, approved=True))
+
+    assert "defer" in calls, "Approve never acknowledged the press - Discord will time it out"
+    assert calls.index("defer") < calls.index("fetch_member"), (
+        f"Approve made an API call before answering Discord: {calls}")
+    assert "edit" in calls, "the card was never updated to say approved"
+    assert store.application(7)["state"] == "approved"
+
+
+def test_a_decision_still_lands_even_if_the_role_grant_fails(monkeypatch):
+    """The decision is recorded before the role work, so a permissions problem cannot leave an
+    application stuck as pending forever with the founder believing they had decided it."""
+    _apply(9, "Sam")
+    calls = []
+
+    class _NoRole(_SlowGuild):
+        def __init__(self, c):
+            super().__init__(c)
+            self.roles = []               # @Member does not exist
+
+    inter = _Recorder(calls, guild=_NoRole(calls))
+    asyncio.run(door._decide(inter, type("B", (), {"custom_id": "door:approve:9"})(),
+                             approved=True))
+
+    assert store.application(9)["state"] == "approved"
+    assert "followup" in calls, "the founder was never told the role could not be granted"
