@@ -36,20 +36,29 @@ CFG = load_config()
 # The founder's own five questions, in their words and their order. The list is the contract: the
 # store keeps answers keyed by these labels, so changing one is a copy change, not a schema change.
 # Discord allows a maximum of five short text inputs in one modal, so this is exactly full.
+# EMAIL IS QUESTION 2 AND IT IS REQUIRED (founder, 2026-08-13). It replaced "What you expect" -
+# their pick, because it overlapped almost entirely with "Why you want to join" and in practice
+# both boxes got the same sentence.
+#
+# Why it had to move INTO the form rather than stay a follow-up: Discord cannot force anybody
+# through a second pop-up. They can dismiss it and walk away, so "optional" was never a setting
+# somebody chose - it was the only honest label for a step nobody can be made to finish. Inside
+# the modal, Discord itself refuses the submission without it.
 QUESTIONS: tuple[tuple[str, str, int], ...] = (
     ("Your name", "What should we call you?", 100),
+    ("Your email", "you@example.com - so we can tell you the outcome", 200),
     ("Your relation to music", "DJ, producer, listener, something else?", 300),
     ("AI tools you have used", "Suno, Midjourney, ChatGPT, none yet...", 300),
     ("Why you want to join", "What made you want in?", 400),
-    ("What you expect", "What are you hoping to get out of it?", 400),
 )
 
-# EMAIL IS A SECOND STEP, NOT A SIXTH QUESTION. Discord allows exactly five text inputs in one
-# modal and the founder's five fill it, so asking for an email inside the same form would mean
-# dropping one of their questions. Instead the confirmation offers a button that opens a one-field
-# modal. Optional on purpose: a required email at the end of a form loses applicants, and the DM
-# already reaches anyone who has not shut their DMs.
-EMAIL_LABEL = "Email"
+# Which question is the email, by NAME not index, so reordering the list cannot silently point
+# validation at the wrong box.
+EMAIL_LABEL = "Your email"
+
+# What Discord must not let somebody skip. Name and email are the two the founder needs in
+# order to reach a person at all; a thin answer to the rest is itself information.
+REQUIRED = ("Your name", EMAIL_LABEL)
 
 # The first fifty seats. Changeable in one place; raising it is painless, lowering it means removing
 # people, so it starts where the validation bar is (~50 real casual creators).
@@ -82,8 +91,11 @@ class ApplicationModal(discord.ui.Modal, title="Ask to join Grinder"):
                 label=label,
                 placeholder=placeholder,
                 max_length=maxlen,
-                required=(i == 0),
-                style=discord.TextStyle.short if maxlen <= 100 else discord.TextStyle.paragraph,
+                required=(label in REQUIRED),
+                # The email is a one-liner whatever its length allowance.
+                style=(discord.TextStyle.short
+                       if maxlen <= 100 or label == EMAIL_LABEL
+                       else discord.TextStyle.paragraph),
             )
             self._inputs.append(ti)
             self.add_item(ti)
@@ -101,13 +113,18 @@ class ApplicationModal(discord.ui.Modal, title="Ask to join Grinder"):
                 "Something went wrong saving that. Try again in a minute.", ephemeral=True)
             return
 
-        await interaction.response.send_message(
-            "Got it. Your application is in.\n\n"
-            "This is a small room on purpose, so it is not instant - you will hear back here or by "
-            "DM.\n\n"
-            "If your DMs are shut you might miss it, so you can leave an email as a backup. "
-            "Optional, and only used to tell you the outcome.",
-            view=EmailPromptView(), ephemeral=True)
+        # SAVED FIRST, WARNED SECOND. A bad-looking address is worth flagging, but refusing
+        # the whole application would throw away four answers they just typed - Discord keeps
+        # nothing from a rejected modal, so they would rewrite the lot. Re-applying replaces
+        # the row, so "press it again" is a real fix rather than a dead end.
+        warning = ""
+        if not looks_like_an_email(answers.get(EMAIL_LABEL, "")):
+            warning = (f"\n\n:warning:  `{answers.get(EMAIL_LABEL, chr(39)+chr(39))}` does not look "
+                       "like an email address, so we may not be able to reach you. Press "
+                       "**Ask to join** again to fix it - it replaces this application "
+                       "rather than adding another.")
+
+        await interaction.response.send_message(waiting_message() + warning, ephemeral=True)
         await post_for_review(interaction.client, user, answers)
 
 
@@ -121,58 +138,6 @@ def looks_like_an_email(value: str) -> bool:
     local, _, domain = v.partition("@")
     return bool(local) and "." in domain and not domain.startswith(".") \
         and not domain.endswith(".")
-
-
-class EmailModal(discord.ui.Modal, title="Your email (optional)"):
-    email = discord.ui.TextInput(label=EMAIL_LABEL, placeholder="you@example.com",
-                                 max_length=200, required=False)
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        value = (self.email.value or "").strip()
-        if value and not looks_like_an_email(value):
-            await interaction.response.send_message(
-                f"`{value}` does not look like an email address. Press the button and try again.",
-                ephemeral=True)
-            return
-        store.add_answer(interaction.user.id, EMAIL_LABEL, value)
-        await interaction.response.send_message(
-            "Saved." if value else "No email saved, that is fine.", ephemeral=True)
-        # The review card was posted before this, so bring it up to date rather than leaving the
-        # founder looking at an application that says nothing about how to reach them.
-        await _refresh_review_card(interaction.client, interaction.user.id)
-
-
-class EmailPromptView(discord.ui.View):
-    """Shown on the confirmation. Short-lived on purpose: it belongs to one ephemeral message the
-    applicant is looking at right now, so it does not need to survive a restart the way the lobby
-    button does."""
-
-    def __init__(self) -> None:
-        super().__init__(timeout=900)
-
-    @discord.ui.button(label="Add your email", emoji="✉️", style=discord.ButtonStyle.secondary)
-    async def add_email(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.send_modal(EmailModal())
-
-
-async def _refresh_review_card(client, user_id: int) -> None:
-    """Re-render an application's card in place. Never fatal: the answers are stored either way,
-    and `/applications` reads the store, not the card."""
-    row = store.application(user_id)
-    if row is None or not row["message_id"]:
-        return
-    for guild in getattr(client, "guilds", []):
-        channel = _review_channel(guild)
-        if channel is None:
-            continue
-        try:
-            msg = await channel.fetch_message(row["message_id"])
-            await msg.edit(embed=application_embed(
-                user_name=row["user_name"] or str(user_id), user_id=user_id,
-                answers=json.loads(row["answers"]), taken=store.approved_count()))
-            return
-        except (discord.HTTPException, discord.NotFound):
-            continue
 
 
 class DoorView(discord.ui.View):
@@ -209,11 +174,6 @@ def application_embed(*, user_name: str, user_id: int, answers: dict,
     for label, _, _ in QUESTIONS:
         value = (answers.get(label) or "").strip()
         e.add_field(name=label, value=value[:1024] if value else "(left blank)", inline=False)
-    email = (answers.get(EMAIL_LABEL) or "").strip()
-    if email:
-        # Only when they gave one. A permanent "Email: (none)" row on every card is noise, and the
-        # DM is the primary route anyway - this is the backup for somebody with DMs shut.
-        e.add_field(name=EMAIL_LABEL, value=email[:1024], inline=False)
     if account_created is not None:
         e.add_field(name="Discord account created", value=account_created.strftime("%d %b %Y"),
                     inline=True)
@@ -416,6 +376,29 @@ def blocked_reason(interaction) -> str | None:
                 "you will hear back.")
     return ("Grinder is invite only right now. Head to the door and ask to join: "
             f"<#{CFG.door_channel_id}>")
+
+
+def waiting_message() -> str:
+    """What somebody reads the moment they apply.
+
+    Founder, 2026-08-13: send them a music link too - "this is the kind of music which you
+    can create, and please wait for the moderators' approval".
+
+    The link matters more than it looks. Between applying and being approved a person has
+    NOTHING: they cannot see a channel, hear a room, or watch anybody else grind. Hearing what
+    Grinder actually makes is the only thing standing between "I am waiting for something
+    good" and "I filled in a form and nothing happened". Configured rather than hard-coded, so
+    the founder can point it at their best mix of the moment without a code change."""
+    lines = [
+        "Got it. Your application is in.",
+        "",
+        "This is a small room on purpose, so it is not instant. Somebody reads every one of "
+        "these by hand, and you will hear back by DM - and by email if your DMs are shut.",
+    ]
+    url = (getattr(CFG, "sample_mix_url", "") or "").strip()
+    if url:
+        lines += ["", "While you wait, this is the kind of thing people make in here:", url]
+    return "\n".join(lines)
 
 
 def lobby_embed() -> discord.Embed:

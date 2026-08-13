@@ -148,20 +148,63 @@ class _Locker(discord.Client):
             print(f"  ok     #{APPLICATIONS_CHANNEL} already exists")
 
         # ---- 4. ONLY NOW: close every other channel to @everyone ----------------------------
-        keep_open = {getattr(self._door, "id", None)}
-        to_close = [c for c in guild.channels
-                    if c.id not in keep_open
-                    and c.overwrites_for(guild.default_role).view_channel is not False]
+        # NEVER TOUCHED by the members-only pass, for opposite reasons:
+        #   #the-door       - must stay visible to everyone, it is the lobby;
+        #   #applications   - must stay ADMIN ONLY. It is closed to @everyone already, and the
+        #                     self-healing check below would otherwise read "closed but @Member not
+        #                     allowed" as damage and helpfully grant every member read access to
+        #                     other people's applications. Caught by a dry run, 2026-08-13.
+        keep_open = {getattr(self._door, "id", None), getattr(self._apps, "id", None)}
+
+        def needs_work(c) -> bool:
+            """A channel needs attention if it is still open to @everyone, OR if it is closed but
+            @Member was never allowed in.
+
+            The second half is not hypothetical: it is the state the founder's live server was left
+            in on 2026-08-13 when the deny succeeded and the grant did not. A script that only
+            looked for "still open" skipped exactly the channels that were broken, which made it
+            useless for the one job that mattered - putting it right."""
+            if c.id in keep_open:
+                return False
+            closed = c.overwrites_for(guild.default_role).view_channel is False
+            granted = role is not None and c.overwrites_for(role).view_channel is True
+            return (not closed) or (not granted)
+
+        to_close = [c for c in guild.channels if needs_work(c)]
         self._say(f"hide {len(to_close)} channel(s) from @everyone, and let @{door.MEMBER_ROLE} "
                   f"see them")
         for c in to_close:
             print(f"           - {c.name}")
         if self.apply and role is not None:
             for c in to_close:
+                # GRANT BEFORE DENY, PER CHANNEL. Learned the hard way on the founder's live server
+                # 2026-08-13: denying @everyone FIRST locked the BOT out of the same channel in the
+                # same instant - its only roles are @Grinder and @everyone, so an @everyone deny is
+                # a deny for the bot too. The allow-@Member call then failed with 50001 and the
+                # server was left half-locked, with real members seeing nothing and the bot unable
+                # to finish OR undo. Only an Administrator toggle by hand got it back.
+                #
+                # The grant-first rule was already applied one level up (give people the role
+                # before restricting anything). This is the same rule at the CHANNEL level, which
+                # is where it was missing.
+                try:
+                    await c.set_permissions(role, view_channel=True,
+                                            reason="The door: members keep access")
+                except discord.HTTPException as e:
+                    print(f"  WARN   could not grant @{door.MEMBER_ROLE} on {c.name}: {e}")
+                    print(f"         SKIPPING {c.name} - it stays open rather than risking a "
+                          f"channel nobody but an admin can see")
+                    continue
+                # And the bot's OWN role, so it never loses the ability to undo what it just did.
+                try:
+                    await c.set_permissions(guild.me.top_role, view_channel=True,
+                                            reason="The door: keep the bot able to undo this")
+                except discord.HTTPException as e:
+                    print(f"  WARN   could not keep the bot's own access on {c.name}: {e}")
+                    print(f"         SKIPPING {c.name} - closing it would strand the bot")
+                    continue
                 try:
                     await c.set_permissions(guild.default_role, view_channel=False,
-                                            reason="The door: members only")
-                    await c.set_permissions(role, view_channel=True,
                                             reason="The door: members only")
                 except discord.HTTPException as e:
                     print(f"  WARN   could not close {c.name}: {e}")

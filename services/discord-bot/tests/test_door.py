@@ -24,10 +24,10 @@ def _tmp_store(tmp_path):
 
 ANSWERS = {
     "Your name": "Akshay",
+    "Your email": "akshay@example.com",
     "Your relation to music": "I DJ at weekends",
     "AI tools you have used": "Suno and Midjourney",
     "Why you want to join": "want to make mashups",
-    "What you expect": "to post clips",
 }
 
 
@@ -149,8 +149,8 @@ def test_the_form_asks_exactly_the_founders_five_questions():
     """Discord allows five short inputs in one modal and the founder named five, so this fits
     exactly. A sixth would silently fail to render."""
     labels = [label for label, _, _ in door.QUESTIONS]
-    assert labels == ["Your name", "Your relation to music", "AI tools you have used",
-                      "Why you want to join", "What you expect"]
+    assert labels == ["Your name", "Your email", "Your relation to music",
+                      "AI tools you have used", "Why you want to join"]
     assert len(door.QUESTIONS) <= 5
 
 
@@ -313,41 +313,35 @@ def test_the_grind_command_checks_membership_before_anything_else():
         "the membership check must run BEFORE the where-am-I check"
 
 
-# --- the email, added as a second step -------------------------------------------------------
-# Discord allows exactly five text inputs in one modal and the founder's five questions fill it,
-# so email is a follow-up button rather than a sixth box - none of their questions get dropped.
-def test_email_is_a_second_step_so_none_of_the_five_questions_are_lost():
-    assert len(door.QUESTIONS) == 5
-    assert door.EMAIL_LABEL not in [label for label, _, _ in door.QUESTIONS]
+# --- the email, now a required question inside the form --------------------------------------
+# Founder, 2026-08-13: "I want the email to be the second thing that users have to fill in
+# compulsorily." It could not stay a follow-up pop-up, because Discord cannot force anybody through
+# one - they can dismiss it and walk away. Inside the modal, Discord refuses the submission.
+def test_the_email_is_question_two_and_discord_will_not_accept_a_blank_one():
+    labels = [label for label, _, _ in door.QUESTIONS]
+    assert labels[1] == door.EMAIL_LABEL, "the email must be the second thing they fill in"
+    assert door.EMAIL_LABEL in door.REQUIRED
+    m = door.ApplicationModal()
+    required = [t.label for t in m._inputs if t.required]
+    assert door.EMAIL_LABEL in required, "Discord would let somebody submit without an email"
 
 
-def test_an_email_can_be_added_after_the_form_and_shows_on_the_card():
-    _apply(1, "Akshay")
-    assert store.add_answer(1, door.EMAIL_LABEL, "akshay@example.com") is True
-    answers = json.loads(store.application(1)["answers"])
-    assert answers[door.EMAIL_LABEL] == "akshay@example.com"
-    e = door.application_embed(user_name="Akshay", user_id=1, answers=answers, taken=0)
-    assert any(f.name == door.EMAIL_LABEL and "akshay@example.com" in f.value for f in e.fields)
+def test_the_form_still_fits_discords_five_box_limit():
+    """A sixth box does not error - it silently fails to render, which would lose a question
+    without anybody noticing."""
+    assert len(door.ApplicationModal()._inputs) <= 5
 
 
-def test_adding_an_email_keeps_every_original_answer():
-    """A merge, not a replace. Losing the five answers to save an email would be a bad trade."""
-    _apply(1, "Akshay")
-    store.add_answer(1, door.EMAIL_LABEL, "a@b.com")
-    answers = json.loads(store.application(1)["answers"])
-    for label, _, _ in door.QUESTIONS:
-        assert label in answers
-
-
-def test_a_card_with_no_email_does_not_show_an_empty_email_row():
-    e = door.application_embed(user_name="A", user_id=1, answers=ANSWERS, taken=0)
-    assert not any(f.name == door.EMAIL_LABEL for f in e.fields)
+def test_the_email_shows_on_the_review_card_like_any_other_answer():
+    e = door.application_embed(user_name="Akshay", user_id=1, answers=ANSWERS, taken=0)
+    rows = [(f.name, f.value) for f in e.fields]
+    assert (door.EMAIL_LABEL, "akshay@example.com") in rows
+    assert sum(1 for n, _ in rows if n == door.EMAIL_LABEL) == 1, "the email is rendered twice"
 
 
 def test_the_email_is_searchable_like_every_other_answer():
     _apply(1, "Akshay")
-    store.add_answer(1, door.EMAIL_LABEL, "someone@gmail.com")
-    assert len(store.pending_applications("gmail")) == 1
+    assert len(store.pending_applications("example.com")) == 1
 
 
 @pytest.mark.parametrize("good", [
@@ -361,13 +355,169 @@ def test_real_looking_addresses_are_accepted(good):
     "akshay at gmail", "no-at-sign.com", "two@@at.com", "trailing@dot.", "@nolocal.com",
     "spaces in@email.com", "nodot@domain", "",
 ])
-def test_typos_are_caught_before_they_are_stored(bad):
+def test_typos_are_caught(bad):
     """Loose on purpose - the job is catching "akshay at gmail", not policing what a valid address
     is. Every strict email regex rejects somebody's real address, and a rejected applicant is a
     worse outcome than one bounced email."""
     assert door.looks_like_an_email(bad) is False
 
 
-def test_adding_an_email_to_nothing_does_not_invent_an_application():
-    assert store.add_answer(999, door.EMAIL_LABEL, "a@b.com") is False
-    assert store.application(999) is None
+# --- what somebody reads while they wait -----------------------------------------------------
+def test_the_waiting_message_says_a_human_reads_it_and_never_promises_a_time():
+    """A promise like "within 24 hours" is one the founder has not made and cannot keep."""
+    msg = door.waiting_message().lower()
+    assert "by hand" in msg
+    for promise in ("24 hours", "tomorrow", "shortly", "soon", "within"):
+        assert promise not in msg
+
+
+def test_a_sample_mix_link_is_included_when_one_is_configured(monkeypatch):
+    """Founder, 2026-08-13: send them a music link too. Between applying and being approved they
+    can see nothing and hear nothing, so this is the only proof that what they are waiting for is
+    worth waiting for."""
+    monkeypatch.setattr(door.CFG, "sample_mix_url", "https://example.com/a-mix", raising=False)
+    assert "https://example.com/a-mix" in door.waiting_message()
+
+
+def test_no_dangling_sentence_when_no_link_is_configured(monkeypatch):
+    """The line is left out entirely rather than left hanging with nothing after it."""
+    monkeypatch.setattr(door.CFG, "sample_mix_url", "", raising=False)
+    msg = door.waiting_message()
+    assert "this is the kind of thing" not in msg.lower()
+    assert msg.strip().endswith(".")
+
+
+def test_the_lock_script_grants_before_it_restricts():
+    """THE thing that could lock the founder out of their own server.
+
+    Read as source rather than run: the script needs a real gateway connection. The order of these
+    two steps is the entire safety story, so it is asserted rather than trusted - restrict-then-
+    grant would leave every existing member, founder included, unable to see the server for as long
+    as the grant takes, and permanently if the script died in between."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "scripts" / "lock_the_door.py").read_text(
+        encoding="utf-8")
+    grant = src.index("keeping existing members in")
+    restrict = src.index("The door: members only")
+    assert grant < restrict, "the lock script restricts before it grants - that locks people out"
+
+
+def test_the_lock_script_is_a_dry_run_unless_told_otherwise():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "scripts" / "lock_the_door.py").read_text(
+        encoding="utf-8")
+    assert 'apply = "--apply" in sys.argv' in src
+    assert 'input(' in src, "applying must require a typed confirmation"
+
+
+# --- the gate the founder actually asked for -------------------------------------------------
+# "Once I approve those users, they will only get to use the Discord bot."
+# Channel permissions alone cannot carry that: `_grinding_allowed_here` allows grinding EVERYWHERE
+# when no grind category is configured, and the lobby is a channel every unapproved person can see
+# by design. So the bot checks who you are, not only where you are.
+class _Perms:
+    def __init__(self, admin=False):
+        self.manage_guild = admin
+        self.administrator = admin
+
+
+class _Role:
+    def __init__(self, name):
+        self.name = name
+
+
+class _User:
+    def __init__(self, uid, roles=(), admin=False):
+        self.id = uid
+        self.roles = [_Role(r) for r in roles]
+        self.guild_permissions = _Perms(admin)
+
+
+class _Interaction:
+    def __init__(self, user):
+        self.user = user
+
+
+@pytest.fixture
+def _door_open(monkeypatch):
+    monkeypatch.setattr(door.CFG, "door_channel_id", 12345, raising=False)
+
+
+def test_with_no_door_configured_nothing_is_blocked(monkeypatch):
+    """The feature is dormant until the founder switches it on. A bot that started refusing people
+    the moment this shipped would be a change to the live server by accident."""
+    monkeypatch.setattr(door.CFG, "door_channel_id", None, raising=False)
+    assert door.blocked_reason(_Interaction(_User(1))) is None
+
+
+def test_a_stranger_cannot_use_the_bot_once_the_door_is_open(_door_open):
+    reason = door.blocked_reason(_Interaction(_User(1)))
+    assert reason is not None and "invite only" in reason
+    assert "<#12345>" in reason, "it should point them at the door"
+
+
+def test_somebody_waiting_is_told_they_are_waiting_not_told_to_apply_again(_door_open):
+    """A pending applicant reading "go and apply" would apply twice and think it was broken."""
+    _apply(1, "Akshay")
+    reason = door.blocked_reason(_Interaction(_User(1)))
+    assert reason is not None and "application is in" in reason
+
+
+def test_an_approved_member_can_use_the_bot(_door_open):
+    assert door.blocked_reason(_Interaction(_User(1, roles=[door.MEMBER_ROLE]))) is None
+
+
+def test_the_founder_is_never_locked_out_of_their_own_bot(_door_open):
+    """They have no @Member role - they are the one who hands it out. Enforcing their own rule
+    against them would be absurd, and would strand them the moment the door closed."""
+    assert door.blocked_reason(_Interaction(_User(1, admin=True))) is None
+
+
+def test_the_grind_command_checks_membership_before_anything_else():
+    """Read as source: /grind needs a gateway to run. The ORDER matters - the membership check has
+    to come before the where-am-I check, because the where-check allows everywhere when no grind
+    category is configured, which would let a stranger grind from the lobby."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "bot.py").read_text(encoding="utf-8")
+    body = src[src.index("async def grind_cmd"):]
+    body = body[:body.index("@bot.tree.command", 1)] if "@bot.tree.command" in body[1:] else body
+    assert "door.blocked_reason" in body, "/grind does not check membership at all"
+    assert body.index("door.blocked_reason") < body.index("_grinding_allowed_here"), \
+        "the membership check must run BEFORE the where-am-I check"
+
+
+def test_the_lock_script_opens_a_channel_to_members_BEFORE_closing_it_to_everyone():
+    """THE BUG THAT BIT THE FOUNDER'S LIVE SERVER, 2026-08-13.
+
+    The script denied @everyone first and allowed @Member second. The bot's only roles are
+    @Grinder and @everyone, so denying @everyone locked the BOT out of that same channel in the
+    same instant - the allow-@Member call then failed with 50001 Missing Access, and the server was
+    left half-locked: real members could see nothing, and the bot could neither finish nor undo it.
+    Recovering needed the founder to grant Administrator by hand.
+
+    The grant-before-restrict rule was already asserted one level up, on handing out the role. This
+    asserts it at the CHANNEL level, which is where it was actually missing - the test existed but
+    was pointed at the wrong step."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "scripts" / "lock_the_door.py").read_text(
+        encoding="utf-8")
+    body = src[src.index("for c in to_close:"):]
+    grant_member = body.index("The door: members keep access")
+    keep_bot = body.index("The door: keep the bot able to undo this")
+    deny_everyone = body.index("The door: members only")
+    assert grant_member < deny_everyone, \
+        "the script denies @everyone before allowing @Member - that half-locks the server"
+    assert keep_bot < deny_everyone, \
+        "the script denies @everyone before securing its OWN access - that strands the bot"
+
+
+def test_a_channel_is_left_open_rather_than_locked_with_nobody_able_to_see_it():
+    """If the grant fails, the channel must stay OPEN. A channel closed to @everyone with no
+    @Member allow is visible to admins only - worse than not locking it at all, and it is exactly
+    the state the founder's server ended up in."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "scripts" / "lock_the_door.py").read_text(
+        encoding="utf-8")
+    body = src[src.index("for c in to_close:"):src.index("# ---- 5.")]
+    assert body.count("continue") >= 2, \
+        "a failed grant must skip the channel, not fall through to closing it"
