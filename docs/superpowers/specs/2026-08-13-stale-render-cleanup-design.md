@@ -63,7 +63,8 @@ This also strengthens two behaviours that already key on the same timestamp: `sw
 4. The allowlist and non-recursion hold on the new path: sources, stems, analyses, `library/`, `listening/`, `tuning_renders/` are never candidates.
 5. `maybe_sweep()` behaviour and return shape are unchanged; `_MIN_FREE_GB` and `_TARGET_FREE_GB` are unchanged.
 6. Serving a render stamps it, at most once per day per file.
-7. Requesting a deleted mix rebuilds and serves it.
+7. ~~Requesting a deleted mix rebuilds and serves it.~~ **CORRECTED 2026-08-13 — this was never true as written, and is now stated honestly.** `GET /mix/{id}/audio` returns **404**; it does not rebuild. Rebuilding happens through the normal flow (`POST /mix` re-renders under the same content-addressed id, and `_run_set` re-renders a missing member), so "ask for it again and you get it back" holds for a user making a mix — but NOT for anything holding a stored URL. Two such holders exist: the ops dashboard, which persists `audio_url` for every event (`events.py:273`) and renders a play button per row (`AdminScreen.tsx:386`), and the Export screen. **Export is fixed** (it now reports the loss instead of saving a corrupt `.wav`). **The dashboard's history buttons will 404 for anything older than the window** — accepted, because `keep()` covers what the founder actually wants to keep.
+8. A render pinned to `#best-mixes` is never removed by either sweep, however old it gets.
 
 ## Testing
 

@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+from app import storage  # for mark_used on a reused pitch cache; storage imports nothing from here
 from app.config import settings
 
 _HELPER = Path(__file__).parent / "pitch_helper"
@@ -88,6 +89,14 @@ def shifted_vocal(song_id: str, vocal_wav: Path, semitones: int, formant: bool =
             f"pitch shift {int(semitones):+d} st exceeds the ±{_PITCH_HARD_CAP} st hard cap — declining")
     cache = cache_path(song_id, int(semitones), formant)
     if cache.exists():
+        # STILL WANTED — tell the routine age sweep. `.pitchshift.wav` is on the evictable
+        # allowlist, and nothing else stamps it: a shift used in every mix of a popular pair would
+        # still age out on the clock from when it was first computed. That is worse than it sounds.
+        # Re-creating one is NOT the "~seconds" the storage comment claims: it re-runs the helper
+        # under a two-identical-renders verification loop that can raise PitchError, and a
+        # PitchError DECLINES the mix (see this function's own docstring). So an evicted pitch
+        # cache can turn a mix that worked yesterday into a mix that refuses to build.
+        storage.mark_used(cache)
         return cache  # airtight: same (content-id, shift, helper) always yields the same bytes
     y, sr = sf.read(str(vocal_wav), dtype="float32", always_2d=True)
     work = Path(tempfile.mkdtemp(prefix="pitch_", dir=str(settings.data_dir)))

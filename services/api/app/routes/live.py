@@ -18,6 +18,7 @@ from app.audio import pitch
 from app.audio.analysis import analysis_path
 from app.audio.stems import stem_path
 from app.config import settings
+from app.storage import mark_used
 from app.models import LiveOp, MixPlan, TrackAnalysis
 from app.planner import validate
 from app.planner.keys import resolve_key_shift
@@ -140,6 +141,10 @@ def live_vocal_bus(mix_id: str):
         raise HTTPException(404, "Not found.")
     out = _vocal_bus_path(mix_id)
     if out.exists():
+        # `.livearr.wav` is on the evictable allowlist, so the routine age sweep counts from LAST
+        # PLAYED here too — otherwise a live bus somebody uses daily would still age out on the
+        # clock from when it was written. Same call, same reason, as in routes/mix.py.
+        mark_used(out)
         return FileResponse(out, media_type="audio/wav")
     if not _mixplan_path(mix_id).exists():
         raise HTTPException(409, "Make the mix first so I can prepare the live vocals.")

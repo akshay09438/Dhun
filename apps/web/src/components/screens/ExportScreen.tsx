@@ -17,7 +17,26 @@ export default function ExportScreen({
 
   async function handleDownload() {
     if (!audioPath) return;
-    const res = await fetch(`${API_BASE}${audioPath}`);
+    // CHECK THE RESPONSE BEFORE SAVING IT. Without this, an error response is saved verbatim as a
+    // `.wav` — the user gets a file that will not play, containing the words `{"detail":"Not
+    // found."}`, with nothing on screen to say anything went wrong. The render can legitimately be
+    // gone by now: routine cleanup removes a mix nobody has played in a week, and the audio route
+    // answers 404 rather than re-rendering. Making the mix again rebuilds it, so say that.
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}${audioPath}`);
+    } catch {
+      setNote("Couldn't reach the mixer. Check it's running and try again.");
+      return;
+    }
+    if (!res.ok) {
+      setNote(
+        res.status === 404
+          ? "This mix isn't on disk any more. Make it again — same two songs give you the same mix back."
+          : "Couldn't download the mix. Try again.",
+      );
+      return;
+    }
     const blob = await res.blob();
     const href = URL.createObjectURL(blob);
     const a = document.createElement("a");
