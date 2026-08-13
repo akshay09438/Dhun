@@ -26,6 +26,7 @@ import brand
 import editbudget
 import media
 import server_setup
+import door
 import showcase
 import speakers as speakers_mod
 import store
@@ -68,6 +69,12 @@ class PromptDJBot(discord.Client):
         self._synced_guilds: set[int] = set()
 
     async def setup_hook(self) -> None:
+        # PERSISTENT VIEWS, re-registered on every start. The lobby button sits in a channel for
+        # weeks and the founder reads a pool of application cards that has been building for days;
+        # without this both go dead after a restart, and a dead "Ask to join" button reads to a
+        # newcomer as a community that does not work.
+        self.add_view(door.DoorView())
+        self.add_view(door.ReviewView())
         await self.refresh_catalog()
         await self.bring_extra_voices_online()
         try:
@@ -855,6 +862,39 @@ async def grind_cmd(interaction: discord.Interaction) -> None:
         return
     view = GrindBuilderView(interaction.user.id)
     await interaction.response.send_message(embed=view.embed(), view=view)
+
+
+@bot.tree.command(name="applications",
+                  description="Read who is waiting to join. Add a word to narrow it down.")
+@app_commands.describe(contains="Only show applications mentioning this word, e.g. suno")
+async def applications_cmd(interaction: discord.Interaction, contains: str = "") -> None:
+    """The POOL, not a feed. The founder is choosing the first fifty, so the applications have to
+    be readable side by side - a card that arrives, is decided and scrolls away is
+    first-come-first-served wearing a review flow.
+
+    `contains` is a plain substring search over the answers. It is a filing cabinet, never a
+    judgement: Grinder does not rank, score or recommend an applicant."""
+    if not interaction.user.guild_permissions.manage_guild:
+        await interaction.response.send_message(
+            "That one is for whoever runs the server.", ephemeral=True)
+        return
+    rows = store.pending_applications(contains or None)
+    taken = store.approved_count()
+    if not rows:
+        note = (f"Nobody waiting who mentions {contains!r}." if contains
+                else "Nobody is waiting.")
+        await interaction.response.send_message(
+            f"{note}  ({taken} of {door.MEMBER_CAP} seats taken)", ephemeral=True)
+        return
+    shown = rows[:5]      # five embeds is Discord's per-message limit
+    embeds = [door.application_embed(
+        user_name=r["user_name"] or str(r["user_id"]), user_id=r["user_id"],
+        answers=json.loads(r["answers"]), taken=taken) for r in shown]
+    more = ("" if len(rows) <= len(shown)
+            else f"\nShowing {len(shown)} of {len(rows)}. Narrow it with a word.")
+    await interaction.response.send_message(
+        f"{len(rows)} waiting  ({taken} of {door.MEMBER_CAP} seats taken){more}",
+        embeds=embeds, ephemeral=True)
 
 
 @bot.tree.command(name="mygrinds", description="Everything you have made.")
