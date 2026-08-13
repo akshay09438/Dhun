@@ -26,7 +26,7 @@ from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from app import events, failure, renderq
+from app import events, failure, renderq, storage
 from app.audio import chroma, pitch
 from app.audio.analysis import analysis_path
 from app.audio.stems import stem_path
@@ -45,7 +45,7 @@ from app.planner.keys import CAP_SEMITONES, resolve_key_shift
 from app.planner.plan import (MixDeclined, build_mix_plan, effect_pool_enabled,
                               exit_fade_enabled, finish_beat_vocal_enabled,
                               finish_sentences_enabled, force_tempo_enabled, rule4_enabled)
-from app.storage import maybe_sweep, path_for
+from app.storage import mark_used, maybe_sweep, path_for
 
 # workers/ lives at the repo root; put it on the path so we can import the engine.
 _REPO = Path(__file__).resolve().parents[4]
@@ -780,6 +780,20 @@ def mix_status(mix_id: str) -> Mix:
     return _with_queue_state(Mix(mix_id=mix_id, status=status, message=message))
 
 
+@router.post("/keep/{render_id}")
+def keep_render(render_id: str):
+    """Protect a render from routine tidying, permanently. Called when a grind is pinned to
+    #best-mixes — the founder's rule of 2026-08-13 is that those are never removed.
+
+    Takes a mix id OR a set id: both are 64-hex render ids and the marker is id-shaped, not
+    kind-shaped. Deliberately succeeds even when the render is not on disk right now — the marker
+    is about intent, and a mix rebuilt later under the same id is protected the moment it exists.
+    Idempotent, so a double-tap of 📌 is free."""
+    if not storage.keep(render_id):
+        raise HTTPException(400, "Not a valid render id.")
+    return {"render_id": render_id, "kept": True}
+
+
 @router.get("/mix/{mix_id}/audio")
 def get_mix_audio(mix_id: str):
     """Serve the finished mix to the user: its best-parts ~180s highlight (the full render stays on disk
@@ -788,4 +802,9 @@ def get_mix_audio(mix_id: str):
         raise HTTPException(404, "Not found.")
     if not _mix_wav(mix_id).exists():
         raise HTTPException(404, "Not found.")
+    # Playing a mix is what keeps it alive: the routine age sweep counts from LAST PLAYED, not from
+    # when it was rendered. Both files, because the highlight is what we serve but the full render
+    # is what Regenerate and set-joining read — a played mix keeps its whole family. Bookkeeping
+    # only; `mark_used` never raises, so a stamp that cannot be written costs at worst a re-render.
+    mark_used(_mix_wav(mix_id), _bestparts_wav(mix_id))
     return FileResponse(_ensure_bestparts(mix_id), media_type="audio/wav")

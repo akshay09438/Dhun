@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import logging
 
 import httpx
+
+log = logging.getLogger("promptdj.discord")
 
 # Every request this client makes is tagged with where it came from, so the ops dashboard can
 # separate Discord activity from web activity. Attribution only — the engine records it and
@@ -112,6 +115,20 @@ class PromptDJClient:
         if r.status_code not in (200, 202):
             raise EngineError(_friendly(r))
         return r.json()["mix_id"]
+
+    async def keep_render(self, render_id: str) -> bool:
+        """Ask the engine never to routine-tidy this render. Used when a grind is pinned to
+        #best-mixes: the founder's rule is that those are the ones that must not be removed.
+
+        Never raises. A pin that posted successfully must not report failure because a housekeeping
+        marker could not be written — the worst case is that the mix ages out of the local cache
+        later, while the MP3 stays in the showcase channel where people actually listen to it."""
+        try:
+            r = await self._client.post(f"/keep/{render_id}")
+            return r.status_code == 200
+        except Exception:  # noqa: BLE001 — bookkeeping, never fatal to a successful pin
+            log.warning("could not mark %s as kept", render_id, exc_info=True)
+            return False
 
     async def mix_status(self, mix_id: str) -> MixResult:
         r = await self._client.get(f"/mix/{mix_id}")

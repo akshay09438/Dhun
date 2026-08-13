@@ -2,6 +2,34 @@
 
 _How it is built. Starts as the intended design (from the PRD + discovery deltas); becomes as-built as code lands. Living document — if code and this doc disagree, the code wins and this doc is corrected. Full background: [reference/PRD.md](reference/PRD.md)._
 
+> **LATEST — 2026-08-13 (routine stale-render cleanup, and the staged `disk-sweep-floors-and-age` card WITHDRAWN; branch `feat/stale-render-cleanup`).** **`workers/render.py` and `services/api/app/planner/validate.py` are UNTOUCHED; no mix changes byte-for-byte.** `services/api/app/storage.py` IS touched — additively, via the confirm-and-apply flow.
+>
+> **(1) WHY THE STAGED CARD WAS BINNED, because this is the reusable lesson.** The card was staged **2026-08-11 18:36 UTC** and argued the auto-clean floor (2.0 GB) sat inside the render-failure zone. True when written. **`janitor.py` landed 2026-08-12 13:28 IST — thirteen hours later — and solved exactly that**, with a futility brake the card has no equivalent of. The card was never re-checked against it. Two independent adversarial reviews both returned `unsafe` on the same point: the card raised `storage.py`'s own floors to 4.0/6.0 and called `sweep()` **from the render hot path with no brake**, so at any reading under 4.0 GB free every grind would empty the entire render cache chasing a 6 GB target it could not reach — the already-measured Windows-Update scenario, turned from a near-miss into a per-render certainty. **A queued change must be re-verified against the tree as it is now; its premise can be repaired by other work while it waits.**
+>
+> **(2) `storage.sweep_old()` — the routine half, additive.** Deletes evictable renders whose stamp is older than `_MAX_RENDER_AGE_DAYS` (7.0, env `PROMPTDJ_RENDER_MAX_AGE_DAYS`, resolved at CALL time), **regardless of free disk**. Same five-suffix allowlist, same top-level-only `iterdir`, so sources/stems/analyses/`library/`/`listening/`/`tuning_renders/` are non-candidates by construction. **`_MIN_FREE_GB` and `_TARGET_FREE_GB` stay at 2.0/3.0 and `maybe_sweep()` is untouched** — deliberately, and now commented as such: they must remain _under_ `janitor.DEFAULT_CUSHION_GB` (6.0), because the brakeless backstop on the render path is only safe while its target is low. **The grace is now a FLOOR, not a default:** `min_age_secs = max(window, _EVICT_MIN_AGE_SECS)`, so no caller — including `sweep_old(0)` from an ops script — reaches a render being written.
+>
+> **(3) `janitor.run_once()` runs the age sweep FIRST, on every tick,** before the dry-run preview that feeds the futility decision — so the brake decides on post-tidy numbers and has less useful cache left to spend. Deliberately _not_ behind the brake: the brake stops useful cache being destroyed while chasing an unreachable cushion; the age sweep chases no cushion. Wrapped in its own `try`, and every return path goes through `_out()` so a quiet cycle still reports what was tidied.
+>
+> **(4) `storage.mark_used()` + three route call sites — "last played", not "last written".** `routes/mix.py` (both `<id>.mix.wav` AND `<id>.bestparts.wav`, so a played mix keeps its whole family — the full render is what Regenerate and set-joining read), `routes/set.py`, and `routes/live.py` (`.livearr.wav` is evictable and was previously never stamped). `os.utime` to now, **but only if the existing stamp is over a day old** — `services/api/data` sits inside the OneDrive-synced tree, so stamping every play would re-upload a multi-MB WAV every time. Never creates a file, never raises: it sits on the serving path, and a stamp that cannot be written costs at worst one re-render.
+>
+> **(5) `app/envnum.py` — `_env_float` extracted out of `janitor.py`** so the age window and the disk cushion cannot drift apart. **`math.isfinite` is load-bearing there, and its absence was a real defect the review caught:** `float("nan")` parses, every NaN comparison is False, so a bare `val <= 0` guard passes it through as "positive" — and `sweep_old`'s `now - mtime < nan` then read False for **every** file, deleting a render written that second, straight through the floor described in (2) as unbreachable. `float("inf")` would likewise have put `interval_secs()` into an `asyncio.sleep(inf)` the janitor never wakes from. Both are rejected at the door; `sweep_old` independently falls back to the default if handed a non-finite window (defence in depth — the same value decides what gets deleted).
+>
+> **(6) A TOCTOU the review executed, now closed.** `sweep_old` built its candidate list, then deleted from it without re-reading the stamp — so a mix played _during_ the loop was still deleted, and an unlink-while-streaming was measured to SUCCEED on Windows as well as POSIX. The delete loop now re-`stat`s and re-checks the age immediately before each `unlink`. (The same race exists in `sweep()` and is left alone: pre-existing, and it only fires under 2 GB free. Recorded, not silently inherited.)
+>
+> **(7) KNOWN LIMIT, deliberately not fixed.** The evictable fence is suffix-only, not id-shaped — a hand-placed top-level file named e.g. `library_backup.set.wav` would be swept, unlike `path_for`'s strict 64-hex `fullmatch`. Tightening it to require a 64-hex prefix would be strictly safer and was considered, but it would break an existing fixture (`test_cache_sweep.py` uses `top.mix.wav`), and the real data dir has zero such files. Recorded so the next person does not rediscover it as a surprise.
+>
+> **(8) HONEST LIMIT WITH TEETH: "it just rebuilds" holds only within one `ENGINE_VERSION`.** `mix_id_for` folds ~10 version tags plus `_CHAIN_CONFIG_HASH` into the id, and it has been bumped repeatedly. Re-rendering the same id is deterministic (fixed seeds), but after a version bump a swept take's exact audio is **not** reproducible under any id. `mark_used` is the mitigation — anything actually played stays; `keep()` (9) is the guarantee for anything showcased.
+>
+> **(9) `storage.keep()` / `is_kept()` — THE FOUNDER RULE, and the one exemption in the whole policy.** _"The mixes which will be in the best mixes tab should not be removed, and other than that, everything should be removed"_ (2026-08-13). A marker file under `data/keep/<render_id>`; `_evictable_files` reads the set once per sweep and skips any render whose id matches. **Placed in `_evictable_files`, not in `sweep_old`, deliberately** — that is the single place BOTH sweeps draw candidates from, so a pinned mix is exempt from the emergency pressure sweep too. "Should not be removed" was read as absolute. **The trade-off is real and recorded:** a pinned mix is no longer available for the disk to reclaim under pressure; `sweep`'s existing "evicted everything and still missed the target" warning is what will say so if the showcase ever grows enough to matter. Markers live in a SUBDIRECTORY because neither sweep recurses — a protection the swept thing could delete would be no protection. `keep()` applies `path_for`'s strict 64-hex `fullmatch` (the id reaches the filesystem as a name) and is idempotent, so a double-tap of 📌 is free. It records **intent, not a file**: pinning something already swept still protects the rebuild, since an id is a hash of its inputs. Wired via `POST /keep/{render_id}` (`routes/mix.py`) ← `api_client.keep_render` ← `showcase.pin`, only after the showcase post succeeds, and never fatal to a successful pin. Note the MP3 attached to `#best-mixes` already lived in Discord permanently; what this protects is the local full-quality master **and the ability to pin an old grind at all** — `showcase.pin` re-reads the WAV off disk, so a swept grind could not be carried up.
+>
+> **(10) THE PER-TICK CAP — `_SWEEP_OLD_MAX_PER_TICK = 10`, oldest first.** `sweep_old` trusts mtime alone, and mtime is not only set by us: `shutil.copy2`, robocopy, an Explorer copy, a OneDrive re-materialisation and a forward clock jump all hand back files that read as instantly ancient. Adversarial review executed exactly that and lost 5 of 5 brand-new renders in one tick. The cap does not make a wrong mtime right — it makes the consequence slow, logged and interruptible instead of instant and total, and it is why `sweep_old` now sorts oldest-first like `sweep` (with a cap, WHICH ten go is a real decision).
+>
+> **(11) `_mark_used_interval()` — the stamp interval is COUPLED to the window.** A flat 86400 was a silent trap: at any `PROMPTDJ_RENDER_MAX_AGE_DAYS` under a day, playing a mix refused to re-stamp it, so the next tick deleted the file being listened to. Now `min(86400, window/4)`; unchanged at the 7-day default.
+>
+> **(12) THE HOLLOW-TEST FINDING — the most important thing this review produced.** A 16-mutation run proved that **three of the safety lines this change's own comments credit to "adversarial review"** had no test whatsoever: deleting the TOCTOU re-stat, the `math.isfinite` fallback in `sweep_old`, or `math.isfinite` in `envnum` each left the entire suite green. The only thing that caught them was a throwaway script in a staging folder that disappears when the change is applied. The fixes were real; their protection was imaginary. Backfilled: `tests/test_stale_render_cleanup.py` is now 42 tests, and all six mutations (including the new cap, the coupled interval, and the oldest-first ordering) go red. **The lesson: on a dangerous surface, a fix without a mutation-checked test is a comment, not a guarantee.**
+>
+> **(13) ⚠️ SEPARATE, PRE-EXISTING, AND BIGGER THAN THIS CHANGE: the test suite can delete the real render cache.** There is **no `conftest.py` anywhere in `services/api`**, so nothing globally isolates `settings.data_dir`; each test file redirects it by hand, per test. But renders run on `renderq`'s daemon worker threads and call `maybe_sweep()` inside the job (`mix.py:469`, `set.py:240`) — so a job finishing after its test's monkeypatch is undone sweeps the **real** `services/api/data`. Observed 2026-08-13: the real folder went from **39 evictable renders / 1.21 GB to zero** across one full-suite run, free disk landing just under `_TARGET_FREE_GB = 3.0` — `sweep()`'s exact signature — with no API server running. This is very likely the true explanation for the founder-made mix that "vanished" on 2026-08-12 and was recorded against the janitor. **Not caused by this change, and not fixed here; a global `conftest.py` is a dangerous-path file needing its own approval.** It is the highest-value next job on this surface.
+>
 > **LATEST — 2026-08-12 night 2 (the disk defends itself, the room stops going silent, and the ARM story narrows a third time; branch `zuko/goodnight-2026-08-12-night2`).** **`workers/render.py` and `services/api/app/planner/validate.py` are UNTOUCHED; no mix changes byte-for-byte. `services/api/app/storage.py` is BYTE-IDENTICAL — deliberately.**
 >
 > **(1) `app/janitor.py` — a disk trigger that lives APART from the disk policy.** The auto-clean only woke below 2.0 GB free, inside the zone where renders fail (the failure diagnosis measured 20.7% failures near that line). A timer now keeps free space above a **6 GB cushion** (`PROMPTDJ_DISK_CUSHION_GB`, resolved at CALL time not import), checking every 60s (`PROMPTDJ_DISK_CHECK_SECS`) via `asyncio.to_thread` off a FastAPI `lifespan`. **The split is the design:** `storage.py` owns the POLICY (five-suffix allowlist, oldest-first, 300s grace, never recurses) and is dangerous precisely because it deletes user mixes; `janitor.py` owns only the TRIGGER. Consequence: a background cleaner needed **no edit to the dangerous file**, and an R2 migration swaps the trigger ("free bytes" → age/cost) leaving every safety rule untouched. **The FUTILITY BRAKE** is new: it calls `storage.sweep(dry_run=True)` first and deletes **nothing** when `free + reclaimable < cushion`, because the pressure is then not ours. Motivated by a live measurement — free disk fell 9.28 → 5.86 GB during one session with Prompt-DJ's data folder unchanged and **Windows Update holding 7.81 GB**; a naive cleaner would have destroyed all 3.54 GB of render cache and still missed. `storage.sweep` already warned about this, but only _after_ emptying the cache. Proven on the real disk both ways (skip-healthy at 9.10 GB / 6 GB cushion; skip-futile at a forced 40 GB cushion, reporting a 27.36 GB shortfall). 14 tests.
@@ -537,7 +565,7 @@ called `vc.move_to(...)` and physically pulled the bot out of the room it was in
 
 **The subtlety that makes or breaks it.** A channel object belongs to the client that fetched it,
 and `voice_player.play_in` reads `channel.guild.voice_client`, which is per-client state. Handing it
-the main bot's channel object connects the *main bot* no matter which identity was chosen — both
+the main bot's channel object connects the _main bot_ no matter which identity was chosen — both
 rooms would quietly share one connection, sounding exactly like the bug being fixed and looking
 healthy in the log. So `Voice.resolve(room)` returns **that identity's own copy** of the room
 (`speaker.client.get_channel(room.id)`) before anything plays, and `Deck.voice_client(room)` reads
@@ -546,11 +574,11 @@ the connection back the same way. **`voice_player.py` itself is unchanged.**
 **Scheduling rules**, all deliberately small:
 
 - A room asks for a voice when it wants to play. `None` is a normal answer — the grind waits and the
-  card says so, with its position among grinds for *its own* room.
+  card says so, with its position among grinds for _its own_ room.
 - When a room runs out of its own work it checks whether **another** room has a real grind waiting
   with no identity, and hands its voice over: **a fresh grind anywhere outranks a replay anywhere**,
   the same rule that already lets a new grind interrupt the station in its own room. With one
-  identity this *is* the old behaviour — the single voice moves on to whoever is next.
+  identity this _is_ the old behaviour — the single voice moves on to whoever is next.
 - A room that empties holds its identity for `EMPTY_ROOM_GRACE_SECS` (60) before releasing and
   disconnecting. A hold, not a stop-and-restart.
 
@@ -590,13 +618,13 @@ anything Grinder acts on.
 
 **What starts music now, and nothing else does:**
 
-| | |
-|---|---|
-| `/grind` | plays in the room its owner is sitting in |
-| `/play` | picks up whatever `/stop` paused in that room; with nothing paused it says so |
-| a queued grind reaching the front | plays when the room's voice frees up |
-| arriving in a room | **nothing** — it only cancels that room's empty-room timer |
-| a mix ending with an empty queue | **nothing** — the room goes quiet and `release_voice()` leaves |
+|                                   |                                                                               |
+| --------------------------------- | ----------------------------------------------------------------------------- |
+| `/grind`                          | plays in the room its owner is sitting in                                     |
+| `/play`                           | picks up whatever `/stop` paused in that room; with nothing paused it says so |
+| a queued grind reaching the front | plays when the room's voice frees up                                          |
+| arriving in a room                | **nothing** — it only cancels that room's empty-room timer                    |
+| a mix ending with an empty queue  | **nothing** — the room goes quiet and `release_voice()` leaves                |
 
 **Two bugs the founder's own testing found, both in how rooms were kept apart.**
 

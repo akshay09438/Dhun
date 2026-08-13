@@ -54,6 +54,18 @@ async def pin(ctx, interaction: discord.Interaction) -> str:
         store.mark_unpinned(ctx.number)
         log.exception("pin failed")
         return f"Could not pin it: {e}"
+
+    # PINNED = KEEP IT. Founder rule 2026-08-13: the mixes in the best-mixes tab are the ones that
+    # must never be removed, and everything else may go. The MP3 above already lives in Discord for
+    # good; this protects the local full-quality render from routine tidying, which is also what
+    # lets somebody play or re-pin this grind months from now instead of finding it swept.
+    # Only AFTER the post succeeded — a pin that failed should leave nothing behind.
+    if ctx.ref_id:
+        import bot as _bot  # local import: showcase is imported by bot, so this cannot be top-level
+        # `_bot.bot` — the module is `bot` and the client instance inside it is ALSO called `bot`.
+        await _bot.bot.api.keep_render(ctx.ref_id)
+    else:
+        log.warning("grind #%s pinned with no ref_id — its render cannot be protected", ctx.number)
     return f"Grind #{ctx.number} is up in {channel.mention}."
 
 

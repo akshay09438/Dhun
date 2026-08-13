@@ -37,7 +37,7 @@ from app.planner import fence
 from app.planner import rule_shuffle
 from app.planner.plan import force_tempo_enabled
 from app.routes import mix as mixroute
-from app.storage import maybe_sweep
+from app.storage import mark_used, maybe_sweep
 
 # workers/ lives at the repo root; mixroute already puts it on the path, but be defensive.
 _REPO = Path(__file__).resolve().parents[4]
@@ -278,6 +278,13 @@ def _run_set(set_id: str, pairs: list[tuple[str, str, int]], user_id: str | None
                 # synchronous — reuses the shipped pipeline; attributed to this set's device, marked via='set'
                 mixroute._run_mix(mid, s1, s2, "", 1, rule, user_id=user_id, via="set",
                                   source=source, user_name=user_name)
+            else:
+                # REUSED FROM CACHE — so it is still wanted, and the routine age sweep must be told.
+                # A set's members are never served directly (only the joined `.set.wav` is), so
+                # nothing else stamps them: a set somebody plays every day would keep its own file
+                # fresh while the mixes it is built from silently aged out underneath it. They would
+                # be re-rendered above rather than lost, but that is a needless 25-30s per member.
+                mark_used(wav)
             plan_file = mixroute._plan_path(mid)
             if not plan_file.exists():  # the pipeline declined this pair
                 _status, reason = mixroute._jobs.get(mid, ("error", "This pair couldn't be mixed."))
@@ -466,4 +473,5 @@ def get_set_audio(set_id: str):
     wav = _set_wav(set_id)
     if not wav.exists():
         raise HTTPException(404, "Not found.")
+    mark_used(wav)  # last PLAYED, not last rendered — see the same call in routes/mix.py
     return FileResponse(wav, media_type="audio/wav")

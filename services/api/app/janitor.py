@@ -35,9 +35,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 from app import storage
+from app.envnum import env_float
 
 log = logging.getLogger(__name__)
 
@@ -83,28 +83,8 @@ class Decision:
                 "cushion_gb": self.cushion_gb, "shortfall_gb": round(self.shortfall_gb, 2)}
 
 
-def _env_float(name: str, default: float) -> float:
-    """Resolved at CALL time, never captured as a default argument.
-
-    Not a stylistic preference: the previous night's attempt at this feature wrote
-    `min_age_secs: float = _EVICT_MIN_AGE_SECS`, which freezes the value at import and silently
-    breaks every runtime override. Five tests caught it. Same trap, deliberately avoided."""
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        val = float(raw)
-    except (TypeError, ValueError):
-        log.warning("%s=%r is not a number — using the default %.1f", name, raw, default)
-        return default
-    if val <= 0:
-        log.warning("%s=%r must be positive — using the default %.1f", name, raw, default)
-        return default
-    return val
-
-
 def _cushion_from_env() -> float:
-    return _env_float(_ENV_CUSHION, DEFAULT_CUSHION_GB)
+    return env_float(_ENV_CUSHION, DEFAULT_CUSHION_GB)
 
 
 def cushion_gb() -> float:
@@ -113,7 +93,7 @@ def cushion_gb() -> float:
 
 
 def interval_secs() -> float:
-    return _env_float(_ENV_INTERVAL, DEFAULT_INTERVAL_SECS)
+    return env_float(_ENV_INTERVAL, DEFAULT_INTERVAL_SECS)
 
 
 def decide(current_free_gb: float, could_free_gb: float, cushion_gb: float) -> Decision:
@@ -144,6 +124,30 @@ def run_once(*, cushion_gb: float | None = None) -> dict:
     """
     target = cushion_gb if cushion_gb is not None else _cushion_from_env()
 
+    # ROUTINE TIDYING — FIRST, AND ON EVERY TICK. Renders nobody has played in the age window go
+    # BEFORE free space is measured, so the futility decision below is made on honest numbers and
+    # has less still-useful cache left to spend.
+    #
+    # Deliberately NOT behind the futility brake. The brake exists to stop USEFUL cache being
+    # destroyed while chasing a cushion that cannot be reached; this chases no cushion and removes
+    # only what the policy already calls dead weight. Never fatal: a tick that cannot tidy must
+    # still go on to defend the cushion.
+    tidied: dict | None = None
+    try:
+        aged = storage.sweep_old()
+        if aged["evicted"]:
+            tidied = {k: aged[k] for k in ("evicted", "freed_gb", "free_gb_after")}
+            log.info("disk janitor: tidied %d render(s) not played in %.0f days — %s",
+                     aged["evicted"], storage.max_render_age_days(), tidied)
+    except Exception as e:  # noqa: BLE001 — see docstring; surviving to the next tick is the point
+        log.warning("disk janitor: routine tidying failed this cycle (%s)", e)
+
+    def _out(report: dict) -> dict:
+        """Every exit reports what routine tidying did, so a quiet cycle is still legible."""
+        if tidied is not None:
+            report["tidied"] = tidied
+        return report
+
     try:
         # A dry run answers both questions in one pass: `free_gb_after` is measured and nothing was
         # deleted, so it IS the current free space; `freed_gb` is what a real sweep would reclaim.
@@ -152,7 +156,7 @@ def run_once(*, cushion_gb: float | None = None) -> dict:
         could = float(preview["freed_gb"])
     except Exception as e:  # noqa: BLE001 — see docstring; surviving to the next tick is the point
         log.warning("disk janitor: could not read the disk this cycle (%s)", e)
-        return {"action": ERROR, "detail": str(e)}
+        return _out({"action": ERROR, "detail": str(e)})
 
     d = decide(current, could, target)
     out = d.as_dict()
@@ -166,22 +170,22 @@ def run_once(*, cushion_gb: float | None = None) -> dict:
             "is not Prompt-DJ (check Windows Update, temp files, other applications). "
             "Deleting the render cache would not fix it.",
             current, could, d.shortfall_gb, target)
-        return out
+        return _out(out)
 
     if d.action == SKIP_HEALTHY:
         log.debug("disk janitor: %.2f GB free, cushion %.1f GB — nothing to do", current, target)
-        return out
+        return _out(out)
 
     try:
         report = storage.sweep(target_free_gb=target)
     except Exception as e:  # noqa: BLE001
         log.warning("disk janitor: sweep failed (%s)", e)
-        return {"action": ERROR, "detail": str(e)}
+        return _out({"action": ERROR, "detail": str(e)})
 
     log.info("disk janitor: swept to keep the %.1f GB cushion — %s", target,
              {k: report[k] for k in ("evicted", "freed_gb", "free_gb_after") if k in report})
     out["swept"] = {k: report[k] for k in ("evicted", "freed_gb", "free_gb_after") if k in report}
-    return out
+    return _out(out)
 
 
 # --- the background timer -------------------------------------------------------------------
