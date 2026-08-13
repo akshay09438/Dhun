@@ -213,9 +213,9 @@ def booth_quiet_embed() -> discord.Embed:
         color=brand.DEEP)
 
 
-def arrival_line(name: str, room: str, listeners: int) -> str:
-    people = "1 in there" if listeners == 1 else f"{listeners} in there"
-    return f"🚪 **{name}** walked into **{room}**. {people}."
+# `arrival_line` was here and is DELETED, not disabled (founder decision 2026-08-13). Nothing
+# announces somebody walking into a listening room any more - Discord's member list already shows
+# who is in there. See the note at the top of booth.py for why the throttle did not save it.
 
 
 # --------------------------------------------------------------------------------------

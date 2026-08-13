@@ -230,16 +230,89 @@ def test_all_rooms_empty_clears_the_queue_and_disconnects(b):
     assert guild.voice_client.gone is True
 
 
-# --- arrival notes ------------------------------------------------------------------------
-def test_arrivals_are_announced_at_first_then_only_occasionally(b):
-    """Every single join would turn the channel into noise once the server is busy."""
-    said = []
-    for _ in range(10):
-        b._arrivals += 1
-        if b._should_announce():
-            said.append(b._arrivals)
-    assert said[0] == 1
-    assert len(said) < 10
+# --- arrivals are recorded, never announced -------------------------------------------------
+# The old test here checked that arrival notes were THROTTLED. The notes are gone entirely
+# (founder, 2026-08-13), so that test is deleted rather than left passing against nothing - it
+# covered only the removed behaviour. What replaces it is the opposite assertion, plus the one
+# thing that must NOT have been removed with it.
+class _SpyText:
+    """The #get-shit-done channel, recording what it was asked to post.
+
+    It separates TEXT posts from EMBED posts because they are different things here: the arrival
+    line was plain text, while the one status sign is an embed the bot posts once and then edits.
+    A test that just counted `send` calls would be green with the arrival line restored."""
+
+    def __init__(self, cid):
+        self.id = cid
+        self.name = "get-shit-done"
+        self.members = []
+        self.category = type("C", (), {"id": 0})()
+        self.texts: list[str] = []
+        self.embeds: list[object] = []
+
+    async def send(self, content=None, *, embed=None, **kw):
+        if content is not None:
+            self.texts.append(content)
+        if embed is not None:
+            self.embeds.append(embed)
+        return _SpyMessage()
+
+
+class _SpyMessage:
+    """`edit` and `pin` are awaited by refresh_status, so they must be real coroutines."""
+
+    async def edit(self, **kw):
+        return None
+
+    async def pin(self):
+        return None
+
+
+def _room_arrivals(b, monkeypatch, *, joins):
+    """Walk `joins` people into a room, with the grinder channel REALLY configured."""
+    chan = _SpyText(4242)
+    room = _Room(members=[])
+    guild = _Guild(rooms=[room])
+    guild.text_channels = [chan]
+    monkeypatch.setattr(boothmod.CFG, "grinder_channel_id", chan.id, raising=False)
+
+    for i in range(joins):
+        member = _Member(f"listener{i}")
+        member.id = 1000 + i      # the store keys arrivals by it; _Member has no id of its own
+        member.guild = guild
+        room.members.append(member)
+        before = type("S", (), {"channel": None})()
+        after = type("S", (), {"channel": room})()
+        asyncio.run(b.on_voice_state_update(member, before, after))
+    return chan, room
+
+
+def test_walking_into_a_room_posts_no_arrival_line(b, monkeypatch):
+    """The founder's words: "no notification should go when a person or any individual joins a
+    Bollywood house or a Hollywood house."
+
+    Ten arrivals in a row INCLUDING the first - the old throttle always let the first through, and
+    reset itself every time the room emptied, so one person stepping out and back in was announced
+    as if they were new. The grinder channel is genuinely configured here, so this test would fail
+    if the announcement came back."""
+    chan, _ = _room_arrivals(b, monkeypatch, joins=10)
+
+    assert chan.texts == [], f"walking into a room posted {len(chan.texts)} line(s): {chan.texts}"
+
+
+def test_but_who_listened_and_for_how_long_is_STILL_recorded(b, monkeypatch):
+    """The half that must survive. Listening time and drop-off are one of the two data gaps
+    recorded as blocking the community phase, and the recording happened in the same moment as the
+    announcement - so removing the wrong one of the pair would silently cost the founder the
+    measurement they most need, with a green suite either way."""
+    recorded = []
+    monkeypatch.setattr(boothmod.store, "room_arrival", lambda **kw: recorded.append(kw))
+
+    _chan, room = _room_arrivals(b, monkeypatch, joins=1)
+
+    assert len(recorded) == 1, "an arrival is no longer recorded to the store"
+    assert recorded[0]["room_id"] == room.id
+    assert recorded[0]["user_name"] == "listener0"
 
 
 # --- the config check ---------------------------------------------------------------------
