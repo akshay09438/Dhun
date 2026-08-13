@@ -42,6 +42,9 @@ MAIN_DROPS: dict[str, list[float]] = {
     "40350cd8721eb38d2043d8c0b8c6210539f3b4440931f7a1745459a8bb37ec1c": [34.99],
     # Silence — founder-marked drop 1:08.
     "9bf2835f9efdc58f4e3a83b95e8f1d6180ed10de0f49d183fa3690e15dec99e1": [67.62],
+    # --- New beat, wired 2026-08-13 from the founder's mark in scripts/song_marks.csv. ---
+    # Confusion (Drake, Honestly Nevermind Remix) — founder-marked drop 2:23.
+    "a066e170f852d01b626e8f54dfceeab338c6a6e820dc88b493094adf8adb2712": [142.98],
 }
 
 

@@ -37,6 +37,13 @@ GUEST_VERSE: dict[str, tuple[float, float]] = {
     "f61ea8edc6c56a0a1da0de64d26768618e6007262fbca7738d8571ccfa92c7fa": (31.66, 54.17),
     # Closer (The Chainsmokers ft. Halsey) — its hook line (founder-marked 0:51-1:10, 2026-08-08).
     "3f260b5cadb5a20ca475f50553f4d8512ed2764ba9f4d7988f9c1e0111d25f4e": (51.0, 70.0),
+    # Confusion (Drake, Honestly Nevermind Remix) — wired 2026-08-13. It is emphatically a vocal-RICH
+    # beat: analysis found 21 vocal regions across the track, so without a window Drake would sing
+    # over the whole thing and fight Song 2 everywhere (the R1 one-lead-voice guard would then skip
+    # the mix rather than ship two voices at once). The window is the founder's own marked hook from
+    # scripts/song_marks.csv, 1:44-2:00. NOT yet ear-verified as a hand-off point — the marks were
+    # made as "the best bit", which is not the same question as "the cleanest place to pass the mic".
+    "a066e170f852d01b626e8f54dfceeab338c6a6e820dc88b493094adf8adb2712": (104.12, 120.62),
 }
 
 
