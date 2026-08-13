@@ -37,6 +37,7 @@ import asyncio
 import logging
 
 from app import storage
+from app.config import settings
 from app.envnum import env_float
 
 log = logging.getLogger(__name__)
@@ -116,6 +117,62 @@ def decide(current_free_gb: float, could_free_gb: float, cushion_gb: float) -> D
     return Decision(SWEEP, current_free_gb, could_free_gb, cushion_gb)
 
 
+# ── Subfolder watch ──────────────────────────────────────────────────────────
+# `storage._evictable_files` never recurses, and that is deliberate: it is the second of two
+# independent guards (the first being the five-suffix allowlist) standing between the sweep and
+# `library/manifest.json`, which indexes the entire catalog. Nobody should trade that away.
+#
+# But "never deleted" turned into "never mentioned". `data/tuning_renders` accumulated 4.61 GB of
+# throwaway renders from the July vocal-chain tuning week and sat there for a MONTH — bigger than
+# everything else in the project — while the janitor reported a clean bill of health every minute,
+# because it was looking only at the top level. Found by hand on 2026-08-13, not by the app.
+#
+# So: LOOK everywhere, DELETE nowhere. This walks the subfolders, adds up files matching the same
+# allowlist the sweep uses, and says something when a folder is worth a person's attention. It has
+# no unlink call and never will — the founder chose "warn, don't delete" over recursing the sweep,
+# precisely so the deleter's blast radius stays exactly where it is.
+SUBFOLDER_WARN_GB = 1.0
+
+# Never worth naming: `keep/` is the pinned-mix protection (its whole job is to hold files), and
+# `library/` is the manifest. Reporting on either would train the reader to ignore this line.
+_WATCH_SKIP = frozenset({"keep", "library"})
+
+
+def subfolder_report(min_gb: float = SUBFOLDER_WARN_GB) -> list[dict]:
+    """Subfolders of the data dir holding at least `min_gb` of sweep-eligible files, biggest first.
+
+    Read-only by construction: it stats files and returns numbers. Never raises — a reporting pass
+    that can kill the janitor's tick would cost more than the problem it describes.
+    """
+    out: list[dict] = []
+    try:
+        d = settings.data_dir
+        if not d.exists():
+            return []
+        for sub in d.iterdir():
+            if not sub.is_dir() or sub.name in _WATCH_SKIP:
+                continue
+            total = 0
+            count = 0
+            try:
+                for p in sub.rglob("*"):
+                    # The SAME allowlist the sweep uses, so this only ever describes files that
+                    # would have been reclaimable had they been one directory higher up.
+                    if p.is_file() and p.name.endswith(storage._EVICTABLE_SUFFIXES):
+                        try:
+                            total += p.stat().st_size
+                        except OSError:
+                            continue
+                        count += 1
+            except OSError:
+                continue
+            if total >= min_gb * 1e9:
+                out.append({"folder": sub.name, "gb": round(total / 1e9, 2), "files": count})
+    except Exception:  # noqa: BLE001 — reporting must never break the tick
+        return out
+    return sorted(out, key=lambda r: -r["gb"])
+
+
 def run_once(*, cushion_gb: float | None = None) -> dict:
     """One cycle: look, decide, and sweep only if it would actually help.
 
@@ -142,10 +199,29 @@ def run_once(*, cushion_gb: float | None = None) -> dict:
     except Exception as e:  # noqa: BLE001 — see docstring; surviving to the next tick is the point
         log.warning("disk janitor: routine tidying failed this cycle (%s)", e)
 
+    # WHAT THE SWEEP CANNOT SEE. Reported on every exit path below, because the cycle where this
+    # matters most is the one that otherwise says "healthy" — a disk can be quietly full of renders
+    # the policy will never look at. Reporting only; nothing here deletes.
+    try:
+        buried = subfolder_report()
+        if buried:
+            log.warning(
+                "disk janitor: %s of throwaway renders sit in subfolder(s) the sweep never looks "
+                "at, so they will NOT be tidied automatically, ever: %s. This is by design - not "
+                "recursing is what keeps library/manifest.json out of a deletion loop - but it "
+                "means somebody has to clear these by hand.",
+                f"{sum(r['gb'] for r in buried):.2f} GB",
+                ", ".join(f"{r['folder']}/ ({r['gb']:.2f} GB, {r['files']} files)" for r in buried))
+    except Exception as e:  # noqa: BLE001 — see docstring; surviving to the next tick is the point
+        log.warning("disk janitor: subfolder report failed this cycle (%s)", e)
+        buried = []
+
     def _out(report: dict) -> dict:
         """Every exit reports what routine tidying did, so a quiet cycle is still legible."""
         if tidied is not None:
             report["tidied"] = tidied
+        if buried:
+            report["unreachable"] = buried
         return report
 
     try:
