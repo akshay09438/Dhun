@@ -493,7 +493,12 @@ def welcome_embeds(guild: discord.Guild, links: Links | None = None) -> list[dis
             "It works out the rest.\n\n"
             f"**Go to {grind} and type `/grind`**\n\n"
             "React 🔥 💀 😐 to anything you hear.\n"
-            f"Hit 📌 to send the good ones to {showcase}."),
+            f"Hit 📌 to send the good ones to {showcase}.\n\n"
+            # Founder's own words, 2026-08-13. It sits LAST, after the instructions rather than
+            # before them: leading with "do not expect perfection" tells somebody what to think
+            # before they have heard anything, which is the same reason no card ever rates a mix.
+            # Here it lands as a shrug on the way out the door, which is how it was meant.
+            "**This is a beta version, do not expect perfection, and have fun!**"),
         color=brand.PRIMARY)
     e.set_image(url=f"attachment://{WELCOME_IMAGE_NAME}")
     e.set_footer(text="that's it. go break something.")

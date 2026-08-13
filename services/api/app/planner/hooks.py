@@ -77,6 +77,21 @@ HOOKS: dict[str, tuple[float, float]] = {
     "1db2ea58e0162e6945591b9b5e539ca499414a61911b237baef3718ee7fd2ff9": (43.37, 70.52),
     # Hum Pyaar Karne Wale (Dhurandhar) — founder-marked hook 0:48–1:14.
     "262ee1c3ac150081b643637b63c209ac29244c5ca764d8c2317b7e0106b016e3": (48.11, 74.37),
+    # --- Two new songs, wired 2026-08-13 from the founder's existing marks in
+    #     scripts/song_marks.csv (that file is a record only — nothing reads it, so a mark does
+    #     not reach the app until it is copied here against the song's content id). ---
+    # Location (Khalid) — founder-marked hook 0:14–0:37, the "send me your location" chorus.
+    "74d3aac12e9256b7d9a8358a92e3632a5a2384352b4b3f9db78600029338b915": (14.08, 37.17),
+    # Old Town Road (Lil Nas X ft. Billy Ray Cyrus) — founder-marked hook 0:28.6–0:57.1, the "I'm
+    # gonna take my horse…" chorus. Its drop mark (0:28.55) is deliberately NOT wired: main_drops is
+    # keyed by the BEAT, and this is a vocal donor. Analysis read only ONE vocal region for the whole
+    # track (a degenerate/blob read), so this hand-mark is doing more work than usual here.
+    "d20b34a7c5953dae9915496740a21656928e89bac8d03994068ce50573df1ded": (28.57, 57.05),
+    # Confusion (Drake, Honestly Nevermind Remix) — founder-marked hook 1:44–2:00. Uploaded as a
+    # BEAT, so hook_for leaves this inert (it is called for the Song-2 vocal only); it is the same
+    # window used as its guest verse in beat_guest_verse.py, and is captured here as ground truth
+    # in case it is ever used as a vocal donor.
+    "a066e170f852d01b626e8f54dfceeab338c6a6e820dc88b493094adf8adb2712": (104.12, 120.62),
 }
 
 
