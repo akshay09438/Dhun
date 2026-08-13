@@ -861,3 +861,68 @@ def test_a_vouch_code_can_only_be_claimed_once_even_in_a_race():
 
 def test_claiming_a_code_that_was_never_vouched_does_nothing():
     assert store.claim_vouch(code="NEVER-EXISTED", used_by=1, when="t") is False
+
+
+# --- can the bot actually hand the role out? --------------------------------------------------
+# The silent failure: Discord only lets a bot assign roles strictly BELOW its own. @Member was
+# created level with @Grinder, which works only while the bot holds Administrator. Without it, an
+# approval is written as "approved", the card turns green, and the person still sees the lobby.
+class _PosRole:
+    def __init__(self, name, position):
+        self.name, self.position = name, position
+
+
+class _PosPerms:
+    def __init__(self, admin=False, manage_roles=True):
+        self.administrator = admin
+        self.manage_roles = manage_roles
+
+
+class _PosMe:
+    def __init__(self, top, admin=False, manage_roles=True):
+        self.top_role = top
+        self.guild_permissions = _PosPerms(admin, manage_roles)
+
+
+class _PosRoleGuild:
+    def __init__(self, roles, me):
+        self.roles, self.me = roles, me
+
+
+def _guild(bot_pos, member_pos, admin=False, manage_roles=True, has_member=True):
+    grinder = _PosRole("Grinder", bot_pos)
+    roles = [grinder] + ([_PosRole(door.MEMBER_ROLE, member_pos)] if has_member else [])
+    return _PosRoleGuild(roles, _PosMe(grinder, admin, manage_roles))
+
+
+def test_a_member_role_LEVEL_with_the_bots_own_role_is_reported_as_ungrantable():
+    """The exact shape on the founder's server: both at position 1. Discord requires strictly
+    above, so this silently fails every approval the moment Administrator is switched off."""
+    ok, why = door.can_grant_member(_guild(bot_pos=1, member_pos=1))
+    assert ok is False
+    assert "above" in why.lower()
+
+
+def test_a_member_role_below_the_bot_is_fine():
+    ok, why = door.can_grant_member(_guild(bot_pos=5, member_pos=1))
+    assert ok is True and why == ""
+
+
+def test_administrator_bypasses_the_position_rule():
+    """Which is why this was invisible until Administrator was switched back off - the lock script
+    ran with it on, so everything worked, and the fragility only appeared later."""
+    assert door.can_grant_member(_guild(bot_pos=1, member_pos=1, admin=True))[0] is True
+
+
+def test_missing_manage_roles_is_reported_as_its_own_reason():
+    ok, why = door.can_grant_member(_guild(bot_pos=5, member_pos=1, manage_roles=False))
+    assert ok is False and "manage roles" in why.lower()
+
+
+def test_a_missing_member_role_says_so_rather_than_blaming_position():
+    ok, why = door.can_grant_member(_guild(bot_pos=5, member_pos=1, has_member=False))
+    assert ok is False and "does not exist" in why
+
+
+def test_no_guild_is_handled_rather_than_crashing():
+    assert door.can_grant_member(None)[0] is False

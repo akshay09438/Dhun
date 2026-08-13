@@ -106,6 +106,24 @@ class _Locker(discord.Client):
         else:
             print(f"  ok     role @{door.MEMBER_ROLE} already exists")
 
+        # CAN THE BOT ACTUALLY HAND THIS ROLE OUT? Discord only allows roles strictly BELOW the
+        # bot's own. A new role is created at position 1, which is exactly where @Grinder usually
+        # sits - so it is ungrantable the moment the bot stops holding Administrator, and the
+        # failure is silent: the application reads "approved" and the person still sees the lobby.
+        if self.apply and role is not None:
+            ok, why = door.can_grant_member(guild)
+            if not ok and "does not exist" not in why:
+                print(f"\n  WARN   {why}")
+                print("         Trying to move it down automatically...")
+                try:
+                    await role.edit(position=max(1, guild.me.top_role.position - 1),
+                                    reason="The door: keep @Member grantable by the bot")
+                    ok, why = door.can_grant_member(guild)
+                except discord.HTTPException as e:
+                    print(f"  WARN   could not move it: {e}")
+                print("         " + ("fixed - the bot can hand out the role now" if ok
+                                     else f"STILL BROKEN: {why}"))
+
         # ---- 2. GRANT IT TO EVERYONE ALREADY HERE, BEFORE ANYTHING IS RESTRICTED ------------
         # If this half fails, the server is still exactly as it was - nothing has been taken away
         # yet. That is the entire reason it runs first.

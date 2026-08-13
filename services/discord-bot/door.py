@@ -539,3 +539,35 @@ async def on_member_join(member) -> bool:
     except (discord.Forbidden, discord.HTTPException):
         pass    # DMs shut; they can see the server either way, which is the part that matters
     return True
+
+
+def can_grant_member(guild) -> tuple[bool, str]:
+    """Whether the bot can actually hand out @Member, and why not if it cannot.
+
+    THE SILENT FAILURE THIS EXISTS TO STOP. Discord only lets a bot assign roles strictly BELOW
+    its own highest role. `@Member` was created level with `@Grinder`, which is fine while the bot
+    holds Administrator (that bypasses the check) and breaks the moment it does not. The failure is
+    invisible in the worst way: the application is written as `approved`, the founder sees the card
+    turn green, and the person is left staring at the lobby. There is no error anywhere unless
+    somebody happens to read an ephemeral followup.
+
+    Checked at startup and by the lock script, so it is reported before it costs somebody an
+    approval rather than after."""
+    if guild is None:
+        return False, "no server"
+    role = discord.utils.get(guild.roles, name=MEMBER_ROLE)
+    if role is None:
+        return False, f"the @{MEMBER_ROLE} role does not exist yet"
+    me = getattr(guild, "me", None)
+    if me is None:
+        return False, "the bot is not in the server"
+    if me.guild_permissions.administrator:
+        return True, ""
+    if not me.guild_permissions.manage_roles:
+        return False, "the bot does not have the Manage Roles permission"
+    if me.top_role.position <= role.position:
+        return False, (
+            f"the bot's own role sits at or below @{MEMBER_ROLE} in Server Settings > Roles, so "
+            f"Discord will not let it hand that role out. Drag @{me.top_role.name} above "
+            f"@{MEMBER_ROLE}")
+    return True, ""

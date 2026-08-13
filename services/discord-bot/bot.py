@@ -137,6 +137,12 @@ class PromptDJBot(discord.Client):
             # BEFORE picture. Without this the very first join after a restart is unattributable
             # and a vouched friend would be sent to the lobby like a stranger.
             await door.remember_invites(g)
+            # Say it LOUDLY at startup if approvals cannot actually grant the role. Otherwise the
+            # first anybody knows is a person who was approved and still cannot see the server.
+            ok, why = door.can_grant_member(g)
+            if door.is_open() and not ok:
+                log.error("THE DOOR CANNOT LET ANYBODY IN: %s. Approvals will be recorded and the "
+                          "person will still see nothing.", why)
         await self.sync_to_guilds(guilds)
 
     async def on_guild_join(self, guild: discord.Guild) -> None:
