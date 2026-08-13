@@ -647,3 +647,49 @@ anything Grinder acts on.
 
 **Also added:** a refusal now logs which identity holds which room, because a refusal said "one
 room" ten minutes after startup had said two and nothing recorded enough to say which was wrong.
+
+## As-built (the security check — reading the live server's blast radius, read-only), 2026-08-13
+
+`services/discord-bot/scripts/server_status.py` gained a **SECURITY** section. It changes nothing;
+it connects with the bot's own credentials and reports. It exists because the handoff carried "the
+bot appears to still hold Administrator" as a **claim**, and a claim about permissions is worth
+nothing beside a reading taken off the live server.
+
+**What it reports:** the server owner; whether Discord's *require 2FA for moderator actions* is on;
+every role carrying **Administrator** (with real member counts); which permissions Grinder holds
+but has no code to use; which it would be **missing** if Administrator were removed today; and
+whether approvals would still work afterwards.
+
+**Three tables drive it**, each entry traced to the call site that needs it: `CORE_PERMS` (used
+daily), `SETUP_PERMS` (only `/setup`, which must never run on the live server), and `NEVER_NEEDED`.
+The bot has no code that kicks, bans, times out or deletes — `grep` for `.kick(` / `.ban(` /
+`delete(` outside the tests returns nothing — which is the whole argument for dropping Administrator.
+
+### Three bugs found by running it for real, all of the same family: a check that lies quietly
+
+1. **`Member.guild_permissions` cannot be used here, and using it nearly shipped a dangerous
+   answer.** Discord defines Administrator as granting everything, so discord.py short-circuits and
+   returns `Permissions.all()` for anyone holding it. The first live run therefore reported
+   *"everything it needs: present"* about a bot whose only real tick might have been Administrator
+   itself. Acting on that green — untick Administrator, trust the report — would have taken Manage
+   Roles away and broken every approval **silently**: recorded as approved, person still sees
+   nothing. That is the same signature as the unexplained approval failure already in the handoff.
+   `ticked_permissions()` now unions the raw permission bits on the bot's own **roles**, which is
+   what would survive Administrator being switched off. Pinned by
+   `test_ticked_permissions_reads_the_real_boxes_not_the_administrator_shortcut`.
+2. **The report stopped mid-run and exited 0.** A tick mark could not be encoded by the default
+   Windows codepage; discord.py routed the `UnicodeEncodeError` to its own logger, which has nowhere
+   to write because the client starts with `log_handler=None`; the traceback was discarded and the
+   truncated output read as a finished, clean report. Fixed three ways: `on_ready` catches and
+   prints any failure loudly and sets a non-zero exit, stdout is reconfigured to UTF-8, and a test
+   asserts every fixed string in the file is printable on a plain Windows console.
+3. **Two roles on the live server are both named `@Grinder`**, only one holding Administrator. The
+   first version returned role *names* and looked them back up, so it could credit the wrong role
+   with dangerous power. It returns role objects now.
+
+### The reading taken off the live server, 2026-08-13
+
+Owner `akshay5397`. **Require-2FA-for-moderator-actions is OFF.** Two roles hold Administrator:
+`@Backup Admin` (1 member) and `@Grinder` (the bot). Read honestly, **the bot already holds every
+permission it needs in its own right, and its role already sits above `@Member`** — so removing
+Administrator is safe and approvals keep working. Its only other unused grant is `mention_everyone`.
