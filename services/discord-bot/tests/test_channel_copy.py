@@ -274,10 +274,13 @@ async def test_a_description_the_founder_wrote_is_KEPT_and_reported():
 
 @run_async
 async def test_a_channel_with_no_description_gets_one():
-    rules = FakeChannel("rules", topic=None)
-    g = FakeGuild(channels=[rules])
+    # Was #rules; that channel was removed on 2026-08-14 so it no longer has copy to sync. The
+    # test is about a bare channel GETTING a description, not about which channel, so it moves to
+    # one that still exists.
+    welcome = FakeChannel("read-this-first", topic=None)
+    g = FakeGuild(channels=[welcome])
     await server_setup.sync_topics(g, server_setup.Report(), server_setup.resolve_links(g))
-    assert rules.topic, "#rules had no description at all"
+    assert welcome.topic, "#read-this-first had no description at all"
 
 
 @run_async

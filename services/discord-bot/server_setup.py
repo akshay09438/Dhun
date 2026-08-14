@@ -63,10 +63,12 @@ class CategorySpec:
 STRUCTURE: tuple[CategorySpec, ...] = (
     CategorySpec("🚪 START HERE", (
         ChannelSpec("read-this-first", "what Grinder is, in 30 seconds", read_only=True),
-        # Not "the no-rules rules", which it used to say. There IS one hard rule and burying it
-        # under a joke is how somebody talks themselves into testing it.
-        ChannelSpec("rules", "short. read it.", read_only=True),
-        ChannelSpec("announcements", "what's new", read_only=True),
+        # `rules` and `announcements` were REMOVED, not disabled (founder, 2026-08-14: "let's keep
+        # it simple"). Both had sat empty except for Grinder's own placeholder line, and an empty
+        # room is worse than no room - a newcomer scrolls past it looking for where the thing
+        # happens. Deleted from the live server by scripts/delete_channels.py and deleted HERE too,
+        # because this list is the only description of the layout: leaving them would mean /setup
+        # silently recreating them on the next server.
     )),
     CategorySpec("⚙️ GRIND", (
         # THE channel. Everyone grinds here, in public, on purpose. The whole Midjourney mechanic

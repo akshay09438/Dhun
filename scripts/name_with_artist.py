@@ -53,6 +53,9 @@ RENAME = {
     # TWO different songs were both called "Move" and both were on the menu. Same artist, different
     # lengths - 5:53 and 2:58 - so the short one is labelled as such. Founder gave "Move - Adam Port".
     "Move": "Move - Short Edit (Adam Port)",
+    # The filename carried the featured artist into the title. "Levitating (Dua Lipa)" is what the
+    # song is called and what fits the dropdown; the DaBaby credit is noise in a picker.
+    "Levitating Featuring DaBaby (Dua Lipa)": "Levitating (Dua Lipa)",
 }
 
 BY_HAND = {

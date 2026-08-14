@@ -69,9 +69,13 @@ PINNED: set[str] = {
     # otherwise swap". There was not: 48 English vocals remain and the dropdown still holds 25.
     "Sunflower",
     # --- beats kept to carry the slow vocals above (85-90 BPM; the 167 works at half-time) ---
-    # Merrygo beat WAS here and the founder has since dropped it, so it is gone from the pin list
-    # rather than only added to BANNED - a pin beats a ban, so leaving it here would have kept it.
-    "redrum", "Faded",
+    # Merrygo beat and Faded were BOTH here and the founder has since dropped them, so each is gone
+    # from the pin list rather than only added to BANNED - a pin beats a ban, so leaving either here
+    # would have quietly kept it on the menu against the request.
+    "redrum",
+    # fourth round: the founder wanted Confusion back. It was in the catalog all along, just pushed
+    # off the 25 by earlier pins - six beats had piled up at 120 BPM.
+    "Confusion",
 }
 BANNED: set[str] = {
     # vocals dropped by the founder
@@ -87,6 +91,8 @@ BANNED: set[str] = {
     "We Found Love", "Houdini",
     # made room for Sunflower
     "BIRDS OF A FEATHER",
+    # fourth round: made room for Confusion
+    "Faded",
 }
 
 

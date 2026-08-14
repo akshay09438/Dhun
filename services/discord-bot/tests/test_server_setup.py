@@ -313,8 +313,11 @@ def test_the_name_a_channel_is_created_with_is_the_name_it_is_looked_up_by():
 def test_the_channels_chatter_would_ruin_are_read_only():
     """A welcome channel that fills with chatter stops being a welcome channel, and a curated
     "best of" that anyone can post into stops being curated."""
+    # #rules and #announcements were REMOVED on 2026-08-14 (founder: "let's keep it simple") - both
+    # sat empty but for Grinder's own placeholder line. The rule they encoded is unchanged: a
+    # welcome channel that fills with chatter stops being a welcome channel.
     read_only = {c.name for cat in server_setup.STRUCTURE for c in cat.channels if c.read_only}
-    assert read_only == {"read-this-first", "rules", "announcements"}
+    assert read_only == {"read-this-first"}
 
 
 def test_best_mixes_is_the_open_music_room_not_a_locked_showcase():
@@ -692,11 +695,14 @@ def test_the_server_stays_small_on_purpose():
     """Cut from ten channels to four. A near-empty server with ten rooms reads as abandoned - the
     few people there get spread thin and every channel looks dead. This pins the decision so it
     isn't quietly grown back one channel at a time."""
+    # Six now, not eight: #rules and #announcements went on 2026-08-14. The decision this pins gets
+    # STRONGER, not weaker - the point was that a near-empty server with many rooms reads as
+    # abandoned, and two of these were literally empty.
     channels = [c for cat in server_setup.STRUCTURE for c in cat.channels]
     assert len(server_setup.STRUCTURE) == 3, "three headers; more is scaffolding for a crowd"
-    assert len(channels) == 8, [c.label for c in channels]
+    assert len(channels) == 6, [c.label for c in channels]
     assert [c.label for c in channels] == [
-        "read-this-first", "rules", "announcements",
+        "read-this-first",
         "the-grinder", "fresh-grinds", "The Booth",
         "general", "requests"]
 

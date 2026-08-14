@@ -53,7 +53,11 @@ APPLY = "--apply" in sys.argv
 UNDO = "--undo" in sys.argv
 
 MEMBER_ROLE = "Member"
-TARGETS = ["read-this-first", "announcements", "rules"]
+# `announcements` and `rules` were deleted on 2026-08-14 (founder: "let's keep it simple"), so only
+# the one notice channel is left to lock. The script already SKIPS a name it cannot find, so this
+# would have kept working either way - but a target list naming rooms that no longer exist is a
+# stale document, and those are what this project keeps getting caught by.
+TARGETS = ["read-this-first"]
 
 intents = discord.Intents.default()
 intents.members = True
