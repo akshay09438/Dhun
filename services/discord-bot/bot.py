@@ -828,6 +828,12 @@ async def _vocal_ac(interaction: discord.Interaction, current: str):
             for s in match_songs(bot.vocals, current)]
 
 
+def _is_showcase(channel) -> bool:
+    """The pinned-mixes wall (`#best-mixes`). Identified by its configured id, never by name."""
+    return (CFG.fresh_grinds_channel_id is not None
+            and getattr(channel, "id", None) == CFG.fresh_grinds_channel_id)
+
+
 def _grinding_allowed_here(interaction: discord.Interaction) -> str | None:
     """None if `/grind` may run here, otherwise the sentence to send back.
 
@@ -842,10 +848,16 @@ def _grinding_allowed_here(interaction: discord.Interaction) -> str | None:
     if not CFG.grind_category_id:
         return None                     # not configured: allow everywhere rather than block everything
 
+    # ...EXCEPT the showcase. #best-mixes shares the grind category but is the opposite kind of room:
+    # a wall of finished work people scroll, not a workbench. Grinding into it buries the showcase
+    # under half-built attempts, which is the one thing it exists not to be. Founder, 2026-08-14:
+    # /grind belongs in #get-shit-done and the listening rooms. Keyed off the configured showcase id,
+    # never a channel name, so renaming the room cannot quietly re-open it.
+
     channel = interaction.channel
     cat_id = getattr(getattr(channel, "category", None), "id", None) \
         or getattr(channel, "category_id", None)
-    if cat_id == CFG.grind_category_id:
+    if cat_id == CFG.grind_category_id and not _is_showcase(channel):
         return None
     if booth.room_of(interaction.user) is not None:
         return None                     # they are in a listening room; let them grind from there
@@ -855,7 +867,8 @@ def _grinding_allowed_here(interaction: discord.Interaction) -> str | None:
     if guild is not None:
         allowed = [f"<#{c.id}>" for c in guild.text_channels
                    if (getattr(getattr(c, "category", None), "id", None)
-                       or getattr(c, "category_id", None)) == CFG.grind_category_id]
+                       or getattr(c, "category_id", None)) == CFG.grind_category_id
+                   and not _is_showcase(c)]
     where = " or ".join(allowed) if allowed else "the grind channels"
     return (f"Not here. Everyone grinds in {where}, out in the open, so you can see what other "
             f"people are throwing together.\n"
@@ -889,8 +902,16 @@ async def grind_cmd(interaction: discord.Interaction) -> None:
     await interaction.response.send_message(embed=view.embed(), view=view)
 
 
+# HIDDEN, not merely refused. The check inside runs only AFTER somebody picks the command, so an
+# ordinary member still saw it sitting in the picker and learned the server has a back door - the
+# founder spotted exactly that from a test account on 2026-08-14. `default_permissions` makes
+# DISCORD hide it from anyone without Manage Server, which is the same treatment /setup already has.
+# The in-body check STAYS: default_permissions is a display rule a server admin can override, so it
+# is the wrong thing to trust on its own.
 @bot.tree.command(name="invitefriend",
                   description="A one-use link that lets somebody in without the form.")
+@app_commands.default_permissions(manage_guild=True)
+@app_commands.guild_only()
 async def invitefriend_cmd(interaction: discord.Interaction) -> None:
     """For people the founder already knows. Their friend clicks the link and is in - no
     lobby, no five questions, no waiting.
@@ -921,6 +942,8 @@ async def invitefriend_cmd(interaction: discord.Interaction) -> None:
 
 @bot.tree.command(name="applications",
                   description="Read who is waiting to join. Add a word to narrow it down.")
+@app_commands.default_permissions(manage_guild=True)   # hidden from members — see /invitefriend
+@app_commands.guild_only()
 @app_commands.describe(contains="Only show applications mentioning this word, e.g. suno")
 async def applications_cmd(interaction: discord.Interaction, contains: str = "") -> None:
     """The POOL, not a feed. The founder is choosing the first fifty, so the applications have to
