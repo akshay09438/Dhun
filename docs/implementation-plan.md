@@ -2,6 +2,20 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-15 (SESSION CLOSED - everything merged, nothing outstanding).** PRs #52, #54 and #55 are all merged; `git log origin/main..HEAD` is **empty**.
+
+**WHAT THIS SESSION ACTUALLY DID.** Catalog **33 -> 112 songs**. The founder's marking sheet reached the app for the first time: **40 of 410 marks were wired, now 267**. The Discord server was made fit for real strangers - moderator commands hidden, grinding kept out of the showcase, notice channels read-only, the welcome copy fixed, three empty rooms deleted. A full hygiene audit ran and came back clean.
+
+**Final shipped state:** 112 songs, menu of 25 beats / 25 English / 14 Bollywood, every one credited with its artist and carrying hand-marks. Nine Discord channels. Free disk 10.6 GB (was 3.3 at its worst).
+
+**THE ONE THING NOBODY HAS DONE: LISTENED.** 227 newly-wired marks, a rebuilt menu, five rounds of founder swaps - and not one mix has been heard since any of it. Everything else in this plan is evidence; this is the gap.
+
+**DRIFT NOTE - I pushed to a merged branch twice.** After the founder merged PR #52 I kept committing to the same branch; GitHub never reopens a merged pull request, so six commits sat pushed and invisible, and the founder reported "I don't see anything to merge". It then happened AGAIN after PR #54. Fixed both times by cutting a fresh branch. **The rule, now recorded: the moment a PR is merged, start a new branch before committing anything else.**
+
+**DRIFT NOTE - a wrong diagnosis, corrected by measurement.** Slow renders were blamed on low disk destroying the key-matching cache. Measuring the same pair twice disproved it: `.f0shift.json` is protected from every sweep, and the real cost is simply first-time-per-pair (50-72s cold, 17-20s warm). Freeing disk was still right, for a different reason - at 3.3 GB the janitor was deleting the founder's own finished mixes.
+
+**STILL OPEN:** nobody has listened; `luther` unloaded and Bollywood at 14 of 25 (both need Replicate credit, currently zero); Wari Jawa and Merrygo beat carry no marks; the `storage.py` / `pitch.py` disagreement about pitch-cache rebuild cost (dangerous surface, needs founder sign-off); the dev dashboard's failure count still counts test-suite rows written into the live `events.db`.
+
 ## Status: **LATEST 2026-08-14, late (FULL HYGIENE AUDIT + the catalog the founder wants; branch `feat/grind-scope-and-welcome-copy`; NO dangerous surface touched).** The founder asked for a top-to-bottom developer check before launch, in automode.
 
 **THE AUDIT CAME BACK CLEAN.** Backend 838, bot 451/1 skipped, web 78, typecheck + lint clean. All six dangerous surfaces unchanged against `origin/main`. No secrets in git, `.env` untracked. Catalog integrity 112/112 complete. Every song on the menu has its marks wired. Engine `/library` `/queue` `/health` `/docs` all 200. Dev dashboard works. All 14 Discord channels have the intended permissions. **Zero real user failures since 2026-08-12.**
