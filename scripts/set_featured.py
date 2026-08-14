@@ -61,6 +61,10 @@ PINNED: set[str] = {
     "Reminder", "Sirens", "Starboy", "Summertime Sadness", "São Paulo",
     # second round of beat swaps, same evening
     "Feel So Close", "Calm Down", "Habits", "This Is What You Came For",
+    # third round - vocals. "The Kid LAROI" rather than "STAY": a bare "Stay" also matches
+    # "Habits (STAY High)", which is a beat, and a substring that hits two different songs is how
+    # a menu ends up with something nobody asked for.
+    "As It Was", "The Kid LAROI",
     # --- beats kept to carry the slow vocals above (85-90 BPM; the 167 works at half-time) ---
     # Merrygo beat WAS here and the founder has since dropped it, so it is gone from the pin list
     # rather than only added to BANNED - a pin beats a ban, so leaving it here would have kept it.
@@ -76,6 +80,8 @@ BANNED: set[str] = {
     "Animals", "Titanium", "Waiting For Love",
     # second round, same evening
     "Merrygo beat", "Levels", "Satisfaction", "In My Mind",
+    # third round - vocals
+    "We Found Love", "Houdini",
 }
 
 
