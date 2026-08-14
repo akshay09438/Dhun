@@ -67,6 +67,18 @@ MEMBER_CAP = 50
 # The role that IS membership. Approving somebody is exactly "give them this".
 MEMBER_ROLE = "Member"
 
+# THE FORM DOES NOT APPLY UNTIL THE COMMUNITY IS THIS BIG (founder, 2026-08-14). Below it anybody
+# who arrives is let straight in; at or above it, newcomers meet the form and wait.
+#
+# An empty room is the worst thing that can happen to a new community, and a form in front of an
+# empty room guarantees one. Below 30 the scarce thing is people; above 30 it is quality.
+OPEN_BELOW = 30
+
+# Announced-shut state, per guild. Only ever suppresses a REPEAT of the closing message - the door
+# itself is computed live from the real member list on every single arrival, so a restart clearing
+# this can at worst re-announce, never let the wrong person in.
+_announced_shut: dict[int, bool] = {}
+
 _ROLE_MISSING = ("The `@Member` role does not exist yet, so there is nothing to grant. "
                  "Run `scripts/lock_the_door.py` first.")
 
@@ -226,7 +238,7 @@ async def _decide(interaction: discord.Interaction, button: discord.ui.Button, *
         await interaction.response.send_message(f"Already {row['state']}.", ephemeral=True)
         return
 
-    if approved and store.approved_count() >= MEMBER_CAP:
+    if approved and community_count(getattr(interaction, "guild", None)) >= MEMBER_CAP:
         # WARNS, never refuses. The number is the founder's; a tool that hard-blocks its owner is
         # worse than one that asks. A second press goes through because the state check above is
         # what actually guards against a double-grant.
@@ -346,7 +358,8 @@ async def post_for_review(interaction, answers: dict) -> None:
         return
     embed = application_embed(
         user_name=user.display_name, user_id=user.id, answers=answers,
-        account_created=getattr(user, "created_at", None), taken=store.approved_count())
+        account_created=getattr(user, "created_at", None),
+        taken=community_count(getattr(interaction, "guild", None)))
     try:
         msg = await channel.send(embed=embed, view=ReviewView())
         store.set_application_message(user.id, msg.id)
@@ -358,8 +371,93 @@ def is_open() -> bool:
     """Is the door actually in use on this server?
 
     Keyed on the lobby channel being configured, so with no door set up NOTHING below changes and
-    the server behaves exactly as it did before this feature existed."""
+    the server behaves exactly as it did before this feature existed.
+
+    DELIBERATELY NOT the same question as `taking_all_comers`. This one asks "does this server use
+    the door at all"; that one asks "is it currently letting everybody in". Collapsing them would
+    make a dormant door and a wide-open door the same code path."""
     return bool(getattr(CFG, "door_channel_id", None))
+
+
+def community_count(guild) -> int:
+    """How many REAL community members are in. THE single definition of "a member" in this file.
+
+    Founder, 2026-08-14, asked what 30 counts: "real people, excluding the Grinder bots + my two
+    accounts (akshay5397 & bearwolf101)". So three kinds of member are subtracted:
+
+      * BOTS - Grinder runs 2+ identities and Discord lists every one as a member;
+      * THE SERVER OWNER - akshay5397; the founder is not a community member of their own room;
+      * ADMINS - bearwolf101 holds `@Backup Admin`, which carries Administrator.
+
+    The two operator accounts are recognised by WHAT THEY ARE, never by username: a Discord name
+    can be changed, and a renamed operator would silently start counting, closing the door a person
+    early with no error anywhere. Owning a server cannot be changed by accident.
+
+    Somebody in the lobby holds no `@Member` and is therefore NOT counted - they have not been let
+    in. If they counted, a queue of five would hold the door shut for ever and the founder's
+    reopen-below-30 decision could never fire.
+
+    WARNING - NOT `store.approved_count()`, the obvious counter and the wrong one: it counts only
+    people who came through the FORM, so it misses vouched friends, admins and every free arrival
+    under this feature. Using it would mean the door never closes at all.
+
+    Reading `guild_permissions.administrator` is safe here. The 2026-08-13 finding - that it returns
+    `Permissions.all()` for an Administrator holder - makes it useless for asking "does this member
+    hold some OTHER permission". Asking whether somebody IS an admin is exactly what it answers."""
+    if guild is None:
+        return 0
+    owner_id = getattr(guild, "owner_id", None)
+    count = 0
+    for person in getattr(guild, "members", None) or ():
+        if getattr(person, "bot", False):
+            continue
+        if owner_id is not None and getattr(person, "id", None) == owner_id:
+            continue
+        perms = getattr(person, "guild_permissions", None)
+        if perms is not None and (getattr(perms, "administrator", False)
+                                  or getattr(perms, "manage_guild", False)):
+            continue
+        roles = getattr(person, "roles", None) or ()
+        if not any(getattr(r, "name", None) == MEMBER_ROLE for r in roles):
+            continue
+        count += 1
+    return count
+
+
+def _member_list_can_be_trusted(guild) -> bool:
+    """Can we actually see the whole server right now?
+
+    THIS IS THE GUARD THAT MATTERS. `community_count` reads `guild.members`, which is a CACHE fed
+    by a privileged intent. An empty or half-filled cache counts far too few people, and counting
+    too few opens the door - so the one failure mode of a naive implementation is "the bot restarts,
+    the cache is not warm yet, and every stranger who arrives in the next few seconds is handed
+    `@Member` on a server that is supposed to be shut". Silent, irreversible, and exactly the
+    direction this file says never to be wrong in.
+
+    Two things are checked, both of which mean "do not trust this":
+      * we can see NOBODY, which is never true of a real server the bot is in;
+      * Discord's own `member_count` is higher than the number we hold, i.e. not fully chunked."""
+    cached = len(getattr(guild, "members", None) or ())
+    if cached == 0:
+        return False
+    total = getattr(guild, "member_count", None)
+    if isinstance(total, int) and total > cached:
+        return False
+    return True
+
+
+def taking_all_comers(guild) -> bool:
+    """Is the community still small enough that anybody may walk in without the form?
+
+    Computed live from the real member list every time it is asked, which is what makes the
+    founder's reopen-below-30 decision work: nothing is latched, nothing is cached.
+
+    UNKNOWN COUNTS AS SHUT. With no guild, or a member list we cannot trust, this returns False -
+    the restrictive answer. A stranger wrongly let in cannot be undone by a later correction; a
+    person wrongly asked to fill a form can just be approved."""
+    if guild is None or not _member_list_can_be_trusted(guild):
+        return False
+    return community_count(guild) < OPEN_BELOW
 
 
 def blocked_reason(interaction) -> str | None:
@@ -380,6 +478,8 @@ def blocked_reason(interaction) -> str | None:
     would be absurd, and they are the one who approves people."""
     if not is_open():
         return None                                  # the door is not in use; nothing changes
+    if taking_all_comers(getattr(interaction, "guild", None)):
+        return None      # under OPEN_BELOW everybody is admitted anyway, so there is nothing here
     member = getattr(interaction, "user", None)
     perms = getattr(member, "guild_permissions", None)
     if perms is not None and (perms.manage_guild or perms.administrator):
@@ -508,37 +608,117 @@ async def create_vouch_invite(channel, created_by: int) -> str | None:
     return inv.url
 
 
-async def on_member_join(member) -> bool:
-    """Let a vouched arrival straight in. True if they were vouched and are now a member.
+async def _let_them_in(member, *, reason: str, message: str) -> bool:
+    """Hand somebody `@Member` and tell them. True if they really hold the role now.
 
-    Everybody else is untouched and simply lands in the lobby, exactly as before."""
-    if member.bot or not is_open():
-        return False
+    Shared by the two ways in - a personal vouch, and the door being open - so there is one place
+    that grants membership rather than a near-copy per route."""
     guild = member.guild
-    code = await which_invite_was_used(guild)
-    if code is None or code not in store.open_vouch_codes():
-        return False
-    if not store.claim_vouch(code=code, used_by=member.id, when=_now()):
-        return False
-
     role = discord.utils.get(guild.roles, name=MEMBER_ROLE)
     if role is None:
-        log.warning("vouched arrival but no @%s role exists", MEMBER_ROLE)
+        log.warning("arrival to let in but no @%s role exists", MEMBER_ROLE)
         return False
     try:
-        await member.add_roles(role, reason="Invited personally - skipped the form")
+        await member.add_roles(role, reason=reason)
     except discord.HTTPException:
-        log.warning("could not let a vouched member in", exc_info=True)
+        log.warning("could not let %s in", member, exc_info=True)
         return False
-
-    log.info("vouched: %s came in on %s without the form", member, code)
     try:
-        await member.send(
-            "You are in - somebody vouched for you, so you can skip the queue.\n\n"
-            "Head to the grind channel and type `/grind` to make your first mix.")
+        await member.send(message)
     except (discord.Forbidden, discord.HTTPException):
         pass    # DMs shut; they can see the server either way, which is the part that matters
     return True
+
+
+def note_door_is_open(guild) -> None:
+    """Remember that the door is currently open, so the next closing is news again.
+
+    Pure bookkeeping - it sends nothing and touches no network. That matters: this runs BEFORE
+    anybody is admitted, and anything that can fail before a grant can stop somebody getting in."""
+    if taking_all_comers(guild):
+        _announced_shut[getattr(guild, "id", 0)] = False
+
+
+async def announce_if_just_closed(guild) -> bool:
+    """Say once, in the applications room, that the door has just shut. True if it posted.
+
+    CLOSINGS ARE ANNOUNCED, OPENINGS ARE NOT (founder, 2026-08-14). A closing changes what every
+    stranger experiences, so it is worth a line. An opening is not actionable - there is nothing
+    for the founder to do about it - and with the door tracking the number live, a single member
+    leaving and rejoining would otherwise post a pair of messages every time."""
+    shut = not taking_all_comers(guild)
+    gid = getattr(guild, "id", 0)
+    if not shut:
+        _announced_shut[gid] = False        # it is news again next time it becomes true
+        return False
+    if _announced_shut.get(gid):
+        return False
+    _announced_shut[gid] = True
+    try:
+        channel = _review_channel(guild)
+        if channel is None:
+            return False
+        await channel.send(
+            f"The door just closed - there are now {OPEN_BELOW} members, so newcomers will see "
+            "the form and wait for you instead of walking straight in. Nothing to do; this is "
+            "just so you know it happened.")
+    except Exception:  # noqa: BLE001 - A NOTE MUST NEVER COST SOMEBODY THEIR ENTRY.
+        # This is the lowest-value thing in the file and it runs on the same path as the
+        # highest-value one. Anything it raises is swallowed: the founder missing one message
+        # is a nuisance, a vouched friend silently left in the lobby is a broken promise.
+        log.warning("could not announce that the door closed", exc_info=True)
+        return False
+    return True
+
+
+async def on_member_join(member) -> bool:
+    """Somebody arrived. True if they are now a member without having filled anything in.
+
+    TWO ways that happens, checked in this order:
+
+      1. THE FOUNDER VOUCHED FOR THEM (`/invitefriend`). Works at any size, door open or shut.
+      2. THE COMMUNITY IS STILL SMALL (under `OPEN_BELOW`). Founder, 2026-08-14: below 30 real
+         members anybody may join freely; the form starts after that.
+
+    Everybody else is untouched and simply lands in the lobby, exactly as before.
+
+    A vouch is spent BEFORE the size check on purpose. Below 30 the same person would have got in
+    either way, and silently keeping their single-use link alive would let it be forwarded later,
+    once the door is shut - turning a spent vouch into a permanent hole."""
+    if member.bot or not is_open():
+        return False
+    guild = member.guild
+
+    # Observe the state BEFORE anyone is granted. Without this the open window is invisible: the
+    # 30th person arrives while the door is open, is let in, and by the time we look it is shut
+    # again - so a door that genuinely reopened and let somebody through would never be reported
+    # as closing a second time. Deliberately the pure bookkeeping call, not the sending one.
+    note_door_is_open(guild)
+
+    let_in = False
+    code = await which_invite_was_used(guild)
+    if code is not None and code in store.open_vouch_codes() \
+            and store.claim_vouch(code=code, used_by=member.id, when=_now()):
+        let_in = await _let_them_in(
+            member, reason="Invited personally - skipped the form",
+            message=("You are in - somebody vouched for you, so you can skip the queue.\n\n"
+                     "Head to the grind channel and type `/grind` to make your first mix."))
+        if let_in:
+            log.info("vouched: %s came in on %s without the form", member, code)
+    elif taking_all_comers(guild):
+        let_in = await _let_them_in(
+            member, reason=f"Under {OPEN_BELOW} members - the door is open",
+            message=("You are in. Grinder is small and still growing, so there is no form yet."
+                     "\n\nHead to the grind channel and type `/grind` to make your first mix."))
+        if let_in:
+            log.info("open door: %s walked in; community now %d", member, community_count(guild))
+
+    # Checked on EVERY arrival, not only a successful one. The 30th person walking in is what
+    # shuts the door, but so is the first arrival at a server that was already over the line when
+    # this feature was switched on - and that one is not let in, so a check that only ran after a
+    # grant would never tell the founder anything.
+    await announce_if_just_closed(guild)
+    return let_in
 
 
 def can_grant_member(guild) -> tuple[bool, str]:
