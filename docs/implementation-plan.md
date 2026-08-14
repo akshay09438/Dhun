@@ -2,6 +2,22 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-14 (SERVER HYGIENE BEFORE THE FIRST REAL TEST - built + applied live; branch `feat/grind-scope-and-welcome-copy`; NO dangerous surface touched).** Four founder requests ahead of them kicking their own test account and walking the newcomer path end to end.
+
+**Shipped:** `bot._is_showcase()` + a showcase exclusion in `_grinding_allowed_here` (grinding is `#get-shit-done` + the two listening rooms, never `#best-mixes`); `default_permissions` + `guild_only` on `/invitefriend` and `/applications`; `door.grind_channel_mention()` / `open_door_welcome()` / `vouched_welcome()`; `scripts/lock_welcome_channels.py`; `tests/test_grind_scope_and_copy.py` (13 cases). **Bot suite 435 passed / 1 skipped, was 422/1.**
+
+**MEASURED FIRST, EVERY TIME.** A read-only probe of the live server established what was actually true before any change: `#best-mixes` and `#get-shit-done` really do share the grind category; `@Member` really could type in all three notice channels while `@everyone` could not; and the founder's test account `kkvin007` holds only `@Member` (so it was the code showing moderator commands, not a stray Administrator).
+
+**THE LIVE CHANGE, AND WHY THE SEPARATE VERIFICATION MATTERED.** `lock_welcome_channels.py --apply` denied `send_messages` to `@Member` on the three notice channels, with the founder's explicit yes on the dry run. The applying session then reported `#rules` as STILL UNLOCKED - its own stale cache. An independent probe showed all three locked. Verifying with the script that made the change would have produced a wrong answer in either direction.
+
+**MY PROBE WAS WRONG BEFORE THE BOT WAS.** After restarting Grinder I read `status=offline` and started diagnosing a bot that was fine. Without the privileged `presences` intent, `Member.status` reports `offline` for EVERY member - the founder's own accounts included. The real check was functional: fetch the guild's registered application commands and confirm `/invitefriend` and `/applications` now carry `default_member_permissions`. They do.
+
+**TWO LAUNCHER BUGS, ONE OLD AND ONE MINE.** `Start-Grinder.bat` ran `Stop-Other-Grinders.ps1` via a path relative to the repo root AFTER `cd`-ing into `services\discord-bot`, so the "one Grinder on shift at a time" clearing has silently never run - the exact protection against the 2026-08-12 incident where an invisible older Grinder raced a new one for an hour. Now `%~dp0`-anchored. And `Mark-Songs.bat`, added earlier the same day, had unescaped parentheses in `echo` lines; `tests/test_launcher.py` caught it.
+
+**Grinder is live on the Intel build (`.venv-x64`, so voice works), serving 136 songs (63 beats, 73 vocals).**
+
+**STILL OPEN:** none of the four changes has been walked end-to-end by a real newcomer yet - that is the founder's next step (kick the test account, rejoin, walk the door). _(Below: the marks status from earlier the same day.)_
+
 ## Status: **LATEST 2026-08-14 (THE MARKING SHEET NOW REACHES THE APP - built; branch `feat/wire-hand-marks`; NO dangerous surface touched).** Founder: _"do the marking work"_, then the constraint that shaped the whole design: _"A similar pattern has to be followed for this. Nothing, no single thing, has to change."_
 
 **THE GAP THAT WAS CLOSED.** `scripts/song_marks.csv` held **410 ear-marks across 178 files and nothing read it** - a mark reached the app only when hand-copied into `planner/hooks.py` / `planner/main_drops.py` against a content id. **40 of 410 were wired; ~90% of the founder's listening work was inert.** Now: **hooks 26 -> 129, main drops 9 -> 133.**
