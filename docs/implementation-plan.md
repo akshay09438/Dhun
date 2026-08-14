@@ -64,6 +64,15 @@ _How far along we are, what's in flight, what's left, and the drift log. Living 
 
 **STAGED, NOT APPLIED — waiting for the founder:** the disk-sweep change (`services/api/app/storage.py`, queue card `disk-sweep-floors-and-age`). Scored **48 = human-required**, so it gets a full attended review, not a tap. Raises the clean-up floor 2.0→4.0 GB (the old floor was _inside_ the zone where renders already fail) and adds a 7-day age sweep. Verified without applying: the existing disk-safety suite run against the staged content in memory — **15 passed, identical to the control** — plus a sandbox run proving stale renders go, fresh ones stay, and nothing unrecoverable is touched.
 
+### Drift log - 2026-08-14
+
+- **THE SESSION'S THEME: three separate documents were confidently wrong, and each was settled in under a minute by RUNNING something read-only.** The per-mix cost, the render queue's existence, and whether the live server was locked. In every case the document reasoned from what the code CONTAINS rather than what it DOES. **Where a claim is about behaviour, execute something instead of reading.**
+- **Drift spreads from a source, and the source keeps re-infecting.** Four documents asserted the render queue was unbuilt and that overflow FAILS rather than queues, all tracing back to `concurrency-diagnosis.md` — whose finding was true on 11 Aug and whose own recommendation became `renderq.py` the next day. Fixing the four copies would not have stopped it; the source now carries a HISTORICAL banner. **A dated diagnosis that gets acted on is a good outcome; one that keeps being cited is drift.**
+- **A doc being wrong about the LIVE server is more dangerous than a doc being wrong about the code.** The specs said `lock_the_door.py` had never been run. Acting on that would have meant running it on an already-locked server — the same class of action that half-locked it on 2026-08-13. Live state must be measured, never remembered.
+- **Two bugs were found by building, not by designing** (the cold-cache hole that would have opened the server after every restart, and an announcement that ran before the grant and left a vouched friend in the lobby). The design was reviewed and signed off and contained neither. **The build is part of the design.**
+- **A correct safety rule repaired tests it was not written for.** Making "unknown counts as shut" the rule fixed four pre-existing tests that had broken — a stronger signal of rightness than any of the new tests passing.
+- **The founder overruled two recommendations** (the door re-opens rather than latching; pending applicants are not auto-approved). Both are recorded WITH their accepted cost so neither is later rediscovered as a bug — and the founder's correction on what "30 members" counts was load-bearing, since the first draft would have shut the door at 28 real people.
+
 ### Drift log - 2026-08-13
 
 - **An approval has a shelf life.** The staged `disk-sweep-floors-and-age` card was correct when written and made WRONG by other work landing thirteen hours later. It was withdrawn rather than applied. Anything queued must be re-verified against the tree as it is now.
