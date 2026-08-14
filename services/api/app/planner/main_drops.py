@@ -14,6 +14,8 @@ song's own (native) timeline; the planner snaps each to the nearest downbeat and
 
 from __future__ import annotations
 
+from app.planner import marks_generated
+
 MAIN_DROPS: dict[str, list[float]] = {
     # Merrygo beat (trimmed) — a D&B remix of Khuda Jaane; flat energy gave the detector no drop.
     # Founder-marked main drop at 0:40 (the drop section runs 0:40-1:03). 2026-07-15.
@@ -49,5 +51,13 @@ MAIN_DROPS: dict[str, list[float]] = {
 
 
 def main_drops_for(song_id: str) -> list[float]:
-    """Hand-marked main-drop times (seconds, native timeline) for this beat, or [] to auto-detect."""
-    return MAIN_DROPS.get(song_id, [])
+    """Hand-marked main-drop times (seconds, native timeline) for this beat, or [] to auto-detect.
+
+    MAIN_DROPS above (hand-marked, ear-confirmed) ALWAYS wins; `marks_generated.GEN_MAIN_DROPS` —
+    the rest of the founder's marking sheet, re-keyed to content ids — fills in only where there is
+    no entry here, so regenerating that table can never retune a beat that already works.
+    """
+    hand = MAIN_DROPS.get(song_id)
+    if hand is not None:
+        return hand
+    return marks_generated.GEN_MAIN_DROPS.get(song_id, [])

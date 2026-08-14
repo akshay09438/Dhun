@@ -229,15 +229,36 @@ def _select_effects(a1: TrackAnalysis, a2: TrackAnalysis, prompt: str, take: int
     seed = int(hashlib.sha256(base.encode()).hexdigest()[:16], 16)
     combos = _pool_combos()
     random.Random(seed).shuffle(combos)  # stable per pair+prompt; take picks the slot
-    space, width = combos[(take - 1) % len(combos)]
     final = max(range(len(placements)), key=lambda k: placements[k].anchor)
     # Tail safety (F1 fix): if the final placement would ring past its dry end into a Song-1 outro lead,
     # swap the tail-extender for its safe length-preserving reverb before it can overlap (R1).
-    if space in _POOL_SPACE_TAIL:
-        fp = placements[final]
-        dry_end = fence.placement_end(fp.anchor, fp.vocal_src, stretch, getattr(fp, "warp", None))
-        if any(s < dry_end + _POOL_TAIL_MAX_SECS - 1e-6 and e > dry_end + 1e-6 for s, e in (s1_regions or [])):
-            space = _TAIL_SUBSTITUTE[space]
+    fp = placements[final]
+    dry_end = fence.placement_end(fp.anchor, fp.vocal_src, stretch, getattr(fp, "warp", None))
+    tail_unsafe = any(s < dry_end + _POOL_TAIL_MAX_SECS - 1e-6 and e > dry_end + 1e-6
+                      for s, e in (s1_regions or []))
+
+    def _resolve(slot: int) -> tuple:
+        s, w = combos[slot % len(combos)]
+        return (_TAIL_SUBSTITUTE[s] if (s in _POOL_SPACE_TAIL and tail_unsafe) else s), w
+
+    # KEEPING THE DISTINCTNESS PROMISE THROUGH TAIL SAFETY (2026-08-14).
+    # The shuffled slots are distinct by construction, but the substitution above maps a tail-extender
+    # onto a plain reverb — so two different slots can collapse onto the SAME (space, width) and two
+    # takes come out with identical effects. Measured on I Adore You x Tujhe Bhula Diya: take 3's
+    # 'throw' became 'hall', colliding with take 6's real 'hall'. It stayed hidden only because that
+    # pair's take 3 used to DECLINE; once its beat gained a hand-marked drop, take 3 shipped and the
+    # collision surfaced. Safety still wins - the substitution is never skipped - we just walk forward
+    # to the next slot that has not already been taken. Assigning in take order keeps it deterministic:
+    # the same (songs, prompt, take) always lands on the same combo.
+    used: set[tuple] = set()
+    space, width = _resolve(0)
+    for t in range(1, take + 1):
+        slot, cand, steps = t - 1, _resolve(t - 1), 0
+        while cand in used and steps < len(combos):
+            slot, steps = slot + 1, steps + 1
+            cand = _resolve(slot)
+        used.add(cand)
+        space, width = cand
     for i, p in enumerate(placements):
         # a tail-extender rings past the dry -> final placement only; a length-preserving reverb (or
         # None) applies uniformly to every placement.

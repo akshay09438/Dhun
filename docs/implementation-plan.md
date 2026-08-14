@@ -2,6 +2,24 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-14 (THE MARKING SHEET NOW REACHES THE APP - built; branch `feat/wire-hand-marks`; NO dangerous surface touched).** Founder: _"do the marking work"_, then the constraint that shaped the whole design: _"A similar pattern has to be followed for this. Nothing, no single thing, has to change."_
+
+**THE GAP THAT WAS CLOSED.** `scripts/song_marks.csv` held **410 ear-marks across 178 files and nothing read it** - a mark reached the app only when hand-copied into `planner/hooks.py` / `planner/main_drops.py` against a content id. **40 of 410 were wired; ~90% of the founder's listening work was inert.** Now: **hooks 26 -> 129, main drops 9 -> 133.**
+
+**Shipped:** `app/planner/marks_generated.py` (GENERATED - `GEN_HOOKS`, `GEN_MAIN_DROPS`), `scripts/generate_marks.py` (the rebuilder), fall-through in `hook_for` / `main_drops_for`, `tests/test_marks_generated.py` (10 cases), `Mark-Songs.bat`. **103 generated hooks + 124 generated drops** from 133 catalog songs; 27 left to the hand tables; 45 marked songs never loaded, so inert.
+
+**ADDITIVE BY CONSTRUCTION, NOT BY CARE.** The hand tables are read FIRST and the generator skips anything already in them, so the two halves cannot clobber each other and a re-run is idempotent. This mattered concretely: **15 conflicts across 8 songs, 7-50s apart** (Tere Bina 50s, Tere Bin 37s, With You 34s, Nadan Parinde 25s, Faded 23s, Closer 22s, Wake Me Up 16s, Uff Teri Ada 7s) - **all resolved in favour of the already-shipping value**, and frozen into the test file so a regression fails a test instead of being discovered by ear.
+
+**KEYED BY AUDIO, NOT BY FILENAME.** The CSV keys on file name, which detaches on a rename - measured the same day, three songs looked unmarked purely because the same audio was also stored under a second name (`Lean On.mp3` vs the full Major Lazer title). The bridge runs the app's own `normalize_audio` and hashes the result, so the key is the audio itself. Cache: `services/api/data/marks_id_cache.json` (local-only).
+
+**A REAL BUG FOUND BY THIS CHANGE, IN CODE THAT HAS NEVER RUN.** `plan._select_effects` promises distinct effect combos for takes 1..14; the F1 tail-safety substitution can collapse two slots onto one. Invisible until enough takes ship - on `I Adore You x Tujhe Bhula Diya`, takes 3 and 7 used to DECLINE, and **the new hand-marked drop on I Adore You made all 8 ship**, surfacing a duplicate `('space:hall',)` on takes 3 and 6. Fixed by resolving in take order and stepping to the first unused slot; safety never skipped, determinism preserved. **`_EFFECT_POOL_ENABLED = False` is hard-coded with no override, so this has never affected a mix the founder has heard** - the same shape as the `USE_AI_ARRANGEMENT` finding from the day before.
+
+**Verification: backend 833 passed (was 823; +10 new, 0 removed, none weakened), web 78 passed, typecheck + lint clean.** `render.py`, `validate.py`, `storage.py`, `routes/songs.py`, `config.py`, `.github/workflows/**` all verified unchanged against `main`.
+
+**DRIFT NOTE:** the previous session recorded Old Town Road's drop mark as deliberately NOT wired, on the rule "main_drops is keyed by the BEAT, and this is a vocal donor". That rule is now superseded - the founder has since established that role_hint is only a dropdown filter and any song can be used as the beat - so drop marks are wired for every song regardless of label, and are simply inert until that song is used as Song 1.
+
+**STILL OPEN:** none of the 227 newly-wired marks is ear-confirmed IN A MIX yet - they are the founder's own marks, but no mix has been listened to since wiring. The 45 marked-but-unloaded songs stay inert until loaded. _(Below: the door status from earlier the same day.)_
+
 ## Status: **LATEST 2026-08-14 (THE DOOR OPENS BELOW 30 - built; branch `feat/door-opens-below-30`; NO dangerous surface touched).** Founder: _"the form thing starts to happen after 30 server members. Before 30 members, anyone can join."_ Design first ([door-open-below-30-design.md](door-open-below-30-design.md)), then TDD.
 
 **Shipped:** `door.community_count()` (the single definition of "a member"), `door.taking_all_comers()`, `door.note_door_is_open()` / `announce_if_just_closed()`, a free-entry branch in `on_member_join`, a bypass in `blocked_reason`, and the seat counter switched off `store.approved_count()` in both `door.py` and `bot.py`. **25 new tests; 422 passed / 1 skipped** (was 397/1). **No existing test was modified or weakened.** `render.py`, `validate.py`, `storage.py`, `routes/songs.py` all verified untouched.
