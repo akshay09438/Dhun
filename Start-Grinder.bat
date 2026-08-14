@@ -88,5 +88,13 @@ echo   type  /grind  - pick a beat and a vocal, and the mix comes right back.
 echo   Keep this window open. Close it to take Grinder offline.
 echo  ----------------------------------------------------------------------
 echo.
-"%BOTPY%" bot.py
+REM  KEEP A LOG. Until now this window was the ONLY place Grinder's output went, so once it was
+REM  minimised or closed there was no way to answer "is it up?" or "what went wrong?" - and
+REM  logs\run.log silently stopped being written on 2026-08-12, which cost a wrong diagnosis on
+REM  08-14 (a healthy bot was killed and debugged because nothing could be read). Tee to the log
+REM  AND the window: PowerShell's Tee-Object gives both without needing an extra tool.
+if not exist "logs" mkdir "logs"
+REM  Add-Content, NOT Tee-Object: Tee-Object on Windows PowerShell 5.1 writes UTF-16, which turns
+REM  the log into spaced-out gibberish that nothing else can read. -Encoding UTF8 keeps it plain.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& '%BOTPY%' bot.py 2>&1 | ForEach-Object { Write-Host $_; Add-Content -Path 'logs\run.log' -Value $_ -Encoding UTF8 }"
 pause
