@@ -2,6 +2,24 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-14 (THE CATALOG BECOMES USABLE - built + applied; branch `feat/grind-scope-and-welcome-copy`; NO dangerous surface touched).** Everything here was found by the FOUNDER looking at the actual Discord dropdown, not by a test.
+
+**THE HEADLINE: 103 songs were loaded, paid for, analysed - and invisible.** The picker filters vocals by `language` and defaults to english; the loader never wrote the tag. Nothing errored, the manifest looked right, the songs were genuinely there, and the dropdown showed the same four English vocals it had before the ingest. **English vocals visible: 4 -> 59.**
+
+**AND THE CHECK I SHOULD HAVE RUN BEFORE SPENDING ANYTHING.** Disk, cost, duplicates, marks coverage and analysis quality were all checked ahead of the ingest. **How a person actually PICKS a song was not.** One look at `select_option_specs` - `list(songs)[:25]` - would have shown that a Discord dropdown holds 25 options, and the picker would have been fixed before 103 songs were loaded into it. The credits were not wasted (every stem and analysis is cached permanently, and the web app has no cap), but the founder got a worse first test than they should have.
+
+**Shipped:** `language` end-to-end in `ingest_catalog.py` + `scripts/backfill_language.py`; `LibrarySong.featured` / `Song.featured` + `scripts/set_featured.py` + featured-first ordering in `refresh_catalog`; `scripts/name_with_artist.py`. Tests: `test_ingest_language_tag.py` (5), `test_featured_catalog.py` (7).
+
+**THE CURATED 25 IS NOT ALPHABETICAL, AND THAT IS THE POINT.** Measured: **26 of 59 English vocals pair with NO house beat** - a 75-100 BPM gap, too slow for a 120-130 beat at 1:1 and too fast for half-time. An alphabetical 25 would have been a menu where a third of the choices cannot make a mix.
+
+**FOUNDER SWAPS, AND THEIR HONEST COST.** Six vocals and ten beats swapped for recognisability (God's Plan, SICKO MODE, Shape of You, Watermelon Sugar, Location, Intentions...). The incoming vocals are 74-95 BPM and paired with ZERO of the house beats on show, so four slower beats were pinned to carry them. **Workable pairings 788 -> 517 of 975.** Recorded here so a rise in declines is not later chased as a bug.
+
+**TWO SUBSTRING TRAPS, BOTH CAUGHT BEFORE SHIPPING.** Banning "Water" (the Tyla beat) also matches "WATERmelon Sugar", which the founder had just asked to keep - `is_banned()` now yields to `is_pinned()`, since a requested song vanishing silently is the worse failure. And pinned BEATS are selected first; the first version appended them then truncated back to 25, which would have dropped the very beats pinned to make the pinned vocals workable.
+
+**Verification: backend 838 passed, bot 451 passed / 1 skipped. Engine confirmed serving 25 beats / 25 english / 14 bollywood, 0 uncredited.**
+
+**STILL OPEN:** **nothing has been heard.** 227 newly-wired marks, a rebuilt menu and two founder swaps, and no mix has been listened to since any of it. Also open: `luther` unloaded and 11 more Hindi songs needed to fill that list to 25 (both need Replicate credit, currently zero); Wari Jawa and Merrygo beat are the only two menu songs with no marks; disk at 4.5 GB. _(Below: the server-hygiene status from earlier the same day.)_
+
 ## Status: **LATEST 2026-08-14 (SERVER HYGIENE BEFORE THE FIRST REAL TEST - built + applied live; branch `feat/grind-scope-and-welcome-copy`; NO dangerous surface touched).** Four founder requests ahead of them kicking their own test account and walking the newcomer path end to end.
 
 **Shipped:** `bot._is_showcase()` + a showcase exclusion in `_grinding_allowed_here` (grinding is `#get-shit-done` + the two listening rooms, never `#best-mixes`); `default_permissions` + `guild_only` on `/invitefriend` and `/applications`; `door.grind_channel_mention()` / `open_door_welcome()` / `vouched_welcome()`; `scripts/lock_welcome_channels.py`; `tests/test_grind_scope_and_copy.py` (13 cases). **Bot suite 435 passed / 1 skipped, was 422/1.**
