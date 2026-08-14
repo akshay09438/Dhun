@@ -117,10 +117,20 @@ class PromptDJBot(discord.Client):
         except Exception as e:  # noqa: BLE001 — a catalog failure shouldn't stop the bot from starting
             log.warning("could not load catalog from %s: %s", CFG.api_base, e)
             self.songs = []
-        self.beats = [s for s in self.songs if s.role_hint == "beat"] or self.songs
-        self.vocals = [s for s in self.songs if s.role_hint == "vocals"] or self.songs
-        log.info("catalog: %d songs (%d beats, %d vocals)",
-                 len(self.songs), len(self.beats), len(self.vocals))
+        # FEATURED FIRST. A Discord select menu holds 25 options and `select_option_specs` takes the
+        # first 25 in list order, so with 63 beats and 59 English vocals most of the catalog was
+        # unreachable and WHICH 25 showed was an accident of manifest order. Sorting featured to the
+        # front makes the curated 25 (scripts/set_featured.py) the ones that fit. Stable sort, so
+        # everything else keeps its order behind them and nothing is dropped - the engine and the
+        # web app still see the whole catalog.
+        def curated_first(pool):
+            return sorted(pool, key=lambda s: not getattr(s, "featured", False))
+
+        self.beats = curated_first([s for s in self.songs if s.role_hint == "beat"]) or self.songs
+        self.vocals = curated_first([s for s in self.songs if s.role_hint == "vocals"]) or self.songs
+        log.info("catalog: %d songs (%d beats, %d vocals; %d featured)",
+                 len(self.songs), len(self.beats), len(self.vocals),
+                 sum(1 for s in self.songs if getattr(s, "featured", False)))
 
     async def on_ready(self) -> None:
         log.info("logged in as %s (id %s)", self.user, getattr(self.user, "id", "?"))
