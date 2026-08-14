@@ -44,6 +44,14 @@ class LibrarySong(BaseModel):
     #
     # Empty on beats by design: a beat is an instrumental bed and belongs to neither audience.
     language: str = ""
+    # SHOWN IN THE DISCORD PICKER (2026-08-14). A Discord select menu holds 25 options and no more,
+    # so with 63 beats and 59 English vocals most of the catalog was unreachable and WHICH 25
+    # appeared was an accident of manifest order. `scripts/set_featured.py` chooses them
+    # deliberately - beats from the house band, vocals ranked by how many of those beats they can
+    # actually pair with on tempo (measured: 26 of 59 English vocals pair with NO house beat).
+    # The ENGINE ignores this completely: every song stays fully mixable, and the web app shows all
+    # of them. It only decides what fits in a dropdown.
+    featured: bool = False
 
 
 def _manifest_path():
@@ -100,5 +108,6 @@ def get_library() -> dict:
             url=f"/songs/{sid}/audio",
             role_hint=str(e.get("role_hint", "")),
             language=str(e.get("language", "")),
+            featured=bool(e.get("featured", False)),
         ))
     return {"songs": [s.model_dump() for s in songs]}

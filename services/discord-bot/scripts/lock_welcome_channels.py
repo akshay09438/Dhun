@@ -65,6 +65,36 @@ def say(s=""):
     print(s, flush=True)
 
 
+def desired_overwrite(existing, *, undo: bool):
+    """Return the @Member overwrite we want, built BY EDITING the existing one.
+
+    THE BUG THIS EXISTS TO PREVENT (2026-08-14, and it hid all three channels from every member).
+    `set_permissions(role, send_messages=False)` does NOT edit an overwrite - it REPLACES it with
+    one built from exactly the keyword arguments given. `lock_the_door.py` had previously denied
+    `read_messages` to `@everyone` and granted it back to `@Member` on every channel, so the
+    @Member overwrite carried a load-bearing `read_messages=True`. Passing only `send_messages`
+    wiped it, @Member fell back to the @everyone deny, and the rooms disappeared entirely instead
+    of going read-only.
+
+    So: take what is there, change only the one field, hand the whole object back. Anything else
+    already set - now or in future - survives untouched.
+    """
+    ov = discord.PermissionOverwrite(**{k: v for k, v in existing if v is not None})
+    ov.send_messages = None if undo else False
+    # AND ASSERT VISIBILITY, do not merely preserve it. These three are notice boards: a member who
+    # cannot read them is worse off than before we started, which is exactly what happened. On this
+    # server `@everyone` is denied `read_messages` everywhere (lock_the_door.py), so `@Member` needs
+    # an explicit allow or the room is invisible - and on the live server that allow has ALREADY
+    # been destroyed, so preserving what is there would faithfully preserve the broken state.
+    ov.read_messages = True
+    return ov
+
+
+def is_now_as_wanted(existing, *, undo: bool) -> bool:
+    """True when this channel already matches the intent, so it can be skipped."""
+    return existing.send_messages is (None if undo else False)
+
+
 async def run_for(guild):
     global _failed
     member = discord.utils.get(guild.roles, name=MEMBER_ROLE)
@@ -85,20 +115,21 @@ async def run_for(guild):
             _failed = True
             continue
 
-        before = ch.permissions_for(member).send_messages
-        want = None if UNDO else False          # None = clear the overwrite, i.e. back to inherited
+        p_before = ch.permissions_for(member)
         current_ov = ch.overwrites_for(member)
 
-        if (not UNDO and current_ov.send_messages is False) or (UNDO and current_ov.send_messages is None):
-            say(f"  ok    #{name:<18} already {'unlocked' if UNDO else 'locked'} - no change needed")
+        if is_now_as_wanted(current_ov, undo=UNDO) and p_before.view_channel:
+            say(f"  ok    #{name:<18} already {'unlocked' if UNDO else 'read-only'} and visible")
             continue
 
-        say(f"  {'UNLOCK' if UNDO else 'LOCK  '} #{name:<18} @{MEMBER_ROLE} can type now: {before}"
-            f"  ->  {'True (inherited)' if UNDO else 'False'}")
+        new_ov = desired_overwrite(current_ov, undo=UNDO)
+        say(f"  {'UNLOCK' if UNDO else 'LOCK  '} #{name:<18} "
+            f"can see: {p_before.view_channel} -> {new_ov.read_messages is not False}   "
+            f"can type: {p_before.send_messages} -> {'inherited' if UNDO else False}")
         if APPLY:
             try:
                 await ch.set_permissions(
-                    member, send_messages=want,
+                    member, overwrite=new_ov,
                     reason="Founder 2026-08-14: notice channels are read-only for members")
             except discord.Forbidden:
                 say(f"        REFUSED on #{name}: Grinder lacks Manage Permissions there.")
@@ -113,9 +144,10 @@ async def run_for(guild):
         ch = discord.utils.get(guild.text_channels, name=name)
         if ch is None:
             continue
-        m = ch.permissions_for(member).send_messages
-        e = ch.permissions_for(guild.default_role).send_messages
-        say(f"    #{name:<18} @{MEMBER_ROLE} can type: {str(m):<5}   @everyone can type: {e}")
+        p = ch.permissions_for(member)
+        flag = "" if p.view_channel else "   <-- INVISIBLE, THIS IS WRONG"
+        say(f"    #{name:<18} @{MEMBER_ROLE} can SEE: {str(p.view_channel):<5} "
+            f"can TYPE: {str(p.send_messages):<5} can REACT: {str(p.add_reactions):<5}{flag}")
 
 
 @client.event

@@ -14,7 +14,11 @@ Idempotent: everything is cached by the song's content hash, so re-running costs
 cloud money and never double-adds a manifest entry.
 
 Input: a JSON array on stdin, e.g.
-    [{"name": "Jugni Ji", "path": "song-dropbox/Jugni Ji.mp3", "role_hint": "vocals"}]
+    [{"name": "Jugni Ji", "path": "song-dropbox/Jugni Ji.mp3", "role_hint": "vocals",
+      "language": "bollywood"}]
+
+`language` is REQUIRED for a vocal ("english" or "bollywood"): the Discord picker filters vocals by
+it and shows nothing untagged. Beats ignore it.
 Paths are resolved relative to the repo root.
 
 Run with the API venv so `app.*` imports and the Replicate token (.env) are available:
@@ -60,19 +64,34 @@ def _save_manifest(entries: list[dict]) -> None:
     _MANIFEST.write_text(json.dumps(entries, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def _upsert(entries: list[dict], name: str, song_id: str, role_hint: str) -> str:
-    """Add or update the manifest entry for this song_id. Returns a status word."""
+def _upsert(entries: list[dict], name: str, song_id: str, role_hint: str,
+            language: str = "") -> str:
+    """Add or update the manifest entry for this song_id. Returns a status word.
+
+    LANGUAGE IS NOT OPTIONAL FOR A VOCAL, and forgetting it is silent. The Discord picker filters
+    vocals by language and DEFAULTS to English (`bot.py::_vocals_for`), so a vocal with no tag
+    appears in neither list - it is loaded, paid for, analysed, and invisible. That is exactly what
+    happened on 2026-08-14: 103 songs ingested, and the picker still showed the same four English
+    vocals it had before. Beats are never language-filtered, so a blank there is harmless.
+    """
     for e in entries:
         if str(e.get("song_id", "")) == song_id:
             e["name"], e["role_hint"] = name, role_hint
+            if language:
+                e["language"] = language
             return "updated"
-    entries.append({"name": name, "song_id": song_id, "role_hint": role_hint})
+    entry = {"name": name, "song_id": song_id, "role_hint": role_hint}
+    if language:
+        entry["language"] = language
+    entries.append(entry)
     return "added"
 
 
-def ingest_one(name: str, rel_path: str, role_hint: str, entries: list[dict]) -> dict:
+def ingest_one(name: str, rel_path: str, role_hint: str, entries: list[dict],
+               language: str = "") -> dict:
     src = (_REPO / rel_path).resolve()
-    result: dict = {"name": name, "path": rel_path, "role_hint": role_hint}
+    result: dict = {"name": name, "path": rel_path, "role_hint": role_hint,
+                    "language": language}
     if not src.exists():
         result["error"] = f"file not found: {src}"
         return result
@@ -118,7 +137,7 @@ def ingest_one(name: str, rel_path: str, role_hint: str, entries: list[dict]) ->
 
     # 4) manifest upsert.
     print("  [4/4] adding to catalog manifest...", flush=True)
-    result["manifest"] = _upsert(entries, name, song_id, role_hint)
+    result["manifest"] = _upsert(entries, name, song_id, role_hint, language)
     _save_manifest(entries)  # save after each song so a mid-run stop still keeps finished work
     print(f"        {result['manifest']}  |  {result['bpm']} BPM  |  key {result['key']}  |  "
           f"{result['vocal_regions']} vocal regions", flush=True)
@@ -144,6 +163,7 @@ def main() -> int:
             str(job.get("path", "")).strip(),
             str(job.get("role_hint", "vocals")).strip() or "vocals",
             entries,
+            str(job.get("language", "")).strip().lower(),
         ))
 
     print("\n================ SUMMARY ================", flush=True)

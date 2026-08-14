@@ -30,6 +30,9 @@ class Song:
     # instrumental and belong to neither. Used only to filter what the picker SHOWS; the engine
     # will still mix any beat with any vocal.
     language: str = ""
+    # Part of the curated 25 shown in the dropdown - see LibrarySong.featured in the engine. A
+    # Discord select holds 25 options, so the bot sorts featured songs FIRST and the rest follow.
+    featured: bool = False
 
 
 @dataclasses.dataclass
@@ -93,7 +96,7 @@ class PromptDJClient:
         data = r.json()
         return [
             Song(id=s["id"], name=s.get("original_name", ""), role_hint=s.get("role_hint", ""),
-                 language=s.get("language", ""))
+                 language=s.get("language", ""), featured=bool(s.get("featured", False)))
             for s in data.get("songs", [])
         ]
 
