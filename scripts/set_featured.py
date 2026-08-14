@@ -54,13 +54,22 @@ TOLERANCE = 0.15
 # beats are pinned alongside them - otherwise those six would sit in the menu unable to make a
 # single mix. Pin vocals and beats together or the menu looks fuller than it is.
 PINNED: set[str] = {
-    # the six the founder asked for
+    # --- VOCALS the founder asked for (2026-08-14) ---
     "God's Plan", "Location", "SICKO MODE", "Shape of You", "Intentions", "Watermelon Sugar",
-    # ...and the beats that can actually carry them (85-90 BPM, plus one 167 that works at half-time)
-    "redrum", "Merrygo beat", "Faded", "Summertime Sadness (Techno Remix)",
+    # --- BEATS the founder asked for (2026-08-14) ---
+    "Let Me Love You", "One Dance", "F1", "All The Stars", "Losing It",
+    "Reminder", "Sirens", "Starboy", "Summertime Sadness", "São Paulo",
+    # --- beats kept to carry the slow vocals above (85-90 BPM; the 167 works at half-time) ---
+    "redrum", "Merrygo beat", "Faded",
 }
 BANNED: set[str] = {
+    # vocals dropped by the founder
     "Beautiful Things", "abcdefu", "Someone You Loved", "greedy", "Flowers", "Gimme! Gimme! Gimme!",
+    # beats dropped by the founder. "Water (Tyla)" is spelled out in full on purpose: a bare "Water"
+    # also matches "Watermelon Sugar", which is pinned. The pinned-wins rule in is_banned() covers
+    # that too, but being precise here means the collision never has to be caught at all.
+    "Hey Brother", "Rasputin", "Cola", "Tremor", "Fire Fire", "Water (Tyla)",
+    "Animals", "Titanium", "Waiting For Love",
 }
 
 
@@ -69,6 +78,16 @@ def is_pinned(name: str) -> bool:
 
 
 def is_banned(name: str) -> bool:
+    """PINNED BEATS BANNED, always.
+
+    These are substring matches, and substrings collide: banning "Water" (the Tyla beat) also
+    matches "WATERmelon Sugar", a vocal the founder had just asked to keep. Rather than rely on
+    everyone spotting that, an explicit keep always wins over an explicit drop - the safe direction,
+    since the worst case is a song appearing that someone wanted gone, not a requested song
+    silently vanishing.
+    """
+    if is_pinned(name):
+        return False
     return any(b.lower() in name.lower() for b in BANNED)
 
 
