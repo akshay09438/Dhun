@@ -45,9 +45,31 @@ PER_LIST = 25
 HOUSE_LO, HOUSE_HI = 118, 132
 TOLERANCE = 0.15
 
-# Founder overrides. A name here is always in (PINNED) or always out (BANNED), whatever the maths says.
-PINNED: set[str] = set()
-BANNED: set[str] = set()
+# Founder overrides, matched on a substring of the song name. PINNED is always in, BANNED always
+# out, whatever the ranking says - the founder knows which songs people actually want to hear, and
+# recognisability is a real quality the tempo maths cannot see.
+#
+# 2026-08-14: the founder swapped six mid-tier pop vocals for six far bigger songs. All six incoming
+# are 74-95 BPM hip-hop/pop and paired with ZERO of the house beats then on show, so four slower
+# beats are pinned alongside them - otherwise those six would sit in the menu unable to make a
+# single mix. Pin vocals and beats together or the menu looks fuller than it is.
+PINNED: set[str] = {
+    # the six the founder asked for
+    "God's Plan", "Location", "SICKO MODE", "Shape of You", "Intentions", "Watermelon Sugar",
+    # ...and the beats that can actually carry them (85-90 BPM, plus one 167 that works at half-time)
+    "redrum", "Merrygo beat", "Faded", "Summertime Sadness (Techno Remix)",
+}
+BANNED: set[str] = {
+    "Beautiful Things", "abcdefu", "Someone You Loved", "greedy", "Flowers", "Gimme! Gimme! Gimme!",
+}
+
+
+def is_pinned(name: str) -> bool:
+    return any(p.lower() in name.lower() for p in PINNED)
+
+
+def is_banned(name: str) -> bool:
+    return any(b.lower() in name.lower() for b in BANNED)
 
 
 def bpm_of(song_id: str) -> int:
@@ -86,12 +108,15 @@ def main() -> int:
         return [e for e in entries
                 if e["role_hint"] == role
                 and (lang is None or e.get("language") == lang)
-                and e["name"] not in BANNED]
+                and not is_banned(e["name"])]
 
     beats_all = group("beat")
-    house = [b for b in beats_all if HOUSE_LO <= b["bpm"] <= HOUSE_HI]
-    beats = spread(house or beats_all, PER_LIST)
-    beats += [b for b in beats_all if b["name"] in PINNED and b not in beats]
+    # Pinned beats come FIRST and are never squeezed out — an earlier version appended them and then
+    # truncated back to 25, which silently dropped the very beats that were pinned to make the
+    # pinned vocals workable.
+    beats = [b for b in beats_all if is_pinned(b["name"])]
+    house = [b for b in beats_all if HOUSE_LO <= b["bpm"] <= HOUSE_HI and b not in beats]
+    beats += spread(house or [b for b in beats_all if b not in beats], PER_LIST - len(beats))
     beats = beats[:PER_LIST]
 
     def pick_vocals(lang):
@@ -99,7 +124,7 @@ def main() -> int:
         if len(pool) <= PER_LIST:
             return pool, {}
         scored = {v["song_id"]: sum(1 for b in beats if pairs(b["bpm"], v["bpm"])) for v in pool}
-        pinned = [v for v in pool if v["name"] in PINNED]
+        pinned = [v for v in pool if is_pinned(v["name"])]
         rest = sorted((v for v in pool if v not in pinned),
                       key=lambda v: (-scored[v["song_id"]], v["name"].lower()))
         return (pinned + rest)[:PER_LIST], scored
