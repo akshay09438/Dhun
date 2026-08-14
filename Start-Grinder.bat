@@ -74,7 +74,11 @@ REM  behind it - on 2026-08-12 a Grinder from 18:34 was still running invisibly,
 REM  ended up racing it: music started on its own, commands timed out, and a bot that knew nothing
 REM  about the second room answered as if it were the only one. An hour went into chasing bugs that
 REM  were not there. Clearing the shift first costs a second.
-powershell -NoProfile -ExecutionPolicy Bypass -File "services\discord-bot\scripts\Stop-Other-Grinders.ps1"
+REM Path is relative to %~dp0, NOT to the current directory - we `cd`d into services\discord-bot a
+REM few lines above, so the old "services\discord-bot\scripts\..." resolved to a folder that does
+REM not exist and PowerShell just errored past it. The clearing silently never ran, which is the
+REM one job this line has. Found 2026-08-14.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0services\discord-bot\scripts\Stop-Other-Grinders.ps1"
 
 echo.
 echo  [3/3] Connecting Grinder to Discord...

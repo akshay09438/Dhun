@@ -308,7 +308,7 @@ async def _grant_member(guild, user_id: int) -> str:
 async def _tell_the_applicant(interaction, user_id: int, *, approved: bool) -> None:
     """DM them, and fall back to the lobby if their DMs are shut. Never fatal: a decision that
     stuck must not look failed because a DM bounced."""
-    text = ("You are in. Head to the grind channel and type `/grind`."
+    text = (f"You are in. Head to {grind_channel_mention()} and type `/grind`."
             if approved else
             "Thanks for applying. The room is small and full for now, so not yet - your "
             "application stays in the pile and nothing is lost.")
@@ -608,6 +608,36 @@ async def create_vouch_invite(channel, created_by: int) -> str | None:
     return inv.url
 
 
+def grind_channel_mention() -> str:
+    """How to name the room people grind in, in copy sent to a person.
+
+    A `<#id>` mention renders as the room's CURRENT name and is clickable, so it survives the
+    founder renaming it - which they do. The old copy said "the grind channel", a room that has
+    never existed under that name; the actual room is `#get-shit-done`, and a newcomer told to find
+    "the grind channel" has to guess. Falls back to plain words only when no id is configured.
+    """
+    return f"<#{CFG.grinder_channel_id}>" if CFG.grinder_channel_id else "the grind channel"
+
+
+def open_door_welcome() -> str:
+    """What somebody sees when they walk straight in, under 30 members.
+
+    NO MENTION OF A FORM. The old line said "there is no form yet", which tells a brand-new arrival
+    about a hurdle that does not exist and that they will never meet - it reads as a warning
+    stapled to a welcome. Founder, 2026-08-14. Kept as a function, not an inline literal, so the
+    promise is assertable in a test rather than by reading the source.
+    """
+    return ("You are in. Grinder is small and still growing, so you have the run of it."
+            f"\n\nHead to {grind_channel_mention()} and type `/grind` to make your first mix.")
+
+
+def vouched_welcome() -> str:
+    """What somebody personally vouched for sees. A vouch skips the queue whether or not a form
+    is currently in force, so this one may mention it."""
+    return ("You are in - somebody vouched for you, so you can skip the queue.\n\n"
+            f"Head to {grind_channel_mention()} and type `/grind` to make your first mix.")
+
+
 async def _let_them_in(member, *, reason: str, message: str) -> bool:
     """Hand somebody `@Member` and tell them. True if they really hold the role now.
 
@@ -701,15 +731,13 @@ async def on_member_join(member) -> bool:
             and store.claim_vouch(code=code, used_by=member.id, when=_now()):
         let_in = await _let_them_in(
             member, reason="Invited personally - skipped the form",
-            message=("You are in - somebody vouched for you, so you can skip the queue.\n\n"
-                     "Head to the grind channel and type `/grind` to make your first mix."))
+            message=vouched_welcome())
         if let_in:
             log.info("vouched: %s came in on %s without the form", member, code)
     elif taking_all_comers(guild):
         let_in = await _let_them_in(
             member, reason=f"Under {OPEN_BELOW} members - the door is open",
-            message=("You are in. Grinder is small and still growing, so there is no form yet."
-                     "\n\nHead to the grind channel and type `/grind` to make your first mix."))
+            message=open_door_welcome())
         if let_in:
             log.info("open door: %s walked in; community now %d", member, community_count(guild))
 

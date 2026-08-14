@@ -171,11 +171,25 @@ BATS = [REPO / "Set-Grinder-Token.bat", REPO / "Add-Grinder-Rooms.bat", REPO / "
 
 
 def _referenced_scripts():
+    """Every PowerShell helper a .bat calls, as a repo-relative path.
+
+    `%~dp0` is cmd for "the folder this .bat lives in", which for all of ours IS the repo root - and
+    it is the CORRECT way to write these paths, because a .bat that `cd`s somewhere first (as
+    Start-Grinder.bat does) breaks any path written relative to the working directory. That is a
+    real bug this suite previously could not see: the old `services\\discord-bot\\scripts\\...` form
+    resolved fine from the repo root, so this check passed, while at RUNTIME the launcher had
+    already `cd`d into `services\\discord-bot` and the helper silently never ran (found 2026-08-14).
+
+    So strip a leading `%~dp0` before resolving. Note the `0` of `%~dp0` is a word character and
+    would otherwise be captured as part of the path, turning it into `0services/...`.
+    """
     import re
     found = []
     for bat in BATS:
-        for m in re.finditer(r'["\']?([\w\\/.-]*scripts[\\/][\w.-]+\.ps1)', bat.read_text(encoding="utf-8")):
-            found.append((bat.name, m.group(1).replace("\\", "/")))
+        for m in re.finditer(r'(?:%~dp0)?([\w\\/.-]*scripts[\\/][\w.-]+\.ps1)',
+                             bat.read_text(encoding="utf-8")):
+            rel = m.group(1).replace("\\", "/")
+            found.append((bat.name, rel))
     return found
 
 
