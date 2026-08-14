@@ -57,10 +57,14 @@ PINNED: set[str] = {
     # --- VOCALS the founder asked for (2026-08-14) ---
     "God's Plan", "Location", "SICKO MODE", "Shape of You", "Intentions", "Watermelon Sugar",
     # --- BEATS the founder asked for (2026-08-14) ---
-    "Let Me Love You", "One Dance", "F1", "All The Stars", "Losing It",
+    "Let Me Love You", "One Dance", "Lose My Mind", "All The Stars", "Losing It",
     "Reminder", "Sirens", "Starboy", "Summertime Sadness", "São Paulo",
+    # second round of beat swaps, same evening
+    "Feel So Close", "Calm Down", "Habits", "This Is What You Came For",
     # --- beats kept to carry the slow vocals above (85-90 BPM; the 167 works at half-time) ---
-    "redrum", "Merrygo beat", "Faded",
+    # Merrygo beat WAS here and the founder has since dropped it, so it is gone from the pin list
+    # rather than only added to BANNED - a pin beats a ban, so leaving it here would have kept it.
+    "redrum", "Faded",
 }
 BANNED: set[str] = {
     # vocals dropped by the founder
@@ -70,6 +74,8 @@ BANNED: set[str] = {
     # that too, but being precise here means the collision never has to be caught at all.
     "Hey Brother", "Rasputin", "Cola", "Tremor", "Fire Fire", "Water (Tyla)",
     "Animals", "Titanium", "Waiting For Love",
+    # second round, same evening
+    "Merrygo beat", "Levels", "Satisfaction", "In My Mind",
 }
 
 
