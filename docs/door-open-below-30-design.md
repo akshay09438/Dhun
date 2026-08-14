@@ -24,16 +24,58 @@ Tracked live, so it reopens if the count falls back below 30.
 
 ## What "30 members" counts — and what it does not
 
-**It counts people holding the `@Member` role, excluding bots.** This is a decision, not an
-inherited fact, and it is the single most load-bearing line in this document.
+**It counts people holding the `@Member` role, excluding bots AND excluding the operators.** This is
+a decision, not an inherited fact, and it is the single most load-bearing line in this document.
 
-Three candidates were considered:
+Founder's own words, 2026-08-14, when asked to confirm:
 
-| Candidate                               | Rejected because                                                                                                                                                                                                                                           |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Everyone in the Discord server          | Bots are members. Grinder runs **2+ identities**, so the door would slam 2–3 people early. Worse, people queuing in the lobby are not _in_ — a queue of five would hold the door shut forever and the founder's reopen-below-30 decision would never fire. |
-| `store.approved_count()` (exists today) | **Counts only people who came through the FORM.** It misses vouched friends (`/invitefriend`), admins, and — under this change — everyone who walks in free below 30. Using it would mean the door never closes, because free arrivals never increment it. |
-| **`@Member` holders, excluding bots**   | **Chosen.** It is the only number that means "people who are actually in", which is what the founder means by a member.                                                                                                                                    |
+> "Yes I was talking about real people, excluding the Grinder bots + my two accounts (akshay5397 &
+> bearwolf101)."
+
+So the count is **real community members only**. Neither operator account counts toward the 30, and
+neither do the Grinder identities.
+
+### How the two operator accounts are identified — by ROLE, not by name
+
+**Not hard-coded usernames, and not user ids in `.env`.** Both are excluded by what they already
+are on the live server:
+
+| Account       | What it is                                             | How it is excluded                |
+| ------------- | ------------------------------------------------------ | --------------------------------- |
+| `akshay5397`  | **the server owner** (measured by `server_status.py`)  | `member.id == guild.owner_id`     |
+| `bearwolf101` | holds **`@Backup Admin`, which carries Administrator** | has Administrator or Manage Guild |
+
+The rule generalises to: **bots, the owner, and anyone holding Administrator or Manage Guild do not
+count as community members.** Staff are not community.
+
+Why not the two obvious alternatives:
+
+- **Usernames in a list** — Discord usernames are changeable, and a renamed operator would silently
+  start counting, closing the door a person early with no error anywhere.
+- **User ids in `.env`** — `.env` is on the dangerous-5% list, and it would mean asking the founder
+  to hand-edit a secrets file to configure a feature. Configuration that requires the non-coder to
+  edit a protected file is a bad trade for a rule the server already encodes.
+
+**The one consequence, stated so it is never a surprise:** if a normal community member is ever made
+an admin or moderator, they stop counting toward the 30, and the door closes one person later. That
+is arguably correct (staff are not community) but it is a real behaviour, not an accident.
+
+_Implementation note:_ checking `guild_permissions.administrator` is safe here. The
+`Member.guild_permissions` trap found on 2026-08-13 — that it returns `Permissions.all()` for anyone
+holding Administrator — makes it useless for asking "does this member hold some OTHER permission",
+which is the opposite of what this does. Asking whether someone IS an administrator is exactly what
+it answers correctly.
+
+### The candidates that were rejected
+
+Three ways of counting were considered before this one:
+
+| Candidate                                                | Rejected because                                                                                                                                                                                                                                           |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Everyone in the Discord server                           | Bots are members. Grinder runs **2+ identities**, so the door would slam 2–3 people early. Worse, people queuing in the lobby are not _in_ — a queue of five would hold the door shut forever and the founder's reopen-below-30 decision would never fire. |
+| `store.approved_count()` (exists today)                  | **Counts only people who came through the FORM.** It misses vouched friends (`/invitefriend`), admins, and — under this change — everyone who walks in free below 30. Using it would mean the door never closes, because free arrivals never increment it. |
+| `@Member` holders, excluding bots only                   | Nearly right, and what this design said in its first draft. It still counts the founder's own two accounts, so the door would close at **28 real people, not 30**. Corrected by the founder on 2026-08-14.                                                 |
+| **`@Member` holders, minus bots, the owner, and admins** | **Chosen.** The only number that means "real community members who are actually in".                                                                                                                                                                       |
 
 That second row is a genuine trap and worth stating plainly: **the counter the app already has is
 the wrong counter for this feature.** A reasonable implementer would reach for `approved_count()`
@@ -86,7 +128,7 @@ ever writes to an existing application row. That is a hard boundary and should h
 `approved_count()` — form approvals only. Under this change that undercounts badly: 28 free arrivals
 would still read **"0 of 50 seats taken"**, and the 50-seat warning would never fire.
 
-Changed to count `@Member` holders excluding bots — the same number the 30-threshold uses. **One
+Changed to count real community members — the same number the 30-threshold uses. **One
 definition of "a member", used in both places.** Two different definitions of the same word in one
 feature is how this kind of thing rots.
 
@@ -108,12 +150,12 @@ messages every time. A closing changes what strangers experience, so it is worth
 
 Three functions in `services/discord-bot/door.py`, plus one counter:
 
-| Function                   | Today                                                       | Change                                                                                                                        |
-| -------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `is_open()`                | "is a door channel configured at all"                       | Keeps that meaning (the dormant-by-default guard) and gains the count check. **Two distinct questions — see the note below.** |
-| `on_member_join()`         | lets a vouched arrival straight in, everyone else untouched | Gains a branch: under 30, grant `@Member` and welcome them. The vouch path is unchanged and still runs first.                 |
-| `blocked_reason()`         | blocks `/grind` for anyone without `@Member`                | Returns `None` while under 30 — nothing to block when everyone is admitted anyway.                                            |
-| new: `member_count(guild)` | —                                                           | `@Member` holders excluding bots. **The single definition**, used by the threshold and by the seat counter.                   |
+| Function                      | Today                                                       | Change                                                                                                                                                                                                                                                                          |
+| ----------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `is_open()`                   | "is a door channel configured at all"                       | Keeps that meaning (the dormant-by-default guard) and gains the count check. **Two distinct questions — see the note below.**                                                                                                                                                   |
+| `on_member_join()`            | lets a vouched arrival straight in, everyone else untouched | Gains a branch: under 30, grant `@Member` and welcome them. The vouch path is unchanged and still runs first.                                                                                                                                                                   |
+| `blocked_reason()`            | blocks `/grind` for anyone without `@Member`                | Returns `None` while under 30 — nothing to block when everyone is admitted anyway.                                                                                                                                                                                              |
+| new: `community_count(guild)` | —                                                           | `@Member` holders minus bots, the owner, and Administrator/Manage-Guild holders. **The single definition**, used by the threshold and by the seat counter. Named `community_`, not `member_`, because "member" is the ambiguous word this whole section exists to disambiguate. |
 
 **A naming trap worth calling out.** `is_open()` currently means "is this feature configured"; this
 change makes "open" also mean "letting people in freely". Those are different questions and
@@ -131,16 +173,25 @@ New tests, written before the change:
 
 1. Under 30, a joiner is granted `@Member` and never sees the form.
 2. At exactly 30, a joiner gets the form. **The boundary is `>= 30` shut, not `> 30`.**
-3. Bots do not count toward 30 (join two bots at 29, door stays open).
-4. Lobby-sitters do not count toward 30.
-5. Dropping below 30 reopens the door.
-6. **A pending application is never mutated by any door-state change** (decision 3's hard boundary).
-7. The closing announcement fires once on crossing, not on every join above 30.
-8. The seat counter reports real members, including free arrivals.
-9. With no door configured, every behaviour is exactly as it is today (the dormant guard).
+3. **Bots do not count** toward 30 (add two bots at 29 real people, door stays open).
+4. **The server owner does not count** (`akshay5397`).
+5. **An Administrator / Manage-Guild holder does not count** (`bearwolf101` via `@Backup Admin`).
+   Together with 3 and 4: a server showing **34** in Discord's own member list, made of 30 real
+   people + 2 bots + 2 operators, must read as exactly **30** — and a server of 28 real people +
+   2 bots + 2 operators must read **28** and leave the door OPEN.
+6. Lobby-sitters do not count toward 30.
+7. Dropping below 30 reopens the door.
+8. **A pending application is never mutated by any door-state change** (decision 3's hard boundary).
+9. The closing announcement fires once on crossing, not on every join above 30.
+10. The seat counter reports real members, including free arrivals.
+11. With no door configured, every behaviour is exactly as it is today (the dormant guard).
 
-Test 9 is the regression that matters most: this feature must remain invisible on a server that has
-never set the door up.
+**Test 11 is the regression that matters most:** this feature must remain invisible on a server that
+has never set the door up.
+
+**Tests 3–5 are the ones that encode the founder's actual sentence** and are the easiest to get
+subtly wrong — an implementation that counts Discord's own member number passes tests 1, 2, 6 and 7
+and still closes the door four people early.
 
 ## Non-goals
 
