@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 from datetime import datetime, timezone
 import tempfile
 import uuid
@@ -41,6 +42,25 @@ from helpers import match_songs, safe_filename, select_option_specs
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("promptdj.discord")
+
+# WRITE OUR OWN LOG, rather than relying on the launcher to redirect the console.
+#
+# For two days there was no log at all: the .bat threw everything at a console window and nowhere
+# else, so once it was minimised nobody could answer "is Grinder up?" or "what just broke?". On
+# 2026-08-14 that cost a wrong diagnosis - a perfectly healthy bot was killed and debugged, because
+# the only other signal available (`Member.status`) reads `offline` for EVERYONE without the
+# privileged presences intent. Doing it here rather than in the shell also avoids PowerShell
+# wrapping every stderr line in a NativeCommandError and writing the file as UTF-16.
+try:
+    _LOGDIR = Path(__file__).resolve().parent / "logs"
+    _LOGDIR.mkdir(exist_ok=True)
+    _fh = logging.handlers.RotatingFileHandler(       # rotate: an unbounded log on a full disk is a bug
+        _LOGDIR / "grinder.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8")
+    _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logging.getLogger().addHandler(_fh)
+    log.info("logging to %s", _LOGDIR / "grinder.log")
+except OSError:                                       # a log we cannot write must never stop the bot
+    log.warning("could not open the log file; console only")
 
 CFG = load_config()
 BOT_NAME = "Grinder"       # the beta Discord bot's name (Prompt-DJ is the product)
