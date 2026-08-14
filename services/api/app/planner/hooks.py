@@ -13,6 +13,8 @@ on the strongest anchor (the drop) and uses the other vocal parts for the setup 
 """
 from __future__ import annotations
 
+from app.planner import marks_generated
+
 HOOKS: dict[str, tuple[float, float]] = {
     # Dil Ye Bekarar Kyun Hai (Players) — "Dil ye bekaraar kyun hai" starts at 42.0s
     # (founder-confirmed by ear 2026-07-10; the section boundary at 35.5 landed mid-phrase on "…kyun ye…").
@@ -96,5 +98,15 @@ HOOKS: dict[str, tuple[float, float]] = {
 
 
 def hook_for(song_id: str) -> tuple[float, float] | None:
-    """The signature-hook slice to land on the drop for this vocal song, or None (fall back)."""
-    return HOOKS.get(song_id)
+    """The signature-hook slice to land on the drop for this vocal song, or None (fall back).
+
+    HOOKS above (hand-marked, ear-confirmed) ALWAYS wins. `marks_generated.GEN_HOOKS` — the rest of
+    the founder's marking sheet, re-keyed from filename to content id — is consulted only for songs
+    with no entry here. That order is deliberate: for eight songs the sheet disagrees with what is
+    wired above by 7-50s, and the wired value is the one already shipping in good mixes. Founder,
+    2026-08-14: _"Nothing, no single thing, has to change."_ Pinned by tests/test_marks_generated.py.
+    """
+    hand = HOOKS.get(song_id)
+    if hand is not None:
+        return hand
+    return marks_generated.GEN_HOOKS.get(song_id)
