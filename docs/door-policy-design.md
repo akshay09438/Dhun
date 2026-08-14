@@ -18,31 +18,39 @@ Answers given on 2026-08-13:
 
 **Approving who gets in does not protect the machine.** This has to be said plainly because
 protecting the machine was the founder's stated reason. Fifty approved people can still all press
-`/grind` at once; `renderq` builds 8 at a time and there is no waiting list beyond that, so the
-overflow **fails** rather than queues. That is the render waiting list — already agreed as the next
-job, and named in `docs/launch-costing-200-500-users.md` as the highest-value item on the list.
+`/grind` at once, and the door does nothing about that.
+
+> ⚠️ **CORRECTED 2026-08-14.** This paragraph used to say the overflow past 8 **fails** rather than
+> queues, and that the render waiting list was unbuilt and the next job. **Both were wrong.**
+> `renderq.py` was built on 2026-08-11 and holds a real waiting line: 8 render at once, everyone
+> else **waits and is served** (`_waiting` deque, FIFO, fair per person). Fifty people grinding
+> together means 8 running and 42 queued — **zero failures.** A render is only ever refused when one
+> person already has **3 waiting** (`max_queued_per_user`) or the whole line passes **200**
+> (`max_queue`), and even then they get a plain sentence and an HTTP 429, not a mystery error.
 
 So:
 
-| Goal | The thing that actually delivers it |
-| --- | --- |
-| The right people | This door |
-| A small community | This door (the cap) |
-| Mixes stop failing under load | **The render waiting list — not this** |
+| Goal                              | The thing that actually delivers it                  |
+| --------------------------------- | ---------------------------------------------------- |
+| The right people                  | This door                                            |
+| A small community                 | This door (the cap)                                  |
+| Mixes stop failing under load     | **The render queue — already built, not this**       |
+| Everyone hears their mix promptly | **More Grinder identities — still the real ceiling** |
 
-Building the door is right. It is not a substitute for the queue, and this document should not be
-read as having solved the capacity problem.
+Building the door is right, and it is not a substitute for the queue. But the capacity problem this
+document worried about is **rendering**, and rendering is solved. What is left is the row underneath
+it: a bot application holds one voice connection per server, so listening is still the bottleneck.
 
 Second reality check: **listening rooms are capped by Grinder identities, not by member count.**
 Two rooms can have sound at once today. A hundred approved members do not change that.
 
 ## What Discord already does, so we do not rebuild it
 
-| Native feature | What it does | Why it is not enough |
-| --- | --- | --- |
-| Rules screening | Newcomer must tick "I agree" | The founder never sees them; nobody is refused |
+| Native feature    | What it does                            | Why it is not enough                                   |
+| ----------------- | --------------------------------------- | ------------------------------------------------------ |
+| Rules screening   | Newcomer must tick "I agree"            | The founder never sees them; nobody is refused         |
 | Server onboarding | Asks interest questions, picks channels | Answers are never shown to an admin; nobody is refused |
-| Invite links | Limited-use / expiring | A real gate, but no form, and the link leaks |
+| Invite links      | Limited-use / expiring                  | A real gate, but no form, and the link leaks           |
 
 There is **no native "apply and be approved."** That part is genuinely ours to build.
 

@@ -10,6 +10,18 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ⚠️ **THE BOT AND THE API ARE RUNNING AS BACKGROUND PROCESSES OF THAT SESSION.** They were started from the agent shell, not from `Start-Grinder.bat`, and **they will die when the machine sleeps or the session ends, silently.** Do not assume Grinder is live tomorrow — check `services/discord-bot/logs/run.log` for a recent line, and restart with `Start-Grinder.bat` if it is stale.
 
+> **✅ That warning was correct — confirmed 2026-08-14.** Grinder was dead by morning: no Python process alive, `run.log` last line **2026-08-13 22:51**. **The prediction held, so keep this warning in every handoff until the bot is started from `Start-Grinder.bat` (or a host) rather than an agent shell.**
+
+---
+
+## 🔧 PARTIAL CORRECTION — 2026-08-14 (docs only, branch `docs/correct-launch-costing`)
+
+**This handoff shipped two wrong items and they are struck through below, not deleted.** "Do first" **#4 (the render waiting list)** was already built on 2026-08-11 — and the belief that overflow _fails_ rather than _queues_ had spread into four other documents. **#5 (the costing doc)** is now done: a `/grind` makes **no paid API call at all**, so the baseline is under $1/month, not ~$20. A new **#6** records the founder's decision to skip the per-person daily cap.
+
+**No code was changed. `render.py`, `validate.py` and `storage.py` untouched.** Full reasoning in the 2026-08-14 entry at the top of `docs/implementation-plan.md`.
+
+**Also measured live 2026-08-14:** disk **5.99 GB free — under the janitor's 6.0 GB cushion** (the table below saying ~10 GB is stale within a day; the test suite reclaims and regrows ~2.9 GB a run). Ops dashboard verified working at `localhost:5173/#dev` — 219 mixes/sets, 18 devices.
+
 ---
 
 ## THE HEADLINE: two beliefs about the engine were wrong, and the founder's ears proved it
@@ -60,8 +72,9 @@ Cleared by hand with the founder's explicit yes (the `APPROVED_CHAIN_CONFIG.txt`
 1. **The founder names which vocal songs should also be beats**, then wire the `"both"` role value + widen the two picker filters (`SetupScreen.tsx`, `bot.py:120-121`). Biggest return available: ~2.5× the pairings for nothing.
 2. **Two stranded marks: Dooriyan and How Deep Is Your Love.** The founder marked them and the marks never reached the app (see below). Dooriyan is the one the functional spec has been carrying as _"the only catalog vocal with no hand-marked hook."_ Thirty seconds each.
 3. **Answer the dashboard question.** The founder asked for "the Discord dev dashboard". **There is no dashboard inside Discord** — the bot has nine commands and none is one; a Discord-specific ops view is recorded in the spec as "Parked, not built". Discord activity surfaces in the **web** `#dev` page. Ask which they meant before building anything.
-4. **The render waiting list.** Still unbuilt, still the highest-value item in `docs/launch-costing-200-500-users.md`. The founder said they would handle the 8-at-once problem themselves — confirm before building it.
-5. **Correct `docs/launch-costing-200-500-users.md`.** It says ~1.5¢/mix and $16/month at 300 members, assuming two Claude calls per mix. **Neither fires.** Offered and not yet done.
+4. ~~**The render waiting list.** Still unbuilt, still the highest-value item in `docs/launch-costing-200-500-users.md`. The founder said they would handle the 8-at-once problem themselves — confirm before building it.~~ **DONE ALL ALONG — struck 2026-08-14.** It was built on **2026-08-11** (`app/renderq.py`) and is wired into `routes/mix.py:760` and `routes/set.py:392`. Read live: **capacity 8, 2 running per person, 3 queued per person, 3 retries.** Worse than a stale date: this doc, the functional spec and `door-policy-design.md` all said overflow past 8 **fails**; it **waits**. Fifty people grinding at once = 8 building, 42 in line, **zero failures**. Nothing to build. **The real remaining ceiling is VOICE** — one connection per bot application — not rendering.
+5. ~~**Correct `docs/launch-costing-200-500-users.md`.**~~ **DONE 2026-08-14** (branch `docs/correct-launch-costing`). All three Claude call sites traced: the arrangement brain is off by flag and **not set in `.env`**; the mix name is called by the **web app only** — the Discord bot never calls it; live suggestions has no caller. **A `/grind` costs $0.** Baseline falls from ~$20/month to **under $1**. The document now carries a correction notice explaining how the original went wrong: the cost was read from the existence of the code, not from whether it runs.
+6. **FOUNDER DECISION 2026-08-14 — no per-person daily cap on `/grind`.** Offered and declined. It used to be about preventing a runaway bill; with the per-mix cost at zero it would only have guarded disk. **Do not re-offer it as-is.** It becomes a money question again only if `USE_AI_ARRANGEMENT` is ever switched on.
 
 ---
 

@@ -4,6 +4,26 @@ _2026-08-11. Read-only investigation: every number below was measured on the fou
 against the real engine and the real catalog. Nothing in the engine was changed. Test scripts are
 in the session scratchpad; the method is described here so any of it can be re-run._
 
+> ## ⚠️ HISTORICAL — this diagnosis was ACTED ON. Do not quote it as the current build.
+>
+> **Added 2026-08-14.** This document describes the engine **as it was on 2026-08-11**, and its
+> central finding — _"there is no queue in the render code at all"_ — **was true then and is false
+> now.** Recommendation (2) of this very document ("add a render semaphore") was built the next day
+> as `services/api/app/renderq.py`, and recommendation (3) ("show queue position") shipped with it.
+>
+> **Current state:** 8 render at once, everyone else **waits in line and is served**, 2 running and
+> 3 queued per person, 3 retries on a resource failure. Load-tested at 20 fired simultaneously —
+> **20/20 succeeded, peak running 8, peak waiting 12** (`scripts/loadtest/queue_check.py`).
+>
+> **Why this banner exists:** between August 12 and 14, four other documents quoted this paragraph's
+> "no queue" finding as if it were still current, and three of them went further and claimed that
+> overflow past 8 **fails** rather than queues — which was never true of `renderq` at all. A dated
+> diagnosis that gets fixed is a good outcome; a dated diagnosis that keeps being cited is drift.
+> **The measurements below remain valid and re-runnable. The conclusions about what EXISTS do not.**
+>
+> Still true and still unfixed: **voice is the real ceiling** — one connection per bot application,
+> so how fast people HEAR a mix is capped by Grinder identities, not by rendering.
+
 ---
 
 ## The one-paragraph answer
@@ -20,12 +40,12 @@ bad pair look identical - which sent this very investigation down the wrong path
 
 ## The machine everything was measured on
 
-| | |
-|---|---|
-| CPU | Snapdragon X, **10 logical cores** (Windows ARM64) |
-| RAM | 16.8 GB |
-| Engine | one uvicorn process, one worker |
-| Catalog | 12 beats x 18 vocals = **216 pairs** |
+|         |                                                    |
+| ------- | -------------------------------------------------- |
+| CPU     | Snapdragon X, **10 logical cores** (Windows ARM64) |
+| RAM     | 16.8 GB                                            |
+| Engine  | one uvicorn process, one worker                    |
+| Catalog | 12 beats x 18 vocals = **216 pairs**               |
 
 ---
 
@@ -35,18 +55,18 @@ bad pair look identical - which sent this very investigation down the wrong path
 
 Rendered alone, nothing else running.
 
-| | |
-|---|---|
-| Cold render | **22.6s / 28.3s** on first measurement; re-measured pairs ran **11.8s – 30.1s** |
-| Repeat of the same pair | **0.03 seconds** |
-| CPU during ONE render | peak **100%**, all **10 of 10** cores over 50% busy |
-| RAM for ONE render | **1.26 GB** |
+|                         |                                                                                 |
+| ----------------------- | ------------------------------------------------------------------------------- |
+| Cold render             | **22.6s / 28.3s** on first measurement; re-measured pairs ran **11.8s – 30.1s** |
+| Repeat of the same pair | **0.03 seconds**                                                                |
+| CPU during ONE render   | peak **100%**, all **10 of 10** cores over 50% busy                             |
+| RAM for ONE render      | **1.26 GB**                                                                     |
 
 **The earlier "80 seconds" figure is wrong** — the true median is nearer **25–30 seconds**.
 
 **The "instant repeat" claim is true.** A cached mix returns in 3 hundredths of a second.
 
-**The important line is the CPU one.** A *single* render already saturates all ten cores. That
+**The important line is the CPU one.** A _single_ render already saturates all ten cores. That
 predicts what the concurrency tests then confirmed: extra simultaneous users are not free, they
 share a machine that one user already fills.
 
@@ -59,15 +79,15 @@ seven times what Father Ocean does, so those runs measured the songs, not the co
 
 The controlled version fired **the same ten pairs** twice — once one at a time, once together.
 
-| | |
-|---|---|
-| One at a time (sum of each pair's solo cost) | **~288s** |
-| The same ten fired together | **52.4s** wall clock |
-| **Speedup** | **~5.5x** (1.0 would be fully serial) |
-| Failures | **0 of 10** |
-| Slowest person waited | 52.4s (fastest 27.7s — **1.9x unfairness**) |
-| Throughput | **11.5 mixes/minute**, vs ~2/minute one at a time |
-| RAM at 10 concurrent | **5.15 GB**; engine threads peaked at **59** |
+|                                              |                                                   |
+| -------------------------------------------- | ------------------------------------------------- |
+| One at a time (sum of each pair's solo cost) | **~288s**                                         |
+| The same ten fired together                  | **52.4s** wall clock                              |
+| **Speedup**                                  | **~5.5x** (1.0 would be fully serial)             |
+| Failures                                     | **0 of 10**                                       |
+| Slowest person waited                        | 52.4s (fastest 27.7s — **1.9x unfairness**)       |
+| Throughput                                   | **11.5 mixes/minute**, vs ~2/minute one at a time |
+| RAM at 10 concurrent                         | **5.15 GB**; engine threads peaked at **59**      |
 
 _Honesty note: an earlier draft of this reported 8.7x. Two pairs in the one-at-a-time phase
 recorded 110s+, and re-measuring them three times each gave 25–30s — those two readings were
@@ -79,11 +99,11 @@ one-at-a-time was reading the architecture, not measuring it.
 ### 3. How does it hold up as the number climbs?
 
 | At once | Worst wait | Throughput | Engine RAM |
-|---|---|---|---|
-| 1 | 28s | 2.7/min | 1.26 GB |
-| 2 | 31s | 3.9/min | 2.22 GB |
-| 5 | 45s | 6.7/min | 3.88 GB |
-| 10 | 52s | 11.5/min | 5.15 GB |
+| ------- | ---------- | ---------- | ---------- |
+| 1       | 28s        | 2.7/min    | 1.26 GB    |
+| 2       | 31s        | 3.9/min    | 2.22 GB    |
+| 5       | 45s        | 6.7/min    | 3.88 GB    |
+| 10      | 52s        | 11.5/min   | 5.15 GB    |
 
 It degrades **gracefully** up to ten — waits roughly double while throughput quadruples.
 
@@ -93,7 +113,7 @@ no limit anywhere in the render path.** Fifty simultaneous requests would start 
 
 That matters because of memory, not speed: **during the catalog sweep the machine sat at 89.5%
 memory with 1.8 GB free.** Ten concurrent renders is already most of this machine. The failure mode
-past that is not "people wait" — it is the engine running out of memory and dropping *everyone's*
+past that is not "people wait" — it is the engine running out of memory and dropping _everyone's_
 work, including the people who were nearly finished.
 
 ### 4. The failure nobody had measured
@@ -132,13 +152,13 @@ An earlier draft of this document blamed Innerbloom, Rapture and Khuda Jaane and
 withdrawing all three. **Re-testing proved that wrong for two of them**, and the correction matters
 more than the original finding:
 
-| Pair | Re-tested | Result |
-|---|---|---|
-| Innerbloom x Dooriyan | 6 attempts | **6/6 worked** |
-| Rapture x Panda | 6 attempts | **6/6 worked** |
-| Rapture x Uff Teri Ada | 6 attempts | **6/6 worked** |
-| Innerbloom x 10 different vocals, all at once | 10 attempts | **10/10 worked** |
-| **Father Ocean x Khuda Jaane** | 6 attempts | **0/6 — fails every single time** |
+| Pair                                          | Re-tested   | Result                            |
+| --------------------------------------------- | ----------- | --------------------------------- |
+| Innerbloom x Dooriyan                         | 6 attempts  | **6/6 worked**                    |
+| Rapture x Panda                               | 6 attempts  | **6/6 worked**                    |
+| Rapture x Uff Teri Ada                        | 6 attempts  | **6/6 worked**                    |
+| Innerbloom x 10 different vocals, all at once | 10 attempts | **10/10 worked**                  |
+| **Father Ocean x Khuda Jaane**                | 6 attempts  | **0/6 — fails every single time** |
 
 The only thing that differed between the sweep and the re-test was **headroom**: the sweep ran while
 the machine was at 89.5% memory with the disk falling toward 2 GB; the re-test ran with 6.3 GB of
@@ -146,15 +166,15 @@ disk and 6.7 GB of RAM free. Same songs, same ten-at-once, opposite outcome.
 
 **So the honest split is:**
 
-* **Khuda Jaane is a genuine, reproducible pair failure** (see the crest-factor error below).
-* **The Innerbloom and Rapture failures were not reproducible** and are best explained by the
+- **Khuda Jaane is a genuine, reproducible pair failure** (see the crest-factor error below).
+- **The Innerbloom and Rapture failures were not reproducible** and are best explained by the
   machine running out of room during the sweep.
-* **The true per-pair failure rate of the catalog is therefore UNKNOWN**, and the 20.7% figure is
+- **The true per-pair failure rate of the catalog is therefore UNKNOWN**, and the 20.7% figure is
   an upper bound measured on a starved machine. It should be re-measured with headroom, deleting
   each render as soon as its result is known.
 
 **The defect this exposes is worse than either.** `_run_mix` catches every exception and reports
-them all with one sentence — *"Couldn't build this mix. Try another pair or regenerate."* A genuine
+them all with one sentence — _"Couldn't build this mix. Try another pair or regenerate."_ A genuine
 quality rejection and a machine-out-of-resources failure are **indistinguishable**, both to the user
 and in `events.db`. That is why a resource problem looked like a catalog problem for several hours,
 and it is why the ops dashboard's "degraded song" lists cannot currently be trusted either.
@@ -164,18 +184,18 @@ and it is why the ops dashboard's "degraded song" lists cannot currently be trus
 Recorded for completeness. Given the correction above, read the Innerbloom and Rapture rows as
 "failed while the machine was starved", not "these songs are broken":
 
-| Beat | Failed | Rate |
-|---|---|---|
+| Beat                      | Failed  | Rate    |
+| ------------------------- | ------- | ------- |
 | Innerbloom (RUFUS DU SOL) | 8 of 17 | **47%** |
-| Rapture (Black Coffee) | 7 of 18 | **38%** |
-| Father Ocean | 1 of 18 | 5% |
-| I Adore You | 1 of 18 | 5% |
+| Rapture (Black Coffee)    | 7 of 18 | **38%** |
+| Father Ocean              | 1 of 18 | 5%      |
+| I Adore You               | 1 of 18 | 5%      |
 
-| Vocal | Failed | Rate |
-|---|---|---|
+| Vocal           | Failed | Rate                                   |
+| --------------- | ------ | -------------------------------------- |
 | **Khuda Jaane** | 4 of 4 | **100% — fails with every beat tried** |
-| Dooriyan | 2 of 4 | 50% |
-| eleven others | 1 each | 20–33% |
+| Dooriyan        | 2 of 4 | 50%                                    |
+| eleven others   | 1 each | 20–33%                                 |
 
 **Khuda Jaane is the one that stands up to re-testing** — 4 of 4 in the sweep, 0 of 6 on re-test,
 never successful with any beat. The Innerbloom and Rapture rows did not reproduce.
@@ -197,28 +217,28 @@ This one is not a performance problem and cannot be bought away with a bigger se
 
 **A Discord bot holds exactly ONE voice connection per server** — not per room. The code already
 knows this; `services/discord-bot/booth.py` keeps a single `now_playing` and a queue behind an
-`asyncio.Lock`, with the comment: *"A bot can hold only ONE voice connection per server, so while
-this is playing, a grind finishing in a different room waits its turn."*
+`asyncio.Lock`, with the comment: _"A bot can hold only ONE voice connection per server, so while
+this is playing, a grind finishing in a different room waits its turn."_
 
 Playback length, measured across 40 real finished mixes:
 
-| | |
-|---|---|
-| Shortest | 162s |
+|            |                      |
+| ---------- | -------------------- |
+| Shortest   | 162s                 |
 | **Median** | **189s (3 min 9 s)** |
-| Longest | 265s |
+| Longest    | 265s                 |
 
 At 189 seconds each, through one connection:
 
-| Grinds queued | The last one starts | and ends |
-|---|---|---|
-| 2 | 3 min | 6 min |
-| 5 | 13 min | 16 min |
-| **10** | **28 min** | **31 min** |
+| Grinds queued | The last one starts | and ends   |
+| ------------- | ------------------- | ---------- |
+| 2             | 3 min               | 6 min      |
+| 5             | 13 min              | 16 min     |
+| **10**        | **28 min**          | **31 min** |
 
 **This is the ten-to-fifteen-minute problem, correctly located.** It was blamed on rendering. It is
-voice. Ten people in Bollywood_House and Hollywood_Blends do not wait for each other's *renders* —
-they wait for each other's *playback*, and they wait far longer than anyone said.
+voice. Ten people in Bollywood_House and Hollywood_Blends do not wait for each other's _renders_ —
+they wait for each other's _playback_, and they wait far longer than anyone said.
 
 ### 6. Does the Discord bot add its own queue?
 
@@ -229,14 +249,14 @@ pool on the bot's render path. The bot's only queue is the voice one above.
 
 ## What is actually breaking, ranked
 
-| # | Problem | Real? | Fixed by money? |
-|---|---|---|---|
-| 1 | **Every failure reports the same sentence**, so a bad pair and a starved machine are indistinguishable | **Yes — it misled this very investigation** | No |
-| 2 | **No admission control**, so a starved machine fails renders instead of queueing them | **Yes — demonstrated** | Partly |
-| 3 | **One voice stream per server** — 10 rooms, 9 silent | **Yes, structural** | No |
-| 4 | **Khuda Jaane cannot be mixed with anything** (80 BPM vs 120-122) | **Yes, reproducible 0/6** | No |
-| 5 | **No queue position shown** — "grinding…" whether it is 30s or 5 min away | Yes | No |
-| 6 | Rendering speed | **No. Already ~5.5x parallel** | n/a |
+| #   | Problem                                                                                                | Real?                                       | Fixed by money? |
+| --- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------- | --------------- |
+| 1   | **Every failure reports the same sentence**, so a bad pair and a starved machine are indistinguishable | **Yes — it misled this very investigation** | No              |
+| 2   | **No admission control**, so a starved machine fails renders instead of queueing them                  | **Yes — demonstrated**                      | Partly          |
+| 3   | **One voice stream per server** — 10 rooms, 9 silent                                                   | **Yes, structural**                         | No              |
+| 4   | **Khuda Jaane cannot be mixed with anything** (80 BPM vs 120-122)                                      | **Yes, reproducible 0/6**                   | No              |
+| 5   | **No queue position shown** — "grinding…" whether it is 30s or 5 min away                              | Yes                                         | No              |
+| 6   | Rendering speed                                                                                        | **No. Already ~5.5x parallel**              | n/a             |
 
 ---
 
