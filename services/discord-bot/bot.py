@@ -934,7 +934,9 @@ async def applications_cmd(interaction: discord.Interaction, contains: str = "")
             "That one is for whoever runs the server.", ephemeral=True)
         return
     rows = store.pending_applications(contains or None)
-    taken = store.approved_count()
+    # Real members, not form approvals - free arrivals under `door.OPEN_BELOW` and vouched friends
+    # are seats too, and counting only the form would report "2 of 50" with 30 people in the room.
+    taken = door.community_count(interaction.guild)
     if not rows:
         note = (f"Nobody waiting who mentions {contains!r}." if contains
                 else "Nobody is waiting.")

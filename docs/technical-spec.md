@@ -2,7 +2,9 @@
 
 _How it is built. Starts as the intended design (from the PRD + discovery deltas); becomes as-built as code lands. Living document — if code and this doc disagree, the code wins and this doc is corrected. Full background: [reference/PRD.md](reference/PRD.md)._
 
-> **LATEST — 2026-08-13 (routine stale-render cleanup, and the staged `disk-sweep-floors-and-age` card WITHDRAWN; branch `feat/stale-render-cleanup`).** **`workers/render.py` and `services/api/app/planner/validate.py` are UNTOUCHED; no mix changes byte-for-byte.** `services/api/app/storage.py` IS touched — additively, via the confirm-and-apply flow.
+> **LATEST — 2026-08-14 (as-built: the door opens below 30; branch `feat/door-opens-below-30`. NO dangerous surface touched — `render.py`, `validate.py`, `storage.py`, `routes/songs.py` verified unchanged).** All in `services/discord-bot/door.py` plus one line of `bot.py`. **`OPEN_BELOW = 30`.** **`community_count(guild)`** is the single definition of "a member" in the codebase: it walks `guild.members` and counts holders of `@Member`, skipping `bot`, `guild.owner_id`, and anyone whose `guild_permissions` carry `administrator` or `manage_guild`. It deliberately does NOT use `store.approved_count()`, which counts only `applications.state='approved'` and therefore misses vouched arrivals, admins and every free entry — using it would leave the door permanently open. Reading `guild_permissions.administrator` is sound here despite the 2026-08-13 `Permissions.all()` trap: that trap breaks "does this member hold some OTHER permission", the opposite question. **`taking_all_comers(guild)`** is `community_count < OPEN_BELOW`, computed live on every call (nothing latched, nothing cached — that is what makes the founder's re-open decision work), **guarded by `_member_list_can_be_trusted()`**: absent guild, empty `guild.members`, or `guild.member_count > len(guild.members)` (not fully chunked) all return **shut**. That guard is the security-critical line — `guild.members` is an intent-fed cache, and a cold one counts 0 real members, reads as "tiny", and would hand `@Member` to every stranger arriving after a restart; **mutation-verified, removing it turns 8 tests red including 2 that predate the feature.** `is_open()` keeps its original meaning ("is the door configured at all") and is deliberately NOT merged with `taking_all_comers` — a dormant door and a permissive door must not share a code path. **`on_member_join`** now: `note_door_is_open()` (pure, no I/O, records the open state so a genuine re-open→close is announced again) → vouch path (claimed BEFORE the size check, so a single-use link can never survive to be forwarded after the door shuts) → else free entry if `taking_all_comers` → `announce_if_just_closed()`. Both grant paths share **`_let_them_in()`** rather than near-copying the role grant. `announce_if_just_closed` **swallows every exception** (`except Exception`) and runs strictly AFTER the grant: the first draft ran it before, and a guild whose channel lookup raised left a vouched friend silently in the lobby. **`blocked_reason`** returns `None` while `taking_all_comers`, after the `is_open()` check. Seat display: `door.post_for_review` and `_decide`'s `MEMBER_CAP` warning and `bot.py`'s `/applications` all now read `community_count(guild)` instead of `approved_count()`. `store.approved_count()` is retained — it still answers "how many came through the form" — but no longer means "how big is the community". **Tests: `tests/test_door_open_below_30.py`, 25 cases; suite 422 passed / 1 skipped (was 397/1), no existing test modified.** Design + the two build-time findings: [door-open-below-30-design.md](door-open-below-30-design.md).
+>
+> **2026-08-13 (routine stale-render cleanup, and the staged `disk-sweep-floors-and-age` card WITHDRAWN; branch `feat/stale-render-cleanup`).** **`workers/render.py` and `services/api/app/planner/validate.py` are UNTOUCHED; no mix changes byte-for-byte.** `services/api/app/storage.py` IS touched — additively, via the confirm-and-apply flow.
 >
 > **(1) WHY THE STAGED CARD WAS BINNED, because this is the reusable lesson.** The card was staged **2026-08-11 18:36 UTC** and argued the auto-clean floor (2.0 GB) sat inside the render-failure zone. True when written. **`janitor.py` landed 2026-08-12 13:28 IST — thirteen hours later — and solved exactly that**, with a futility brake the card has no equivalent of. The card was never re-checked against it. Two independent adversarial reviews both returned `unsafe` on the same point: the card raised `storage.py`'s own floors to 4.0/6.0 and called `sweep()` **from the render hot path with no brake**, so at any reading under 4.0 GB free every grind would empty the entire render cache chasing a 6 GB target it could not reach — the already-measured Windows-Update scenario, turned from a near-miss into a per-render certainty. **A queued change must be re-verified against the tree as it is now; its premise can be repaired by other work while it waits.**
 >
@@ -655,7 +657,7 @@ it connects with the bot's own credentials and reports. It exists because the ha
 bot appears to still hold Administrator" as a **claim**, and a claim about permissions is worth
 nothing beside a reading taken off the live server.
 
-**What it reports:** the server owner; whether Discord's *require 2FA for moderator actions* is on;
+**What it reports:** the server owner; whether Discord's _require 2FA for moderator actions_ is on;
 every role carrying **Administrator** (with real member counts); which permissions Grinder holds
 but has no code to use; which it would be **missing** if Administrator were removed today; and
 whether approvals would still work afterwards.
@@ -670,7 +672,7 @@ The bot has no code that kicks, bans, times out or deletes — `grep` for `.kick
 1. **`Member.guild_permissions` cannot be used here, and using it nearly shipped a dangerous
    answer.** Discord defines Administrator as granting everything, so discord.py short-circuits and
    returns `Permissions.all()` for anyone holding it. The first live run therefore reported
-   *"everything it needs: present"* about a bot whose only real tick might have been Administrator
+   _"everything it needs: present"_ about a bot whose only real tick might have been Administrator
    itself. Acting on that green — untick Administrator, trust the report — would have taken Manage
    Roles away and broken every approval **silently**: recorded as approved, person still sees
    nothing. That is the same signature as the unexplained approval failure already in the handoff.
@@ -684,7 +686,7 @@ The bot has no code that kicks, bans, times out or deletes — `grep` for `.kick
    prints any failure loudly and sets a non-zero exit, stdout is reconfigured to UTF-8, and a test
    asserts every fixed string in the file is printable on a plain Windows console.
 3. **Two roles on the live server are both named `@Grinder`**, only one holding Administrator. The
-   first version returned role *names* and looked them back up, so it could credit the wrong role
+   first version returned role _names_ and looked them back up, so it could credit the wrong role
    with dangerous power. It returns role objects now.
 
 ### The reading taken off the live server, 2026-08-13

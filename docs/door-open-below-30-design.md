@@ -1,6 +1,11 @@
 # The door opens below 30 — design
 
-_Design, 2026-08-14. Founder decisions taken in session. Nothing built yet._
+_Design, 2026-08-14. Founder decisions taken in session._
+
+> **BUILT 2026-08-14** on branch `feat/door-opens-below-30`. `door.py` + `bot.py` + 25 new tests;
+> **422 passed, 1 skipped** (was 397/1), no existing test modified or weakened. Two things the
+> design did not anticipate were found while building and are recorded in "What building it
+> changed" at the foot of this document.
 
 Extends [door-policy-design.md](door-policy-design.md), which stays true in every respect except
 **when** the form applies. Read that one first; this document only changes the trigger.
@@ -211,3 +216,59 @@ validator, no storage, no secrets, no CI. Reversible by changing one constant.
 
 The one genuinely irreversible risk is **letting the wrong people in while the door is open** —
 which is the founder's explicit intent, not a defect, and is bounded at 30.
+
+---
+
+## What building it changed (2026-08-14)
+
+Two things the design did not anticipate. Both were found by tests failing, and both matter more
+than anything in the original plan.
+
+### 1. UNKNOWN MUST COUNT AS SHUT — the cold-cache hole
+
+`community_count` reads `guild.members`, which is a **cache** fed by a privileged intent, not a
+live query. The design never asked what happens when that cache is empty or half-filled.
+
+The answer is the worst possible one: an empty cache counts **zero** real members, zero is under
+30, so the door reads as **wide open** — and every stranger arriving in that window is handed
+`@Member` on a server that is supposed to be shut. Silent, irreversible, and precisely the
+direction `door.py` says never to be wrong in.
+
+`taking_all_comers` now refuses to answer "open" unless it can see the whole server:
+
+- **no guild at all** (a DM, say) -> shut;
+- **member list empty** -> shut, because that is never true of a real server the bot is in;
+- **Discord's own `member_count` higher than what we hold** (not fully chunked) -> shut.
+
+**Mutation-verified:** deleting this guard turns **8 tests red**, including two that predate this
+feature. A person wrongly asked to fill a form can just be approved; a stranger wrongly let in
+cannot be un-let-in.
+
+### 2. A NOTE MUST NEVER COST SOMEBODY THEIR ENTRY
+
+The first implementation ran the closing announcement **before** the grant, to catch the moment the
+door was still open. A guild whose channel lookup raised therefore took the whole arrival down with
+it — and **a vouched friend was silently left in the lobby by a cosmetic notification.** The
+existing suite caught it immediately.
+
+Split in two, by value:
+
+- `note_door_is_open()` — pure bookkeeping, no network, runs before the grant. It is what makes a
+  genuine reopen-then-close get announced a second time.
+- `announce_if_just_closed()` — does the sending, runs after, and **swallows every exception**.
+
+The founder missing one message is a nuisance; a promised friend stuck in the lobby is a broken
+promise. Pinned by `test_a_broken_announcement_never_costs_somebody_their_entry`.
+
+### Also settled while building
+
+- **The 30th person walks in free, and shuts the door behind them.** discord.py caches the arriving
+  member before dispatching `on_member_join`, but they hold no `@Member` yet, so they do not count
+  until granted. 29 in -> they walk in -> 30 -> the next person meets the form. This matches
+  "after 30 members the form starts" exactly, and is pinned by its own test.
+- **A vouch is spent before the size check.** Below 30 the person would have got in either way, but
+  silently leaving their single-use link alive would let it be forwarded later, once the door is
+  shut — turning a spent vouch into a permanent hole.
+- **`store.approved_count()` was left alone**, not deleted. It still answers a real question (how
+  many came through the form). It is simply no longer used for anything that means "how big is the
+  community".
