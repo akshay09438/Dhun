@@ -65,6 +65,9 @@ PINNED: set[str] = {
     # "Habits (STAY High)", which is a beat, and a substring that hits two different songs is how
     # a menu ends up with something nobody asked for.
     "As It Was", "The Kid LAROI",
+    # Sunflower in, BIRDS OF A FEATHER out - the founder's rule was "add it if there is room,
+    # otherwise swap". There was not: 48 English vocals remain and the dropdown still holds 25.
+    "Sunflower",
     # --- beats kept to carry the slow vocals above (85-90 BPM; the 167 works at half-time) ---
     # Merrygo beat WAS here and the founder has since dropped it, so it is gone from the pin list
     # rather than only added to BANNED - a pin beats a ban, so leaving it here would have kept it.
@@ -82,6 +85,8 @@ BANNED: set[str] = {
     "Merrygo beat", "Levels", "Satisfaction", "In My Mind",
     # third round - vocals
     "We Found Love", "Houdini",
+    # made room for Sunflower
+    "BIRDS OF A FEATHER",
 }
 
 
