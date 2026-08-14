@@ -2,6 +2,22 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-14, late (FULL HYGIENE AUDIT + the catalog the founder wants; branch `feat/grind-scope-and-welcome-copy`; NO dangerous surface touched).** The founder asked for a top-to-bottom developer check before launch, in automode.
+
+**THE AUDIT CAME BACK CLEAN.** Backend 838, bot 451/1 skipped, web 78, typecheck + lint clean. All six dangerous surfaces unchanged against `origin/main`. No secrets in git, `.env` untracked. Catalog integrity 112/112 complete. Every song on the menu has its marks wired. Engine `/library` `/queue` `/health` `/docs` all 200. Dev dashboard works. All 14 Discord channels have the intended permissions. **Zero real user failures since 2026-08-12.**
+
+**THE FOUNDER'S QUESTION - WHY ARE MIXES SLOW - ANSWERED WITH NUMBERS.** A cold render is **17-20s** for a pair needing no key shift and **50-72s** the first time a pair's key is measured. That measurement is cached per-pair in `.f0shift.json`, which is protected from every sweep, so the SAME pair afterwards is ~17-20s. 61 of 625 possible pairs are warmed. Nothing is broken; the catalog simply has a cold cache and the founder was trying new combinations all evening.
+
+**A WRONG DIAGNOSIS, RECORDED SO IT IS NOT RE-DERIVED.** I first concluded that low disk was destroying the key-matching cache and that freeing space would take mixes from 37s to 20s. **That was wrong** - I had confused `.f0shift.json` (protected) with `.pitchshift.wav` (evictable, much cheaper). Freeing disk was still right for a different reason: at 3.3 GB the janitor was actively deleting the founder's own finished mixes. Now 8.3 GB.
+
+**TWO MEASUREMENT FAILURES, BOTH MINE, BOTH NOW GUARDED.** (1) `Member.status` reads `offline` for EVERY member without the privileged presences intent - I read it, concluded a freshly restarted bot was dead, killed it and debugged a bot that was fine. The honest check is functional: fetch the guild's registered commands. (2) A verifying probe printed only `send_messages` after a permission change, so it confirmed the thing that worked and was blind to the thing that broke - three channels had been hidden rather than muted. A probe must print the field you did NOT change.
+
+**Shipped this session (late half):** `scripts/remove_songs.py` (24 songs, 168 files, 136 -> 112 catalog, 1.61 GB); Sunflower in / BIRDS OF A FEATHER out; `bot.py` writes `logs/grinder.log` itself; `Start-Grinder.bat` reverted to plain execution.
+
+**DRIFT NOTE - the dev dashboard's failure count is partly fiction.** 15 of 230 recorded events are test-suite and profiler artifacts written into the LIVE `events.db` (fixture ids `aaaa...`/`bbbb...`), including all 8 "something broke on our side" entries. Real: 18 failures of 215, none since 2026-08-12. The 2026-08-12 handoff records 191 junk rows being deleted for the same reason, so this recurs; the test isolation added on 08-13 covered the data directory but NOT `events.db`.
+
+**STILL OPEN:** the `storage.py` / `pitch.py` disagreement about what a pitch cache costs to rebuild (needs founder sign-off, dangerous surface); `luther` unloaded and Bollywood at 14 of 25 (both need Replicate credit, currently zero); Wari Jawa and Merrygo beat carry no marks; **and the big one - nobody has yet confirmed by ear whether the 227 newly-wired marks made mixes better.** _(Below: the catalog status from earlier the same day.)_
+
 ## Status: **LATEST 2026-08-14 (THE CATALOG BECOMES USABLE - built + applied; branch `feat/grind-scope-and-welcome-copy`; NO dangerous surface touched).** Everything here was found by the FOUNDER looking at the actual Discord dropdown, not by a test.
 
 **THE HEADLINE: 103 songs were loaded, paid for, analysed - and invisible.** The picker filters vocals by `language` and defaults to english; the loader never wrote the tag. Nothing errored, the manifest looked right, the songs were genuinely there, and the dropdown showed the same four English vocals it had before the ingest. **English vocals visible: 4 -> 59.**

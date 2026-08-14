@@ -88,5 +88,9 @@ echo   type  /grind  - pick a beat and a vocal, and the mix comes right back.
 echo   Keep this window open. Close it to take Grinder offline.
 echo  ----------------------------------------------------------------------
 echo.
+REM  Grinder writes its own logs\grinder.log now (see bot.py), so this just runs it. Piping the
+REM  console through PowerShell to make a log was tried on 2026-08-14 and was worse on every count:
+REM  Tee-Object writes UTF-16, and redirecting a native command's stderr wraps every ordinary log
+REM  line in a NativeCommandError. Python owns its own logging; the shell should not.
 "%BOTPY%" bot.py
 pause
