@@ -12,6 +12,19 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ---
 
+
+## Added after the handoff was first written (2026-08-14, very late)
+
+Three last founder changes, all applied and verified live:
+
+1. **`Confusion (Drake)` back on the beat menu, `Faded` off.** Confusion had never left the catalog — it was pushed off the 25 by the evening's pins (six beats had piled up at 120 BPM, including both Moves). **Cost: `Faded` was one of the few slow beats, so God's Plan, SICKO MODE and Intentions drop from 4 partners to 3** (Reminder, redrum, Summertime Sadness). Overall pairings still rose, 498 → 509.
+2. **`Levitating Featuring DaBaby (Dua Lipa)` → `Levitating (Dua Lipa)`.**
+3. **`#announcements`, `#rules` and `#fred-again-brag` DELETED from the live server.** All three were empty but for Grinder's own placeholder line. Removed from `server_setup.STRUCTURE` too — otherwise `/setup` would recreate them on the next server — and from `lock_welcome_channels.TARGETS`. Three tests that described the old eight-channel layout were updated to the new six; each test's intent is unchanged and `test_the_server_stays_small_on_purpose` is now stricter. **`#read-this-first` was deliberately kept.**
+
+**Re-verified after all three: bot suite 451 passed / 1 skipped. Channel deletion confirmed by an INDEPENDENT probe, not by the script that did it.**
+
+---
+
 ## THE HEADLINE: the founder found three things no test did
 
 Each was invisible to the suite, and each was caught by the founder looking at the actual product.
