@@ -8,9 +8,11 @@ double-tap.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import discord
 
+import recall
 import store
 import ui
 from botconfig import load_config
@@ -26,9 +28,15 @@ def _channel(interaction: discord.Interaction):
     return interaction.guild.get_channel(CFG.fresh_grinds_channel_id)
 
 
+def _engine():
+    """The engine client. Local import: showcase is imported by bot, so this cannot be top-level."""
+    import bot as _bot
+    return _bot.bot.api
+
+
 async def pin(ctx, interaction: discord.Interaction) -> str:
     """Repost a finished grind into the showcase. Returns a plain sentence for the presser."""
-    if ctx.number is None or ctx.audio_path is None:
+    if ctx.number is None:
         return "Give it a second, this one is still arriving."
 
     channel = _channel(interaction)
@@ -36,6 +44,22 @@ async def pin(ctx, interaction: discord.Interaction) -> str:
         return ("There is no showcase channel set up yet, so there is nowhere to pin it. "
                 "Ask an admin to run `/setup`.")
 
+    # GET IT BACK BEFORE GIVING UP. This used to read `ctx.audio_path` and, finding nothing, answer
+    # "still arriving" - to 22 grinds whose audio had been deleted days earlier. The bot's copy
+    # lives in Windows Temp and the engine evicts a render after seven days, so an old grind having
+    # no local file is normal rather than exceptional. The engine is asked first, and only a mix
+    # genuinely past its seven days is refused.
+    row = store.get(ctx.number)
+    wav = ctx.audio_path if (ctx.audio_path and Path(ctx.audio_path).exists()) else None
+    if wav is None:
+        wav = await recall.audio_for(row, _engine())
+    if wav is None:
+        return (f"Grind #{ctx.number} is gone. I keep the audio for seven days and this one is past "
+                f"that, so there is nothing left to show — sorry. Run 🔁 **Again** on it and you "
+                f"will get a fresh take of the same two songs.")
+
+    # ONLY NOW. `mark_pinned` is one-shot because people double-tap, so burning it on a press that
+    # could not find the audio would mean the mix could never be shown even once it is recoverable.
     if not store.mark_pinned(ctx.number, _now()):
         return f"Grind #{ctx.number} is already up in {channel.mention}."
 
@@ -45,7 +69,7 @@ async def pin(ctx, interaction: discord.Interaction) -> str:
     try:
         # Re-attach the audio rather than linking back: a link makes people leave the channel,
         # and the showcase is meant to be scrollable and listenable on its own.
-        clip = await ctx._attach(ctx.audio_path)
+        clip = await ctx._attach(wav)
         posted = await channel.send(embed=embed, files=[clip] if clip else [])
         # THE REACTION SIGNAL LIVES HERE NOW (2026-08-15). A grind card is private to its maker, and
         # Discord will not put reactions on a private message, so this public copy is the only place
@@ -74,10 +98,11 @@ async def pin(ctx, interaction: discord.Interaction) -> str:
     # good; this protects the local full-quality render from routine tidying, which is also what
     # lets somebody play or re-pin this grind months from now instead of finding it swept.
     # Only AFTER the post succeeded — a pin that failed should leave nothing behind.
-    if ctx.ref_id:
-        import bot as _bot  # local import: showcase is imported by bot, so this cannot be top-level
-        # `_bot.bot` — the module is `bot` and the client instance inside it is ALSO called `bot`.
-        await _bot.bot.api.keep_render(ctx.ref_id)
+    # The row's own reference as a fallback: a card rebuilt after a restart may carry none, and the
+    # grind it belongs to is exactly the old one most in need of protecting from the next sweep.
+    ref = ctx.ref_id or (row["ref_id"] if row is not None else None)
+    if ref:
+        await _engine().keep_render(ref)
     else:
         log.warning("grind #%s pinned with no ref_id — its render cannot be protected", ctx.number)
     return f"Grind #{ctx.number} is up in {channel.mention}."

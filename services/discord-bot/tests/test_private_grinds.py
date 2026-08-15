@@ -127,10 +127,10 @@ class _Channel:
         return self.sent
 
 
-def _pin_ctx(number):
+def _pin_ctx(number, audio_path):
     user = types.SimpleNamespace(id=1, name="t", display_name="t")
     return types.SimpleNamespace(
-        number=number, audio_path="x.wav", duration=10.0, ref_id=None,
+        number=number, audio_path=audio_path, duration=10.0, ref_id=None,
         interaction=types.SimpleNamespace(user=user),
         named_pairs=lambda: [("Beat", "Vocal")],
         _attach=lambda p: _async_none(),
@@ -142,14 +142,20 @@ async def _async_none():
 
 
 @pytest.fixture()
-def pinned(monkeypatch):
+def pinned(monkeypatch, tmp_path):
     chan = _Channel()
     monkeypatch.setattr(showcase, "_channel", lambda interaction: chan)
+    # A REAL FILE. `pin` now checks the audio is actually there before it claims the mix can be
+    # shown - it used to take a recorded path on trust and answered "still arriving" for 22 grinds
+    # whose audio had been deleted days earlier. A fixture pointing at a name that was never on disk
+    # describes a grind that cannot exist.
+    wav = tmp_path / "finished.wav"
+    wav.write_bytes(b"RIFF" + b"\x00" * 64)
     n = store.new_grind(user_id=1, user_name="t", pairs=[["b", "v", "B", "V"]],
                         created_at="2026-08-15T00:00:00+00:00")
     interaction = types.SimpleNamespace(
         user=types.SimpleNamespace(id=1, display_name="t"))
-    asyncio.run(showcase.pin(_pin_ctx(n), interaction))
+    asyncio.run(showcase.pin(_pin_ctx(n, wav), interaction))
     return chan, n
 
 
