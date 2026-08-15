@@ -503,7 +503,12 @@ class GrindContext:
                 await bot.api.fetch_audio(mix_id, wav)
                 store.set_pairs(self.number, self._store_pairs(), ref_id=mix_id)
             else:
-                set_id = await bot.api.start_set(self.pairs, self.user_id, set_index=0,
+                # A FRESH ordinal per build. The engine seeds a set's rule order from
+                # (user_id, set_index), so this is what stops every set this person builds coming
+                # out in the same style order - and what makes 🔁 Again a genuinely new take
+                # instead of a cache hit on the identical file. See store.next_set_index.
+                set_id = await bot.api.start_set(self.pairs, self.user_id,
+                                                 set_index=store.next_set_index(self.owner_id),
                                                  user_name=self.user_name)
                 res = await bot.api.wait_for_set(set_id, on_progress=self._on_progress)
                 if res.status != "ready":
