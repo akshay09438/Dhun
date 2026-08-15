@@ -25,6 +25,7 @@ from discord import app_commands
 
 import board
 import brand
+import deliver
 import editbudget
 import media
 import recall
@@ -617,6 +618,21 @@ class GrindContext:
         self.duration = secs
 
         clip = await self._attach(wav)
+
+        # HAND IT OVER SOMEWHERE DISCORD KEEPS IT, before the card is finalised so the card can say
+        # what happened. The card itself is ephemeral - Discord stores it nowhere and deletes it the
+        # moment this person reloads - so a mix that only ever lands here is a mix they will lose.
+        # See deliver.py. This can never raise, and the belt-and-braces catch is here because a
+        # rendered mix must not be lost in the act of being given away.
+        note = ""
+        try:
+            _sent, note = await deliver.to_the_maker(
+                self.interaction.user, self.number, wav,
+                lambda w: _attachment_for(w, self.number))
+        except Exception:  # noqa: BLE001
+            log.warning("grind #%s: handing the mix over failed outright", self.number,
+                        exc_info=True)
+
         embed = ui.grind_embed(number=self.number, user=self.interaction.user,
                                pairs=self.named_pairs(), total_secs=secs)
         if clip is None:
@@ -624,6 +640,8 @@ class GrindContext:
                 name="Too long to attach",
                 value="Play it in 🔊 The Booth, or hit ✅ Done and start a fresh one.",
                 inline=False)
+        if note:
+            embed.add_field(name="​", value=note, inline=False)
         if self.message is None:
             return
         await self.message.edit(embed=embed,
