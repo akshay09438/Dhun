@@ -3,12 +3,28 @@
 .wrap {
   --green: #35c26a;
   --amber: #f5a623;
-  min-height: 100vh;
+  /* HEIGHT, not min-height, and this is the whole scroll fix (2026-08-15). The DJ console
+     deliberately locks the page — `body { overflow: hidden }` in index.css — because it is a fixed
+     scaled canvas. A `min-height` element simply GROWS to fit its content (measured: 3795px of
+     dashboard in a 720px window), so `overflow-y: auto` had nothing to act on and the body clipped
+     the rest: the founder could not reach most of the page. A fixed height makes this its own
+     scroll container, so the dashboard scrolls WITHOUT unlocking the console's page lock. */
+  height: 100vh;
   background: var(--page);
   color: var(--text);
   font-family: var(--sys);
   padding: 24px 28px 60px;
   overflow-y: auto;
+}
+
+/* Below 900px the app already unlocks the page and scrolls the body itself (see index.css), so a
+   fixed-height scroller here would fight it and trap the content a second time. */
+@media (max-width: 900px) {
+  .wrap {
+    height: auto;
+    min-height: 100vh;
+    overflow-y: visible;
+  }
 }
 .head {
   display: flex;
