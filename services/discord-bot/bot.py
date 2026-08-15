@@ -538,15 +538,21 @@ class GrindContext:
                 # same two songs handing back the first one's file (grinds #28/#29/#30 were the
                 # identical mix because the position always restarted at 0). 🔁 Again comes through
                 # here too, so it advances by the same mechanism. See store.next_grind_position.
-                generation = store.next_grind_position(self.owner_id, a, b)
+                generation = store.next_grind_position(self.owner_id, a, b, exclude=self.number)
                 mix_id = await bot.api.start_mix(a, b, self.user_id, generation,
                                                  user_name=self.user_name)
+                # WRITTEN NOW, NOT WHEN IT FINISHES. Aashwin's second mix was orphaned because this
+                # id sat in a local variable for the whole 50-70 second render: the bot was killed
+                # at 20:28:45 and the engine finished the mix at 20:28:49, so a perfectly good
+                # render ended up with nothing in the database pointing at it. Recorded here, any
+                # restart mid-render leaves a row `/mygrinds` can recover from.
+                self.ref_id = mix_id
+                store.set_pairs(self.number, self._store_pairs(), ref_id=mix_id)
                 res = await bot.api.wait_for_mix(mix_id, on_progress=self._on_progress)
                 if res.status != "ready":
                     await self._fail(res.message or "That pair did not come out. Try another.")
                     return None
                 await bot.api.fetch_audio(mix_id, wav)
-                store.set_pairs(self.number, self._store_pairs(), ref_id=mix_id)
             else:
                 # A FRESH ordinal per build. The engine seeds a set's rule order from
                 # (user_id, set_index), so this is what stops every set this person builds coming
@@ -555,13 +561,15 @@ class GrindContext:
                 set_id = await bot.api.start_set(self.pairs, self.user_id,
                                                  set_index=store.next_set_index(self.owner_id),
                                                  user_name=self.user_name)
+                # Same as the single-mix path above, and it matters more here: a set renders
+                # several mixes and then joins them, so its orphan window is the wider one.
+                self.ref_id = set_id
+                store.set_pairs(self.number, self._store_pairs(), ref_id=set_id)
                 res = await bot.api.wait_for_set(set_id, on_progress=self._on_progress)
                 if res.status != "ready":
                     await self._fail(res.message or "That did not come out. Try another pair.")
                     return None
                 await bot.api.fetch_set_audio(set_id, wav)
-                store.set_pairs(self.number, self._store_pairs(), ref_id=set_id)
-                self.ref_id = set_id
                 # A set is ONE continuous file. `seam_at` is where each member's crossfade begins,
                 # which is what a listener hears as "the next track" - so /skip can move BETWEEN
                 # the five instead of only abandoning all of them. Some members legitimately have

@@ -198,7 +198,8 @@ def next_set_index(user_id: int) -> int:
 GRIND_POSITION_WRAP = 512
 
 
-def _already_ground(c: sqlite3.Connection, user_id: int, song1_id: str, song2_id: str) -> int:
+def _already_ground(c: sqlite3.Connection, user_id: int, song1_id: str, song2_id: str,
+                    exclude: int | None = None) -> int:
     """How many SINGLE-pair grinds of this exact pair this person has already had.
 
     Only used the first time a pair is asked for, to start the count PAST the grinds that exist.
@@ -208,14 +209,25 @@ def _already_ground(c: sqlite3.Connection, user_id: int, song1_id: str, song2_id
     Single-pair only: a set went through the set route and never consumed a pair position. The
     grinds table is per-server small (tens of rows), so reading it once per new pair is nothing.
 
-    FINISHED grinds only (`ref_id IS NOT NULL`). The card's row is written at SUBMIT, before the
-    render this position is being claimed for, so counting every row would count the grind that is
-    happening right now and start everyone one step too far. A grind that failed never got a ref_id
-    and is not counted either - it produced no mix to avoid repeating."""
+    Grinds with a reference only (`ref_id IS NOT NULL`) - one that failed before the engine ever
+    accepted it produced no mix to avoid repeating.
+
+    `exclude` IS LOAD-BEARING, and it replaces an assumption that stopped being true on 2026-08-16.
+    A reference used to arrive only after a render finished, so "has a ref_id" doubled as "finished"
+    and the in-flight grind excluded itself for free. It is now written the moment the engine
+    ACCEPTS the job - so a finished mix is never orphaned by a restart mid-render - which means the
+    grind happening right now carries one too. Counting it would start that person one position past
+    where they are, handing them a take they have not had and skipping one they have not heard. So
+    the caller names the grind being rendered and it is left out by number, which says what is meant
+    instead of leaning on the order two functions happen to be called in."""
     import json
     n = 0
-    for r in c.execute("SELECT pairs FROM grinds WHERE user_id=? AND ref_id IS NOT NULL",
-                       (user_id,)):
+    sql = "SELECT pairs FROM grinds WHERE user_id=? AND ref_id IS NOT NULL"
+    args: tuple = (user_id,)
+    if exclude is not None:
+        sql += " AND number != ?"
+        args = (user_id, exclude)
+    for r in c.execute(sql, args):
         try:
             pairs = json.loads(r["pairs"] or "[]")
         except (ValueError, TypeError):
@@ -226,17 +238,22 @@ def _already_ground(c: sqlite3.Connection, user_id: int, song1_id: str, song2_id
     return n
 
 
-def next_grind_position(user_id: int, song1_id: str, song2_id: str) -> int:
+def next_grind_position(user_id: int, song1_id: str, song2_id: str,
+                        exclude: int | None = None) -> int:
     """Claim this person's next position for THIS pair (0, 1, 2, …, wrapping) and advance it.
 
     Per PAIR, not per person: the engine's order is seeded per (person, pair), so grinding a
-    different pair must not skip this one forward."""
+    different pair must not skip this one forward.
+
+    `exclude` is the grind being rendered right now, left out of the first-time seeding count - see
+    `_already_ground`."""
     with _lock:
         c = connect()
         row = c.execute(
             "SELECT next_index FROM grind_positions WHERE user_id=? AND song1_id=? AND song2_id=?",
             (user_id, song1_id, song2_id)).fetchone()
-        start = int(row["next_index"]) if row else _already_ground(c, user_id, song1_id, song2_id)
+        start = (int(row["next_index"]) if row
+                 else _already_ground(c, user_id, song1_id, song2_id, exclude))
         # Wrapped on the way OUT as well as in, so a hand-edited or older row can never hand the
         # engine a position that costs real time to walk.
         current = start % GRIND_POSITION_WRAP
