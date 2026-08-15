@@ -592,6 +592,38 @@ async def which_invite_was_used(guild) -> str | None:
     return None
 
 
+def arrival_channel(guild):
+    """Where somebody who has just been LET IN will actually land - the first text channel, in the
+    server's own order, that a plain `@Member` can view. `None` if that cannot be answered.
+
+    An invite is created against a CHANNEL, and that channel is where the joiner's client opens and
+    then STAYS, because Discord reopens the last channel a person read in a server. So an invite
+    must never point at a room the joiner loses the moment they are let in - do that and their
+    client goes on reopening a channel that is no longer in their sidebar, showing a stale page they
+    cannot post in. That is precisely what the founder photographed on 2026-08-15: the vouch link
+    was made against `#the-door`, the friend landed in the lobby, `@Member` then hid it from them,
+    and the client never moved on.
+
+    Chosen by PERMISSION, never by name. The founder renames rooms (`the-grinder` ->
+    `#get-shit-done`, `fresh-grinds` -> `#best-mixes`), and a rule that matched the string
+    "read-this-first" would rot silently the next time they did. Asking "what can a member see" is
+    the same question the client answers, so the invite and the landing cannot disagree.
+
+    Returns None rather than guessing when there is no `@Member` role (the door is not really set
+    up) or nothing is visible - the caller keeps its previous behaviour. Guessing a channel is how
+    a message ends up in the wrong room in somebody else's server."""
+    role = discord.utils.get(guild.roles, name=MEMBER_ROLE)
+    if role is None:
+        return None
+    for ch in sorted(guild.text_channels, key=lambda c: c.position):
+        try:
+            if ch.permissions_for(role).view_channel:
+                return ch
+        except Exception:  # noqa: BLE001 - one odd channel must not lose the whole answer
+            continue
+    return None
+
+
 async def create_vouch_invite(channel, created_by: int) -> str | None:
     """A single-use link that lets one person straight in, no form.
 

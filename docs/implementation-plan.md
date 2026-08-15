@@ -2,6 +2,20 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-15 (THE VOUCH INVITE DROPPED FRIENDS INTO THE LOBBY - fixed; branch `fix/vouch-invite-lands-inside`; NO dangerous surface touched).**
+
+**FOUNDER-REPORTED WITH A SCREENSHOT:** opening the server showed `#the-door` - a channel not in their sidebar and un-postable.
+
+**MEASURING FIRST KILLED THE OBVIOUS HYPOTHESIS.** A new read-only `scripts/landing_probe.py` computed every member's effective permissions over every channel, printing **every** overwrite field that is set. Result: the permissions were **correct** - `bearwolf101` cannot see `#the-door`, can see `#read-this-first`, and their first visible channel IS `#read-this-first`. `hide_door_from_members.py` had been applied and worked. Had I trusted the report's framing ("the door should not be seen by anyone") and gone straight to permissions, I would have "fixed" something that was not broken.
+
+**ROOT CAUSE: a Discord invite is created against a CHANNEL, and that is where the joiner lands and keeps returning.** `invitefriend_cmd` built its single-use link against `CFG.door_channel_id`. So a vouched friend landed in the lobby, was granted `@Member`, lost sight of the lobby, and their client went on reopening it. `scripts/invite_probe.py` found a live unused one (`PUWVqKfC -> #the-door`) waiting for the next friend. The screenshot's URL ends in the very id `CFG.door_channel_id` holds.
+
+**Shipped:** `door.arrival_channel(guild)` (first text channel by position that `@Member` can view; `None` rather than a guess), the `invitefriend_cmd` call site, `tests/test_vouch_invite_lands_inside.py` (7, red first), and two read-only probes. **Bot suite 460/1 -> 467/1.** Verified against the LIVE guild: `arrival_channel()` returns `#read-this-first` where the old path returned `#the-door`.
+
+**STILL OPEN, needs the founder:** two live invites point at channels their users cannot see once inside - `PUWVqKfC -> #the-door` (the bot's own, unused) and `vxAsNjJpS -> #applications` (founder-made, 1 use). Revoking them is a live-server change awaiting a yes. And a client that already cached the wrong channel cannot be moved from the server - that person must click once.
+
+**DRIFT NOTE - a design document is wrong about the live server.** `door-open-below-30-design.md` states `bearwolf101` holds `@Backup Admin` (Administrator) and is therefore excluded from `community_count`. Live: its only role is `@Member`, `administrator=False`, and `@Backup Admin` has **0 members**. So an operator account counts as a real community member and the 30-person door would shut one person early - against the founder's explicit "excluding my two accounts". Reported, deliberately not folded into this fix.
+
 ## Status: **LATEST 2026-08-15 (THE SET SHUFFLE WAS NEVER RESHUFFLED IN DISCORD - fixed; everything brought live; branch `fix/discord-set-variety`; NO dangerous surface touched).**
 
 **FOUND BY READING THE CODE THE FOUNDER ASKED ABOUT, NOT BY A TEST.** The founder asked whether the rule randomness (1/3/4) actually works. Inside one grind it does - measured over ~9,000 generated sets: all three styles in every set of 3, never the same style back-to-back in a set of 5, all 6/18 orderings used evenly. **But `bot.py` sent `set_index=0` hard-coded**, and that number is the only thing that varies a person's consecutive sets. So every multi-pair grind that person ever built came out in the same style order.
