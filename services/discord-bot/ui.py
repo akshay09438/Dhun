@@ -206,6 +206,34 @@ def booth_live_embed(*, listeners: int, grinds_this_session: int,
     return discord.Embed(title="🔴  SOMEONE IS LISTENING", description=body, color=ACCENT)
 
 
+def board_embed(*, live: int, made_today: int, people_today: int) -> discord.Embed:
+    """The one standing line in the grind room.
+
+    Grinds are private now, so this is the only thing in there saying anybody is around. Two rules
+    it lives by, both learned from the card that had to be deleted:
+
+    * NEVER ANNOUNCE AN EMPTY ROOM. Nobody is mid-grind most of the time - a grind takes under a
+      minute - so a live-count-only line would read "0" nearly always, which is the dead room with
+      extra steps. With nobody grinding it shows what the room has MADE, which is true, and is the
+      social proof that private grinds took away.
+    * NEVER JUDGE. No "great", no "best", no score. A board that rated anything would tell people
+      what to think before they listen, and poison the reactions.
+    """
+    if live == 1:
+        head = "**1 person is grinding right now**"
+    elif live > 1:
+        head = f"**{live} people are grinding right now**"
+    elif made_today == 0:
+        head = "**Nothing made here yet today**"
+    elif made_today == 1:
+        head = "**1 mix made here today**"
+    else:
+        who = "1 person" if people_today == 1 else f"{people_today} people"
+        head = f"**{made_today} mixes made here today**, by {who}"
+    body = f"{head}\n\n→ `/grind` — pick two songs, it comes back to you"
+    return discord.Embed(title="🎧  THE GRINDER", description=body, color=ACCENT)
+
+
 # `booth_quiet_embed` ("⚫ Nobody is listening right now. Somebody go start something.") was here
 # and is DELETED (founder decision 2026-08-13). A quiet room now shows nothing at all: the live
 # sign is taken down instead of being swapped for a card announcing that nothing is happening.

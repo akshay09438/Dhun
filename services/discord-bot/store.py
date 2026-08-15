@@ -83,6 +83,10 @@ CREATE TABLE IF NOT EXISTS set_counters (
     user_id    INTEGER PRIMARY KEY,     -- one running count per person
     next_index INTEGER NOT NULL         -- the ordinal their NEXT set will be handed
 );
+CREATE TABLE IF NOT EXISTS channel_boards (
+    channel_id INTEGER PRIMARY KEY,      -- the grind room
+    message_id INTEGER                   -- the one board in it; NULL once it is gone
+);
 CREATE TABLE IF NOT EXISTS grind_positions (
     user_id    INTEGER NOT NULL,        -- whose place this is
     song1_id   TEXT    NOT NULL,        -- the beat
@@ -354,6 +358,43 @@ def recent_for_user(user_id: int, limit: int = 10) -> list[sqlite3.Row]:
         return connect().execute(
             "SELECT * FROM grinds WHERE user_id=? AND message_id IS NOT NULL "
             "ORDER BY number DESC LIMIT ?", (user_id, limit)).fetchall()
+
+
+def board_message(channel_id: int) -> int | None:
+    """The id of the grind board already in this channel, if there is one.
+
+    IN THE DATABASE, not in memory, and that is the entire point: the "nobody is listening" card
+    kept its handle in memory, so every restart posted a fresh one and the channel collected a
+    column of identical cards. A new process must find the board it already has."""
+    with _lock:
+        row = connect().execute("SELECT message_id FROM channel_boards WHERE channel_id=?",
+                                (channel_id,)).fetchone()
+    return int(row["message_id"]) if row and row["message_id"] else None
+
+
+def set_board_message(channel_id: int, message_id: int | None) -> None:
+    """Remember (or forget, with None) this channel's board."""
+    with _lock:
+        c = connect()
+        c.execute("INSERT INTO channel_boards (channel_id, message_id) VALUES (?,?) "
+                  "ON CONFLICT(channel_id) DO UPDATE SET message_id=excluded.message_id",
+                  (channel_id, message_id))
+        c.commit()
+
+
+def counts_today() -> tuple[int, int]:
+    """(grinds made, people who made them) in the last 24 hours.
+
+    A rolling day rather than a calendar one: nobody in a small community cares where midnight
+    falls, and a calendar day would make the room read as dead every morning. Timestamps are
+    timezone-aware UTC ISO (see bot._now), so a plain string comparison is correct here."""
+    from datetime import datetime, timedelta, timezone
+    since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    with _lock:
+        row = connect().execute(
+            "SELECT COUNT(*) n, COUNT(DISTINCT user_id) p FROM grinds WHERE created_at >= ?",
+            (since,)).fetchone()
+    return int(row["n"]), int(row["p"])
 
 
 def count_for_user(user_id: int) -> int:

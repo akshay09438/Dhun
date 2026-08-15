@@ -2,6 +2,18 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-15 (THE GRIND BOARD - the empty room gets a pulse; branch `feat/private-grinds`; NO dangerous surface touched).**
+
+The mitigation offered when private grinds were built, and then asked for: one standing line in `#get-shit-done` saying how many people are grinding right now.
+
+**Shipped:** new `board.py` (live set + throttled refresh), `store.channel_boards` + `counts_today()`, `ui.board_embed`, wired at both ends of `_render` (with `finished()` in a `finally`) and at `on_ready`. `tests/test_grind_board.py` (12, red first). **Bot suite 489/1 -> 500/1.** Live: `board: posted a new one in get-shit-done (live=0, today=15)`.
+
+**THE OLD BUG IS DESIGNED OUT.** The deleted "Nobody is listening" card kept its handle in memory, so every restart posted another one. This board's id is in the database and a restart edits the same message - pinned by a test that simulates a restart and fails if a second board appears.
+
+**IT NEVER ANNOUNCES AN EMPTY ROOM,** for the same reason that card was judged nagging: a grind lasts under a minute, so a live-only count would read 0 nearly always. With nobody grinding it shows what the room has made today.
+
+**A REAL RACE FOUND BY RUNNING IT, not by reading it.** On the 20:29 restart `get_channel` returned None at `on_ready` and the board silently never appeared; the next restart worked. Discord's channel cache is not guaranteed ready there. `board.channel_for` now falls back to a real fetch, and the silent path logs - a sign that quietly does nothing is the hardest thing to notice is broken. **Found only because the board was checked against the live server rather than trusted because its tests were green.**
+
 ## Status: **LATEST 2026-08-15 (PRIVATE GRINDS - the workshop and the gallery are separated; branch `feat/private-grinds`; NO dangerous surface touched).**
 
 **A PRODUCT DECISION, not a bug fix.** The founder watched `#get-shit-done` fill with finished music and judged that newcomers would consume rather than create. Three options were put up (private/ephemeral, a thread each, or public-but-self-clearing) with the trade-offs; the founder chose **private**, and renamed the share button because "pin is a very vague, usable thing for where to pin".

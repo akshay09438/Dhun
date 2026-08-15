@@ -23,6 +23,7 @@ from pathlib import Path
 import discord
 from discord import app_commands
 
+import board
 import brand
 import editbudget
 import media
@@ -161,6 +162,14 @@ class PromptDJBot(discord.Client):
         # "already synced" looked identical in the log, which hid whether /setup would appear.
         log.info("in %d server(s): %s", len(guilds),
                  ", ".join(f"{g.name} ({g.id})" for g in guilds) or "none")
+        # Put the standing board up straight away, rather than only when somebody grinds. The room
+        # holds nothing else now that grinds are private, so on a quiet evening it would otherwise
+        # be genuinely empty. This EDITS the board it already has - the id is in the database - so
+        # restarting cannot leave a column of them behind, which is what killed the last such sign.
+        # `channel_for`, not `get_channel`: the cache is not reliably filled at this moment. Seen
+        # live on 2026-08-15 - one restart found nothing and the board silently never appeared, the
+        # next restart worked.
+        await board.refresh(await board.channel_for(self, CFG.grinder_channel_id))
         for g in guilds:
             booth.check_config(g)     # say so loudly if a configured channel has been deleted
             # The vouch feature works by spotting which invite's count changed, so it needs a
@@ -495,6 +504,11 @@ class GrindContext:
         """
         stem = Path(tempfile.gettempdir()) / f"grind_{uuid.uuid4().hex[:10]}"
         wav = stem.with_suffix(".wav")
+        # The room shows nothing now that grinds are private, so the board is the only sign anybody
+        # is around. Counted from here to the `finally` below, so a grind that fails still stops
+        # counting - a stuck "1 person grinding" for a mix that died would be worse than no board.
+        board.started(self.owner_id)
+        await board.refresh(self._board_channel())
         try:
             if len(self.pairs) == 1:
                 a, b = self.pairs[0]
@@ -542,7 +556,24 @@ class GrindContext:
             log.exception("grind render failed")
             await self._fail(f"Something broke on the way back: {e}")
             return None
+        finally:
+            # ALWAYS, including the failure paths above - a board stuck on "1 person grinding" for
+            # a mix that died is worse than no board at all.
+            board.finished(self.owner_id)
+            await board.refresh(self._board_channel())
         return wav, ui.wav_duration(wav)
+
+    def _board_channel(self):
+        """Where the standing board lives: the room this grind happened in.
+
+        Falls back to the configured main channel so a grind started from somewhere else still
+        updates the room people are actually looking at."""
+        ch = getattr(self.interaction, "channel", None)
+        if ch is not None and hasattr(ch, "send"):
+            return ch
+        if CFG.grinder_channel_id:
+            return bot.get_channel(CFG.grinder_channel_id)
+        return None
 
     async def _attach(self, wav: Path) -> discord.File | None:
         """Transcode at the best bitrate that still fits Discord's limit, so a long grind always
