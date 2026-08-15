@@ -2,6 +2,16 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-16 (CATALOG SWAP + the grind room reset; branch `fix/the-mix-always-reaches-you`).**
+
+**Bad Guy BANNED, Blinding Lights PINNED** in `scripts/set_featured.py`. Blinding Lights was already ingested, so no Replicate spend — which was the deciding constraint, the balance being zero. Pinning was required: at 171 BPM it scores 6/25 clean against Bad Guy's 18, last of the 23 English vocals available, so the ranking would never reach it.
+
+**The score was wrong about the sound, and that is the reusable finding.** Two real renders: Let Me Love You (100 BPM) came out at `vocal_stretch 1.15, tempo_forced False`, and Rapture (120 BPM) at `1.4035, tempo_forced True` — a 40% SPEED-UP, near the 1.45 ceiling. The prior rule said a speed-up past 15% warbles; the founder heard both and approved both. **The refined rule: it is the OCTAVE FOLD that keeps a stretch musical, not the direction** — the one ear-rejected case (Silence x With You, 1.21) was the only unfolded one. `set_featured`'s "pairs with N/25" counts the SAFE band only and therefore understates listenability; do not use it as a quality gate alone.
+
+**`#get-shit-done` cleared to its one intro post** via `scripts/clear_channels.py --apply` (20 messages), verified by a separate process. `#best-mixes` untouched at 8 messages / 5 with audio — it is in the script's `NEVER_TOUCH` block.
+
+**KNOWN LOSS, taken deliberately:** grind #34's row still has no `ref_id` (the orphan from 08-15), so the rescue post in that room was the only route back to Aashwin's Wake Me Up x Woman mix. A one-field repair was offered and the classifier blocked the live-DB write; the founder was shown the trade and chose to clear regardless. The audio survives at `231732de….bestparts.wav` until the 7-day sweep (~2026-08-22) but the product cannot reach it.
+
 ## Status: **LATEST 2026-08-16 (THE MIX IS SENT TO YOU, NOT SHOWN TO YOU ONCE; branch `fix/the-mix-always-reaches-you`).**
 
 **A grind card is an ephemeral message and Discord stores those nowhere.** Proven rather than reasoned: `channel.fetch_message` on Aashwin's two lost cards, by their own ids, returns `NotFound` for both. The bot had rendered, transcoded, attached and edited the card correctly each time — `audio_path` is only written AFTER that edit, and it was written — so delivery never failed. The container it delivered into is one Discord throws away on a client reload. **38 of 39 grinds ever made lived only there; exactly 1 had a permanent copy (a 📣 showcase post).**
