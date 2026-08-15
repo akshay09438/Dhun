@@ -42,6 +42,61 @@ def _winddown(seg: np.ndarray) -> np.ndarray:
     return _build_bed(seg[::-1].copy(), SR)[::-1].copy()
 
 
+def choose_window(phrases, silent, sung, target: float) -> tuple[float, float]:
+    """Which ~`target`-second stretch of the finished mix to keep.
+
+    THE RULE IT REPLACES, and why. It used to be "end just after the last sung phrase, start
+    `target` earlier". On a normal-length beat everything fits inside that and it is right. On a
+    long one it is not: the founder's Rapture x God's Plan mix (8 minutes, Drake at 1:04, 2:56 and
+    7:28) ended at 7:28, reeled back three minutes, and threw the first two sections away - so the
+    vocal arrived 2m40s into a 3m mix. Measured on the real render: 31s of singing kept, 36s binned.
+    Four of the 25 menu beats are over five minutes, and SET members are hit identically (both
+    routes call the same crop), so it is beat length, not singles-vs-sets.
+
+    THE SMALLEST FIX THAT WORKS, deliberately (founder: change only the part that was pointed out).
+    The old window is still computed FIRST and returned UNCHANGED whenever it already keeps all the
+    singing - so every mix that sounds right today is byte-identical, and none of the ear-checked
+    ones move. Only when it would throw singing away does this look for a better window.
+
+    Both edges stay on silent phrase boundaries, so a lyric still can never be chopped in half.
+    `sung` is (start, end) stretches where somebody is singing, on the OUTPUT bus - both singers.
+    """
+    silent_phrases = [p for p in phrases if silent(p)]
+    if not silent_phrases:
+        silent_phrases = list(phrases)
+
+    def kept(s: float, e: float) -> float:
+        return sum(max(0.0, min(b, e) - max(a, s)) for a, b in sung)
+
+    # --- today's window, unchanged -------------------------------------------------------
+    if sung:
+        last_voc = max(b for _, b in sung)
+        end_t = next((p for p in phrases if p > last_voc and silent(p)), phrases[-1])
+    else:
+        end_t = phrases[-1]
+    earlier = [p for p in silent_phrases if p <= end_t - target]
+    start_t = earlier[-1] if earlier else silent_phrases[0]
+
+    total = sum(b - a for a, b in sung)
+    if not sung or kept(start_t, end_t) >= total - 1e-6:
+        return start_t, end_t          # nothing is being lost - leave it exactly as it was
+
+    # --- it would lose singing: take the window that keeps the most -----------------------
+    # Ties go to the LATEST window, which is the direction the old rule already leaned, so a mix
+    # where several windows are equally good lands where it would have before.
+    best = (start_t, end_t)
+    best_kept = kept(start_t, end_t)
+    for s in silent_phrases:
+        ends = [p for p in silent_phrases if s < p <= s + target]
+        if not ends:
+            continue
+        e = ends[-1]
+        k = kept(s, e)
+        if k > best_kept + 1e-6 or (abs(k - best_kept) <= 1e-6 and s > best[0]):
+            best, best_kept = (s, e), k
+    return best
+
+
 def _placements(plan):
     if getattr(plan, "placements", None):
         return plan.placements
@@ -94,12 +149,13 @@ def crop_and_arc(plan, mix_wav: Path, s2_vocal: Path, s1_vocal: Path | None, out
     if not voiced:                                 # instrumental-only mix -> nothing to protect; pass through
         sf.write(str(out_wav), full, SR, subtype="PCM_16")
         return {"wav": out_wav, "phrase_starts": phrases, "frames": len(full)}
-    last_voc = float(out_db[max(voiced)])
-    end_t = next((ps for ps in phrases if ps > last_voc and silent(ps)), phrases[-1])
-    starts = [ps for ps in phrases if silent(ps) and ps <= end_t - target]
-    # Fall back to the first silent phrase, then to phrases[0] — a short / vocal-dense mix may have NO
-    # silent phrase at all, and a bare next() there would raise StopIteration (and lose the highlight).
-    start_t = starts[-1] if starts else next((ps for ps in phrases if silent(ps)), phrases[0])
+    # The window is chosen by `choose_window`, which keeps today's "end just after the last sung
+    # phrase" answer UNCHANGED whenever it already captures all the singing, and only looks for a
+    # better one when it would throw some away (the 8-minute-beat case — see that function). The
+    # fallbacks it needs are inside it: a short or vocal-dense mix may have no silent phrase at all.
+    bar_secs = float(out_db[1] - out_db[0]) if len(out_db) > 1 else 0.0
+    sung = [(float(out_db[i]), float(out_db[i]) + bar_secs) for i in voiced]
+    start_t, end_t = choose_window(list(phrases), silent, sung, target)
 
     # 4. slice + arc (build-in / wind-down) + tiny anti-click
     bar = int((60.0 / plan.master_bpm) * 4 * SR)

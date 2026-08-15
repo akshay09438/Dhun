@@ -2,6 +2,22 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-15 (THE HIGHLIGHT NOW KEEPS THE VOCAL; branch `fix/best-parts-keeps-the-vocal`).**
+
+**THE FIRST CHANGE THIS SESSION THAT ALTERS HOW A MIX SOUNDS.** Everything before it moved rule selection, privacy or plumbing; this one changes which three minutes of a finished mix are kept. `workers/best_parts.py` is NOT on the dangerous list, but `render.py` and `validate.py` were left untouched and no arrangement logic moved.
+
+**Founder's report:** on their own Rapture x God's Plan, "the vocals of God's Plan are not coming. It's coming at the very last." **Measured:** placements at 1:04, 2:56 and 7:28 of an 8-minute mix; the crop kept 4:48-8:00, binning two of three and landing the vocal 2m40s into a 3m highlight.
+
+**Cause:** the window was "end just after the last sung phrase, reel back `target`". Fine on a normal beat; on a long one with spread vocals it discards everything before the final section.
+
+**THE FOUNDER'S HYPOTHESIS WAS WRONG AND THE DATA SAID SO.** They believed sets were fine and only singles broke. Both routes call the same `crop_and_arc`, and a SET member on Rapture lost 59s exactly like a single. Their sets simply used shorter beats (Cheerleader 3.2m, Say What 3.1m). It is beat LENGTH - 4 of 25 menu beats exceed 5 minutes, median 3.8. Checking that before building is what kept the fix in one place instead of two.
+
+**Shipped:** pure `choose_window()`, extracted so the decision is testable alone. It returns the OLD window untouched whenever that already keeps all the singing - so every ear-approved mix is byte-identical - and only searches when singing would be lost. `tests/test_best_parts_window.py` (7, red first) including that safety property.
+
+**Verified on the real render, not only in tests:** window 288-480s -> 58-234s; first vocal **160s -> 6s** into the highlight. **Swept 32 recent mixes: 10 improved, 22 byte-identical, 0 regressed.**
+
+**AWAITING THE FOUNDER'S EARS.** Before/after audio was sent. This changes output, so it is not finished until they say it sounds right.
+
 ## Status: **LATEST 2026-08-15 (THE GRIND BOARD - the empty room gets a pulse; branch `feat/private-grinds`; NO dangerous surface touched).**
 
 The mitigation offered when private grinds were built, and then asked for: one standing line in `#get-shit-done` saying how many people are grinding right now.
