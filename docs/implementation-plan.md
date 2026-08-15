@@ -2,6 +2,20 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-15 (THE DOOR IS REMOVED - Grinder is a normal open server; branch `fix/vouch-invite-lands-inside`; `.env` edited under recorded approval).**
+
+**FOUNDER REVERSED THE WHOLE DOOR FEATURE:** "remove the lobby/door everything - normal open to all discord server, as they enter the server, the first thing they see is the read-this-first channel." The door, built 2026-08-13 and extended 2026-08-14, is off.
+
+**AND THIS IS WHERE THE REAL CAUSE OF THE LANDING BUG WAS.** I fixed the vouch invite first (it pointed at the lobby) and told the founder it was solved. It was not. `lock_the_door.py` had denied `@everyone` view on EVERY category and channel, so `#the-door` was the only room a roleless newcomer could see - Discord therefore landed everyone there regardless of what the invite said. **The founder caught this by asking a plain question - "will not users land to read this first when invited?" - which I could not answer without measuring, and the measurement showed my fix was necessary but not sufficient.** Third time in this session that a founder question found something the tests and I had missed.
+
+**Shipped:** `scripts/open_the_server.py` (dry-run default, read-modify-write on overwrites, prints every field before and after) - 12 channels changed, reversing the lockdown; `#read-this-first` open to all but read-only; `#the-door` and `#applications` hidden from everyone. **Verified by a SEPARATE process: a person with no roles lands on `#read-this-first`.** `GRINDER_DOOR_CHANNEL_ID` and `GRINDER_APPLICATIONS_CHANNEL_ID` removed from `.env` (dangerous surface; explicit founder yes, recorded through `.zuko/approve.js`, cleared after), which makes `door.is_open()` False and the entire feature dormant. **Bot suite 467/1 skipped, unchanged.**
+
+**THE LANDMINE THAT MADE THE `.env` EDIT NECESSARY:** with the channels hidden but the feature still configured, crossing 30 members would have shut the door and pointed newcomers at a form in a channel nobody can see - `/grind` refusing them with no visible way to apply. Hiding the channels alone would have been a silent lockout waiting to happen.
+
+**DELIBERATELY NOT DONE, and both are decisions rather than omissions:** (1) the founder asked for 30 -> 40; `OPEN_BELOW` only gates when the form appears, so with no form that change would do nothing - left at 30 and explained. A real joiner cap is a separate build. (2) `#the-door` / `#applications` are hidden, not deleted; deleting destroys history irreversibly.
+
+**STILL OPEN:** two invites point at now-hidden channels (`PUWVqKfC -> #the-door`, `vxAsNjJpS -> #applications`) and should be revoked; a client that already cached the lobby must click once; and `door-open-below-30-design.md` remains wrong about `bearwolf101` holding Administrator (now moot, but the document is untrue).
+
 ## Status: **LATEST 2026-08-15 (THE VOUCH INVITE DROPPED FRIENDS INTO THE LOBBY - fixed; branch `fix/vouch-invite-lands-inside`; NO dangerous surface touched).**
 
 **FOUNDER-REPORTED WITH A SCREENSHOT:** opening the server showed `#the-door` - a channel not in their sidebar and un-postable.
