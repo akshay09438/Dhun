@@ -962,7 +962,15 @@ async def invitefriend_cmd(interaction: discord.Interaction) -> None:
             "The door is not switched on, so there is nothing to skip - anybody with an "
             "ordinary invite can already get in.", ephemeral=True)
         return
-    channel = interaction.guild.get_channel(CFG.door_channel_id) or interaction.channel
+    # The link is made against the channel the friend will LAND IN and stay in, not against the
+    # lobby. Pointing it at the lobby was the 2026-08-15 bug: they landed in #the-door, the bot
+    # granted @Member, @Member is denied the lobby, and their client went on reopening a channel
+    # that had vanished from their sidebar. `arrival_channel` answers this by permission, so it can
+    # never pick a room they are about to lose; None means it could not be answered, and the old
+    # behaviour stands.
+    channel = (door.arrival_channel(interaction.guild)
+               or interaction.guild.get_channel(CFG.door_channel_id)
+               or interaction.channel)
     await interaction.response.defer(ephemeral=True)   # creating an invite is an API call
     url = await door.create_vouch_invite(channel, interaction.user.id)
     if url is None:

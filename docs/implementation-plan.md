@@ -2,6 +2,44 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-15 (PRE-LAUNCH HYGIENE CHECK - CLEAN; server reset for real users; branch `fix/vouch-invite-lands-inside`).**
+
+**FULL SWEEP, EVERYTHING MEASURED.** Backend **838**, bot **467/1 skipped**, web **78**, typecheck + lint clean. All eight dangerous surfaces **UNTOUCHED** against `origin/main`. `.env` untracked, no token-shaped string committed. Catalog **112/112 complete** (master + 4 stems + analysis). All nine engine endpoints 200. **A real mix built end-to-end in 34.1s and its audio downloaded.** Nine Discord commands registered with correct hidden/visible split. **Voice measured per identity: BOTH the main Grinder and extra voice #1 have view + connect + speak on BOTH listening rooms.** A newcomer with no roles lands on `#read-this-first`.
+
+**SERVER RESET FOR LAUNCH.** New `scripts/clear_channels.py` (dry-run default, exact-name matching, hard `NEVER_TOUCH` block on `#best-mixes` and `#read-this-first`, reports the under/over-14-days split because Discord bulk-delete only reaches 14 days). Cleared **73 messages from `#get-shit-done` and 1 from `#general`**, keeping each room's intro post at the founder's decision - a blank room tells a newcomer nothing. **`#best-mixes` untouched: 5 messages, 3 mixes (GRIND #9, #20, #23).** Verified by an INDEPENDENT re-read, not the deleting script.
+
+**GIT: NOTHING STRANDED.** The founder had already merged the set-counter PR. Everything since is committed and pushed; one PR remains to open. Local `main` is 32 behind `origin/main` (a stale local ref, harmless). The two branches reporting "unpushed" carry only old merge commits from PRs #2/#3/#13.
+
+**THREE THINGS FOUND, NONE BLOCKING:** (1) **free disk 6.15 GB**, just above the 6 GB line where the janitor starts clearing finished mixes - today's verification renders are most of the cost; pinned mixes are protected. (2) **The bot test suite still writes into the LIVE `logs/grinder.log`** - it produced a phantom "extra voice cannot see Hollywood_Blends" line that cost real time today before a proper per-identity probe disproved it. The log is not trustworthy evidence until this is isolated. (3) The dev dashboard still reports **34 failures where only 17 are real user failures, none since 2026-08-12.**
+
+## Status: **LATEST 2026-08-15 (THE DOOR IS REMOVED - Grinder is a normal open server; branch `fix/vouch-invite-lands-inside`; `.env` edited under recorded approval).**
+
+**FOUNDER REVERSED THE WHOLE DOOR FEATURE:** "remove the lobby/door everything - normal open to all discord server, as they enter the server, the first thing they see is the read-this-first channel." The door, built 2026-08-13 and extended 2026-08-14, is off.
+
+**AND THIS IS WHERE THE REAL CAUSE OF THE LANDING BUG WAS.** I fixed the vouch invite first (it pointed at the lobby) and told the founder it was solved. It was not. `lock_the_door.py` had denied `@everyone` view on EVERY category and channel, so `#the-door` was the only room a roleless newcomer could see - Discord therefore landed everyone there regardless of what the invite said. **The founder caught this by asking a plain question - "will not users land to read this first when invited?" - which I could not answer without measuring, and the measurement showed my fix was necessary but not sufficient.** Third time in this session that a founder question found something the tests and I had missed.
+
+**Shipped:** `scripts/open_the_server.py` (dry-run default, read-modify-write on overwrites, prints every field before and after) - 12 channels changed, reversing the lockdown; `#read-this-first` open to all but read-only; `#the-door` and `#applications` hidden from everyone. **Verified by a SEPARATE process: a person with no roles lands on `#read-this-first`.** `GRINDER_DOOR_CHANNEL_ID` and `GRINDER_APPLICATIONS_CHANNEL_ID` removed from `.env` (dangerous surface; explicit founder yes, recorded through `.zuko/approve.js`, cleared after), which makes `door.is_open()` False and the entire feature dormant. **Bot suite 467/1 skipped, unchanged.**
+
+**THE LANDMINE THAT MADE THE `.env` EDIT NECESSARY:** with the channels hidden but the feature still configured, crossing 30 members would have shut the door and pointed newcomers at a form in a channel nobody can see - `/grind` refusing them with no visible way to apply. Hiding the channels alone would have been a silent lockout waiting to happen.
+
+**DELIBERATELY NOT DONE, and both are decisions rather than omissions:** (1) the founder asked for 30 -> 40; `OPEN_BELOW` only gates when the form appears, so with no form that change would do nothing - left at 30 and explained. A real joiner cap is a separate build. (2) `#the-door` / `#applications` are hidden, not deleted; deleting destroys history irreversibly.
+
+**STILL OPEN:** two invites point at now-hidden channels (`PUWVqKfC -> #the-door`, `vxAsNjJpS -> #applications`) and should be revoked; a client that already cached the lobby must click once; and `door-open-below-30-design.md` remains wrong about `bearwolf101` holding Administrator (now moot, but the document is untrue).
+
+## Status: **LATEST 2026-08-15 (THE VOUCH INVITE DROPPED FRIENDS INTO THE LOBBY - fixed; branch `fix/vouch-invite-lands-inside`; NO dangerous surface touched).**
+
+**FOUNDER-REPORTED WITH A SCREENSHOT:** opening the server showed `#the-door` - a channel not in their sidebar and un-postable.
+
+**MEASURING FIRST KILLED THE OBVIOUS HYPOTHESIS.** A new read-only `scripts/landing_probe.py` computed every member's effective permissions over every channel, printing **every** overwrite field that is set. Result: the permissions were **correct** - `bearwolf101` cannot see `#the-door`, can see `#read-this-first`, and their first visible channel IS `#read-this-first`. `hide_door_from_members.py` had been applied and worked. Had I trusted the report's framing ("the door should not be seen by anyone") and gone straight to permissions, I would have "fixed" something that was not broken.
+
+**ROOT CAUSE: a Discord invite is created against a CHANNEL, and that is where the joiner lands and keeps returning.** `invitefriend_cmd` built its single-use link against `CFG.door_channel_id`. So a vouched friend landed in the lobby, was granted `@Member`, lost sight of the lobby, and their client went on reopening it. `scripts/invite_probe.py` found a live unused one (`PUWVqKfC -> #the-door`) waiting for the next friend. The screenshot's URL ends in the very id `CFG.door_channel_id` holds.
+
+**Shipped:** `door.arrival_channel(guild)` (first text channel by position that `@Member` can view; `None` rather than a guess), the `invitefriend_cmd` call site, `tests/test_vouch_invite_lands_inside.py` (7, red first), and two read-only probes. **Bot suite 460/1 -> 467/1.** Verified against the LIVE guild: `arrival_channel()` returns `#read-this-first` where the old path returned `#the-door`.
+
+**STILL OPEN, needs the founder:** two live invites point at channels their users cannot see once inside - `PUWVqKfC -> #the-door` (the bot's own, unused) and `vxAsNjJpS -> #applications` (founder-made, 1 use). Revoking them is a live-server change awaiting a yes. And a client that already cached the wrong channel cannot be moved from the server - that person must click once.
+
+**DRIFT NOTE - a design document is wrong about the live server.** `door-open-below-30-design.md` states `bearwolf101` holds `@Backup Admin` (Administrator) and is therefore excluded from `community_count`. Live: its only role is `@Member`, `administrator=False`, and `@Backup Admin` has **0 members**. So an operator account counts as a real community member and the 30-person door would shut one person early - against the founder's explicit "excluding my two accounts". Reported, deliberately not folded into this fix.
+
 ## Status: **LATEST 2026-08-15 (THE SET SHUFFLE WAS NEVER RESHUFFLED IN DISCORD - fixed; everything brought live; branch `fix/discord-set-variety`; NO dangerous surface touched).**
 
 **FOUND BY READING THE CODE THE FOUNDER ASKED ABOUT, NOT BY A TEST.** The founder asked whether the rule randomness (1/3/4) actually works. Inside one grind it does - measured over ~9,000 generated sets: all three styles in every set of 3, never the same style back-to-back in a set of 5, all 6/18 orderings used evenly. **But `bot.py` sent `set_index=0` hard-coded**, and that number is the only thing that varies a person's consecutive sets. So every multi-pair grind that person ever built came out in the same style order.
