@@ -115,13 +115,13 @@ async def recovered_file(row, api, attach):
     if wav is None:
         return None, (
             f"Grind #{number} ({name}) is gone. I keep the audio for seven days and this one is "
-            f"past that, so there is nothing left to send — sorry. Run 🔁 **Again** on it and you "
+            f"past that, so there is nothing left to send - sorry. Run 🔁 **Again** on it and you "
             f"will get a fresh take of the same two songs.")
 
     clip = await attach(wav)
     if clip is None:
         return None, (
-            f"Grind #{number} ({name}) is here, but it is too long to send as a file — Discord "
+            f"Grind #{number} ({name}) is here, but it is too long to send as a file - Discord "
             f"will not take one that big. Play it in a listening room instead.")
 
-    return clip, f"Grind #{number} — {name}"
+    return clip, f"Grind #{number} - {name}"

@@ -55,7 +55,7 @@ async def pin(ctx, interaction: discord.Interaction) -> str:
         wav = await recall.audio_for(row, _engine())
     if wav is None:
         return (f"Grind #{ctx.number} is gone. I keep the audio for seven days and this one is past "
-                f"that, so there is nothing left to show — sorry. Run 🔁 **Again** on it and you "
+                f"that, so there is nothing left to show - sorry. Run 🔁 **Again** on it and you "
                 f"will get a fresh take of the same two songs.")
 
     # ONLY NOW. `mark_pinned` is one-shot because people double-tap, so burning it on a press that

@@ -251,7 +251,9 @@ def mygrinds_embed(*, user: discord.abc.User | None, total: int,
                    rows: list[tuple[int, str, str | None]]) -> discord.Embed:
     """rows: (number, "beat x vocal" or "long grind, N tracks", jump_url)"""
     if not rows:
-        body = "You have not ground anything yet.\n\nGo to #the-grinder and type `/grind`."
+        # NO TYPED CHANNEL NAME. `the-grinder` has been `get-shit-done` on the live server for
+        # days, so this sent every brand-new person to a room that does not exist.
+        body = "You have not ground anything yet.\n\nType `/grind` in the grind room."
     else:
         body = "\n".join(
             f"`#{n}`  {label}" + (f"  ·  [jump]({url})" if url else "")
@@ -292,19 +294,25 @@ def help_embed(rooms: list | None = None, banner_name: str | None = None) -> dis
         value=("Type it and a picker opens: pick a beat, pick a vocal, hit **➕ Add another** to "
                "stack up to 5 pairs, then **Grind it**.\n"
                "🔁 **Again** remixes the same songs differently. 🎛️ **/mygrinds** is everything "
-               "you have made."),
+               "you have made - pick one there to get the file back."),
         inline=False)
     e.add_field(
         name="🔥 💀 😐",
-        value="React to grinds - yours and everyone else's. That is how the good ones get found.",
+        # Your grind comes back only to you, so there is nothing for anybody else to react TO until
+        # you share it. The old line ("yours and everyone else's") described the public-cards
+        # version of the room and outlived it by a day.
+        value=("Your grinds are private. Press 📣 **Show this mix to everyone** to put one up "
+               "where the room can hear it - and react to."),
         inline=False)
 
     where = _room_links(rooms) or "a listening room"
     e.add_field(
         name="🔊  Listening rooms",
+        # NO "the room keeps playing past grinds by itself" - that station was removed on
+        # 2026-08-12 ("a room that starts playing things nobody requested is chaos, not company").
+        # The line survived the removal and promised a behaviour that had been deleted.
         value=(f"Sit in {where} and the music plays out loud to everyone in there. "
-               "Grind while you are in one and everybody hears it at the same second.\n"
-               "When nothing is queued the room keeps playing past grinds by itself."),
+               "Grind while you are in one and everybody hears it at the same second."),
         inline=False)
     e.add_field(
         name="⏭️  While the music is on",

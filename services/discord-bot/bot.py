@@ -1076,10 +1076,13 @@ def _is_showcase(channel) -> bool:
 def _grinding_allowed_here(interaction: discord.Interaction) -> str | None:
     """None if `/grind` may run here, otherwise the sentence to send back.
 
-    Grinding is confined to the grind category on purpose (founder, 2026-08-11). The whole point is
-    that generation happens in public, in the same few channels, where people scroll past what
-    everyone else is throwing together. Allowed anywhere, it scatters across the server and nobody
-    sees anyone else's - at which point being in a server buys you nothing over using the app alone.
+    Grinding is confined to the grind category on purpose (founder, 2026-08-11). The ORIGINAL reason
+    was that generation happened in public where people scrolled past each other's work - that
+    stopped being true on 2026-08-15 when grinds became private, and the refusal went on saying it
+    for a day ("out in the open, so you can see what other people are throwing together"), which is
+    a promise the product no longer keeps. The confinement still earns its place for a different
+    reason: it keeps `/grind` out of the showcase and the talking rooms, which are there to be
+    scrolled and read rather than worked in.
 
     Sitting in one of the listening rooms also counts, because Discord treats a voice channel's
     built-in chat as its own channel and somebody in a room should not have to leave it to grind.
@@ -1109,8 +1112,7 @@ def _grinding_allowed_here(interaction: discord.Interaction) -> str | None:
                        or getattr(c, "category_id", None)) == CFG.grind_category_id
                    and not _is_showcase(c)]
     where = " or ".join(allowed) if allowed else "the grind channels"
-    return (f"Not here. Everyone grinds in {where}, out in the open, so you can see what other "
-            f"people are throwing together.\n"
+    return (f"Not here. Grinding happens in {where}.\n"
             f"You can also grind from inside a listening room while the music is on.")
 
 
