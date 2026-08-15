@@ -4,112 +4,110 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
-**2026-08-15, late evening. LAUNCH DAY.** Grinder opened to real strangers, three of them used it, and eight problems were found and fixed — most of them by the founder using the product, not by the suite.
+**2026-08-16, early hours.** The night after launch. A stranger lost his music, and finding out why turned into an audit, five fixes and a change to how every mix reaches every person.
 
-**One commit is not yet merged** (`docs/handoff-2026-08-15-night`); everything else is in `main`. All four suites green.
+**10 commits are PUSHED to `fix/the-mix-always-reaches-you` but the PULL REQUEST IS NOT OPENED.** Nothing is on `main`.
+→ **https://github.com/akshay09438/Dhun/pull/new/fix/the-mix-always-reaches-you**
 
 **THE LINK: `https://discord.gg/WJ9b78hFQb`** — permanent, lands on `#read-this-first`.
 
-⚠️ **Never run `/setup` on the live server, any flag.**
+⚠️ **Never run `/setup` on the live server, any flag.** Use `scripts/refresh_copy.py` for words, `scripts/clear_channels.py` for wiping.
 
-⚠️ **THE ENGINE AND GRINDER RUN AS BACKGROUND PROCESSES OF THAT SESSION** (engine 21:00, Grinder 21:25). **They die when the machine sleeps.** `Start-Grinder.bat` restarts both. **Restarting no longer kills open grind cards** — that was fixed tonight.
-
----
-
-## Real people used it today
-
-|              |     |                                 |
-| ------------ | --- | ------------------------------- |
-| **akshay09** | 58  | the founder                     |
-| **Aashwin**  | 2   | **new stranger**, 20:24 & 20:28 |
-| **DICTATØR** | 2   | **first stranger**, 18:42       |
-
-15 mixes through Discord today by 3 people. **Every mix today succeeded; the last real failure was 2026-08-12.**
+⚠️ **THE ENGINE AND GRINDER ARE BACKGROUND PROCESSES OF A CLAUDE SESSION.** Engine since 21:00 (15 Aug), Grinder restarted three times tonight, last at **23:44:02**. **They die when the machine sleeps.** `Start-Grinder.bat` restarts both.
 
 ---
 
-## What the founder found that the tests did not — eight things
+## The one-line version
 
-1. **Every set they built came out in the same style order, forever.** `set_index` was hard-coded 0.
-2. **🔁 Again on a multi-song grind returned the byte-identical file.** Same cause; the button was decoration.
-3. **Every fresh `/grind` of a pair returned the same file too.** Grinds #28/#29/#30 were one file handed out three times; the engine built it once.
-4. **The lobby trapped everyone.** Not permissions — the 13 Aug lockdown left `#the-door` the only room a newcomer could see, so Discord funnelled everyone there. **Found by the founder asking "will not users land to read this first when invited?"** — a question that overturned a fix I had already called done.
-5. **The vocal arrived at the very end on long beats.** The 3-minute highlight ended at the _last_ note sung and reeled back, binning everything before it. 8-minute Rapture lost 36s of 67s.
-6. **"Grinder didn't respond in time."** Grind cards were not persistent views, so every restart killed the buttons — and I restarted six times.
-7. **The dev dashboard could not scroll.** `min-height` where it needed `height`.
-8. **The People tab listed load-test fixtures, not people.**
+A grind card is an **ephemeral** Discord message. Discord stores those **nowhere** — so every mix ever made was one app-reload away from gone. It now gets **sent to its maker as a direct message** as well.
+
+---
+
+## What happened, in order
+
+1. **Aashwin's two lost mixes were recovered by hand** and posted to him. Both had been built perfectly. One (#34) was orphaned by a bot restart four seconds before the engine finished; the other (#33) was delivered correctly and deleted by Discord when he reloaded.
+2. **A full read-only newcomer audit** — permissions, catalog, copy, config, queue, disk, delivery.
+3. **Four fixes from it** (branch `fix/mixes-dont-vanish`, folded into the current branch).
+4. **`/zuko:fix` for guaranteed delivery** — the headline change.
+5. **Catalog swap**: Bad Guy out, Blinding Lights in, ear-approved.
+6. **`#get-shit-done` cleared** to its single intro post.
 
 ---
 
 ## What shipped
 
-|                                    |                                                                                                |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------- |
-| **The door removed**               | No form, no lobby, no queue. Normal open server; newcomers land on `#read-this-first`          |
-| **Sets and grinds vary**           | Per-person, per-pair position counters; a fresh `/grind` and 🔁 Again advance by one mechanism |
-| **Private grinds**                 | The card and the picker are ephemeral; `#best-mixes` is the only public wall                   |
-| **📣 "Show this mix to everyone"** | replaces the vague "📌 Pin it"; reactions moved to the showcase post                           |
-| **The grind board**                | one standing line: "N people grinding right now", or what the room made today                  |
-| **The highlight keeps the vocal**  | window chosen by most singing, not by ending last. **Ear-approved before merge**               |
-| **Cards survive restarts**         | persistent view, owner read from the stored row                                                |
-| **Dev dashboard**                  | scrolls; People lists only nameable people, with the hidden count stated                       |
+|                                       |                                                                                                                                    |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **A mix is SENT, not shown once**     | `deliver.py` DMs the finished mix. Card keeps its copy too. One retry on a hiccup; DMs-off is explained on the card, never retried |
+| **A lost mix can be asked for again** | `/mygrinds` dropdown re-fetches from the engine (`recall.py`). Stores nothing new; the 7-day render window is the limit            |
+| **A restart cannot orphan a mix**     | `ref_id` written when the engine ACCEPTS the job, not when it finishes                                                             |
+| **📣 recovers instead of promising**  | It used to answer "still arriving" to 22 grinds deleted days earlier                                                               |
+| **Seven lines of copy made true**     | Each now guarded by a test that reads the sentence a person is actually sent                                                       |
+| **Blinding Lights replaces Bad Guy**  | Already ingested, so zero Replicate spend                                                                                          |
+| **The grind room starts fresh**       | 20 messages gone, intro kept, `#best-mixes` untouched                                                                              |
+
+---
+
+## Verification evidence — run 2026-08-16
+
+| Check                                 | Result                                                                                       |
+| ------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `pytest services/api -q`              | **845 passed** in 193.95s                                                                    |
+| `pytest services/discord-bot -q`      | **555 passed** (was 508 at session start — 47 new)                                           |
+| `npm test`                            | **79 passed**, 9 files                                                                       |
+| `npm run typecheck` / `npm run lint`  | clean                                                                                        |
+| Dangerous surfaces                    | **NONE touched.** `git diff --name-only` vs `origin/main` checked against every glob         |
+| Engine `/health`                      | ok, **112 songs, 64 featured**                                                               |
+| Picker                                | **25 English vocals**; Bad Guy absent, Blinding Lights present                               |
+| Grinder                               | up since 23:44:02, **2 processes** (main + extra voice), no real errors since                |
+| **The bug, proven**                   | `fetch_message` on grind #33 and #39 cards → **NotFound both**. Discord never stored them    |
+| **Recovery, proven on real data**     | Lucas George's #20, local copy gone → **79,654,348 bytes** back from the engine              |
+| **Aashwin's set, proven**             | #39 recovered via the set route, **64,235,224 bytes**, delivered and read back intact        |
+| **Blinding Lights, two real renders** | Let Me Love You: `stretch 1.15, forced False`. Rapture: `stretch 1.4035, forced True` (+40%) |
+| **First real grind on the new code**  | **#40** (akshay09, 23:32) — completed, **no delivery failure logged**                        |
+| `#get-shit-done` after the wipe       | **1 message** (the intro), verified by a SEPARATE process. `#best-mixes` still 8 / 5 audio   |
+| Free disk                             | **6.02 GB** — sitting exactly on the cleaner's 6.00 GB line                                  |
 
 ---
 
 ## Do first next session
 
-1. **LISTEN properly.** The founder has now heard a handful and approved the crop change by ear. Nobody has sat down and judged five mixes end to end.
-2. **Watch the strangers.** Two arrived unprompted today. `/#dev` → People.
-3. **Fix the log pollution** — see below; it has now cost time twice in one day.
-4. **First-time pairs still take 50–70s.** Pre-warming is scoped, free and deferred by founder decision.
-
----
-
-## Verification evidence — run at handoff, 2026-08-15
-
-| Check                                                                                                                            | Result                                                                                                                 |
-| -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Backend (`pytest services/api -q`)                                                                                               | **845 passed** (was 838)                                                                                               |
-| Discord bot (`pytest services/discord-bot -q`)                                                                                   | **507 passed, 1 skipped** (was 451/1 at start)                                                                         |
-| Web (`npm test`)                                                                                                                 | **79 passed** (was 78)                                                                                                 |
-| `npm run typecheck` / `npm run lint`                                                                                             | clean                                                                                                                  |
-| `workers/render.py`, `planner/validate.py`, `storage.py`, `routes/songs.py`, `config.py`, workflows, `conftest.py`, `pytest.ini` | **UNTOUCHED** vs `origin/main`                                                                                         |
-| Engine                                                                                                                           | `/health` ok, **112 songs**                                                                                            |
-| Dev dashboard                                                                                                                    | scrolls (720px viewport, 3795px content, reaches 3075); People = **5 named**, 24 hidden — verified in the real browser |
-| Crop fix, on the real render                                                                                                     | first vocal **160s → 6s** into the highlight; swept 32 mixes: **10 improved, 22 byte-identical, 0 worse**              |
-| Free disk                                                                                                                        | **8.58 GB**                                                                                                            |
+1. **OPEN THE PULL REQUEST.** 10 commits are pushed and none of it is on `main`. Everything below assumes it eventually merges.
+2. **Fix the test-suite log pollution.** It produced fake errors in the live log **five separate times tonight** and each one had to be ruled out by hand — twice it briefly looked like the live bot was broken. `services/discord-bot/tests/` has **no `conftest.py` at all**, which is the root cause. The database IS safe (all 33 test files redirect via `store.reset_for_tests`); only the log and Windows Temp are polluted. **This is now the single biggest drag on working here.**
+3. **Make an engine-down failure readable.** If the laptop sleeps, a stranger typing `/grind` sees `Something broke on the way back: [Errno 10061]…`. There is a friendly message for the catalog not loading but not for a mid-render failure.
+4. **Anchor Point still talks over its guest** — one line on the guest-verse list, known since 15 Aug, still unfixed. Khalid got 25.5s of a 203s mix.
+5. **Watch whether DM delivery actually lands for strangers.** Only ONE real grind (#40, the founder's own) has been through it.
 
 ---
 
 ## Open escalations and things to RE-VERIFY (claims, not facts)
 
-- **⚠️ THE TEST SUITE WRITES INTO THE LIVE `logs/grinder.log`.** It cost time **twice today**: a phantom "extra voice cannot see Hollywood_Blends", and a `test_server_setup.py` traceback that had to be ruled out while verifying a real restart. **The log cannot be trusted as evidence until this is isolated.** Same family as the `events.db` pollution.
+- **⚠️ THE TEST SUITE WRITES INTO THE LIVE `logs/grinder.log`.** Five occurrences tonight. The log cannot be trusted as evidence until this is isolated. It now also writes MY test fixtures' fake errors ("delivery exploded", "grind #39: could not DM the mix").
+- **⚠️ GRIND #34 IS PERMANENTLY UNREACHABLE BY THE PRODUCT, and this was a knowing choice.** Its row still has no `ref_id`, so `/mygrinds` cannot fetch it. The rescue post that was its only route back was deleted with the room. The founder was shown the trade and chose to clear anyway. The audio survives at `231732de….bestparts.wav` until roughly **2026-08-22** — a one-field DB write would still restore access before then. **The classifier blocked that write; it needs a human to allow it.**
+- **⚠️ FREE DISK IS 6.02 GB, ON the 6.00 GB line.** The cleaner has already evicted once tonight and will keep doing so. Each grind costs ~120–160 MB across both stores; the test suites cost ~1.6 GB per full run. **633 MB of `grind_*` files sit in Windows Temp that nothing sweeps** — the engine's janitor only covers its own data dir.
+- **⚠️ MY OWN ERROR, recorded so it is not repeated:** a verification script deleted whatever `recall.audio_for` returned, which for a grind with a live local copy is the STORED file, not a fresh download. It destroyed Aashwin's local copy of grind #39. Recovered from the engine, no lasting harm. **A read-only probe must never delete what it was given.**
+- **⚠️ `set_featured`'s "pairs with N/25" is NOT a quality gate.** It counts the safe stretch band only. Blinding Lights scores 6/25 and the founder approved both test renders, including a 40% speed-up. The refined rule: **the octave fold keeps a stretch musical, not the direction** — the one ear-rejected case was the only unfolded one.
 - **⚠️ `_EFFECT_POOL_ENABLED` and `USE_AI_ARRANGEMENT` are both hard-coded `False`** — code that has never run in a shipped mix.
-- **⚠️ An ephemeral card vanishes on a client reload and has no shareable link.** `/mygrinds` only offers links for mixes that were shown. **There is no way to recover a private mix you did not share** — offered, not built.
-- **⚠️ `rule_shuffle._resolved_set_base` recurses** and raises past ~1000 (900 fine, 1200 raises). Bot counters wrap at 512; **the WEB app's `takeNextSetIndex()` is still unbounded** — founder was told and chose to leave it.
-- **⚠️ `Member.status` is useless here**; check the bot with `scripts/command_probe.py`.
+- **⚠️ The vocal has no makeup gain** (2:1 compression, 1 dB ducking). Parked since 08-08, resurfaced in the audit, still unfixed.
+- **⚠️ `rule_shuffle._resolved_set_base` recurses** and raises past ~1000. Bot counters wrap at 512; the WEB app's `takeNextSetIndex()` is still unbounded — founder was told and chose to leave it.
+- **⚠️ Two DIFFERENT people who pick the same pair still share a file** (~1 in 3). Founder was offered the fix and declined.
+- **⚠️ The dev dashboard has NO password** and `/admin/*` answers 200 with no credentials. Fine on localhost; the public ngrok link is deliberately OFF and must not go on without `PROMPTDJ_DASHBOARD_TOKEN`.
+- **⚠️ `storage.py` / `pitch.py` disagree** about pitch-cache rebuild cost. Dangerous surface, needs founder sign-off. Untouched.
+- **⚠️ `Member.status` is useless here**; probe the bot with `scripts/command_probe.py`.
 - **⚠️ `set_permissions` REPLACES an overwrite.** Read `overwrites_for`, change one field, write the whole object back.
-- **⚠️ A verifying probe must print the field you did NOT change, and must not be the process that made the change.** Used repeatedly today and it earned its keep every time.
-- **⚠️ AFTER A PR IS MERGED, START A NEW BRANCH.** Three PRs were merged mid-session tonight; this handoff is on a fresh branch for exactly that reason.
-- **Two DIFFERENT people who pick the same pair still share a file** (~1 in 3). Founder asked, was offered the fix, and **declined**: "none, it should be how it's going on." The honest cure is a 4th and 5th mixing rule.
-- **The dev dashboard has NO password** and `/admin/*` answers 200 with no credentials. Fine on localhost; **the public ngrok link is deliberately OFF** and must not go on without setting `PROMPTDJ_DASHBOARD_TOKEN` first.
-- **Anchor Point × Location diagnosis is UNFIXED.** Anchor Point is a vocal-rich beat (21 vocal regions, 144s of its own singing, louder than Khalid's) but is NOT on the guest-verse list, so it sings over the whole mix. Khalid got 25.5s of a 203s mix. **One line added to a hand-maintained list is the fix.**
-- **The vocal has no makeup gain** (2:1 compression, 1 dB ducking). Measured: the voice band moves ±2 dB when the singer enters. Parked since 08-08; **this is the recurrence.**
-- **The dashboard's failure count is still partly fiction** — 35 shown, ~17 real, none since 08-12.
-- **`storage.py` / `pitch.py` disagree** about pitch-cache rebuild cost. Dangerous surface, needs founder sign-off. Untouched.
-- **`OPEN_BELOW` is still 30**, deliberately — with no door it gates nothing. The founder asked for 40; that would have been a change with no effect.
-- **`#the-door` / `#applications` are hidden, not deleted.** History intact.
-- **Replicate credit is ZERO.**
+- **⚠️ A verifying probe must print the field you did NOT change, and must not be the process that made the change.** Used five times tonight and it earned its keep every time — including catching that my own "channel count" check was wrong, not the server.
+- **Replicate credit is ZERO.** Any song not already ingested cannot be added. The catalog is 112 songs and that is the ceiling until it is topped up.
 - **The GitHub CLI is still not installed**, so PRs are opened by hand.
+- **`#the-door` / `#applications` are hidden, not deleted.** History intact.
+- **The dashboard's failure count is still partly fiction** — ~35 shown, ~17 real.
 
 ---
 
 ## Process notes
 
-- **The founder out-found the test suite eight times.** Every one was visible in the product and invisible in CI.
-- **The most valuable thing they did was ask a question, not report a bug.** "Will not users land to read this first when invited?" forced a measurement that overturned a fix I had already reported as complete. **The failure mode to watch is reporting completeness for the half that was touched.**
-- **Measuring before building changed the fix twice.** The lobby bug was not permissions; the crop bug was not singles-vs-sets (a set on Rapture lost 59s exactly like a single — the founder's sets simply used shorter beats).
-- **Tests caught two of my own mistakes mid-build** — a seeding count that included the in-flight grind, and a showcase id that would have produced dead `/mygrinds` links.
-- **The pre-stop gate did its job.** The People filter was built, verified live, then REVERTED rather than left red while approval was pending, and re-applied after an explicit yes.
+- **The founder's question was worth more than any test again.** "Is this our issue, or Aashwin leaving the app?" forced a measurement — `fetch_message` on two dead cards — that turned a vague suspicion into a proven root cause and a different, better fix.
+- **Recovery was the wrong shape of fix, and the founder said so.** `/mygrinds` asks somebody to know a command at the exact moment they have decided the product lost their work. "By hook or by crook" produced a materially better design.
+- **Measuring beat predicting, twice.** The blend score said Blinding Lights would be bad; the founder's ears said otherwise. Before that, the "it must be the ephemeral card" hunch was right but unproven until Discord was actually asked.
+- **A dry run caught its own blindness.** `refresh_copy`'s preview silently truncated at the first emoji — 14 lines of 100 — and a review tool that truncates is worse than none.
 - **Every live change was dry-run first, applied, then verified by a SEPARATE process.**
 - **Every commit went to a branch, never to `main`.**
