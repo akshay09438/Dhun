@@ -2,6 +2,20 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-15 (POST-LAUNCH FIX: a fresh `/grind` now advances; branch `fix/grind-advances-position`; NO dangerous surface touched).**
+
+**FOUND IN REAL USER DATA, HOURS AFTER LAUNCH.** Grinds #28 (real user DICTAT⌀R), #29 and #30 (founder) were all One Dance x Old Town Road and all three were the IDENTICAL file. The engine built it once; the other two wrote no event at all - pure cache hits. So every pair of songs had exactly ONE mix in the whole system, for that person, forever.
+
+**Cause:** `GrindContext.generation` defaulted to 0 and only the Again button moved it, so a fresh `/grind` always asked for position 0 - same rule, same take, same mix id, cached file.
+
+**Shipped:** `store.grind_positions` + `store.next_grind_position()`, claimed per build in `_render`; the manual increment in `GrindView.again` removed so both paths advance by one mechanism; `_already_ground` seeds a pair's first use past that person's finished grinds. `tests/test_grind_advances_position.py` (14, red first - the call-site cases failing with `[0, 0]`). **Bot suite 467/1 -> 481/1.**
+
+**TWO TESTS EARNED THEIR KEEP MID-BUILD.** The first seeding attempt counted the grind that was still in flight (the card's row is written at SUBMIT, before the render), which would have started everyone one step too far. `test_grinding_a_different_pair_does_not_skip_this_one` and `test_someone_else_grinding_does_not_move_your_place` went red and forced the `ref_id IS NOT NULL` filter.
+
+**Verified against the LIVE database, read-only:** akshay09's next `/grind` of that pair is position 2 (simple, take 3) and DICTAT⌀R's is position 1 (simple, take 2) - neither is the `cfe221c3...` they kept getting.
+
+**DELIBERATELY NOT BUILT (founder's explicit call, asked and answered).** Making a mix belong to its maker - putting `user_id` into `mix_id_for` - was offered and declined: "none, it should be how it's going on... if I'm grinding the same mix again, I should [get] a different mix personally, and that's it." So two DIFFERENT people who pick the same pair still share a file about 1 in 3 of the time. Recorded so it is not later mistaken for an oversight; the honest cure is a 4th and 5th mixing rule, not a cache change.
+
 ## Status: **LATEST 2026-08-15 (LAUNCHED - Grinder is open to real users; branch `docs/handoff-2026-08-15-launch`).**
 
 **THE SERVER IS LIVE.** A permanent invite (`https://discord.gg/WJ9b78hFQb`, never expires, unlimited uses) lands anyone on `#read-this-first`. No form, no lobby, no approval. Everything from this session is merged to `origin/main`; `git log origin/main..HEAD` is empty.

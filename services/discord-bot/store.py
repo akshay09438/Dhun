@@ -83,6 +83,13 @@ CREATE TABLE IF NOT EXISTS set_counters (
     user_id    INTEGER PRIMARY KEY,     -- one running count per person
     next_index INTEGER NOT NULL         -- the ordinal their NEXT set will be handed
 );
+CREATE TABLE IF NOT EXISTS grind_positions (
+    user_id    INTEGER NOT NULL,        -- whose place this is
+    song1_id   TEXT    NOT NULL,        -- the beat
+    song2_id   TEXT    NOT NULL,        -- the vocal
+    next_index INTEGER NOT NULL,        -- the position their NEXT grind of THIS pair will use
+    PRIMARY KEY (user_id, song1_id, song2_id)
+);
 """
 
 # Columns added after the first release. SQLite has no "ADD COLUMN IF NOT EXISTS", and an existing
@@ -159,6 +166,74 @@ def next_set_index(user_id: int) -> int:
         c.execute("INSERT INTO set_counters (user_id, next_index) VALUES (?,?) "
                   "ON CONFLICT(user_id) DO UPDATE SET next_index=excluded.next_index",
                   (user_id, (current + 1) % SET_INDEX_WRAP))
+        c.commit()
+        return current
+
+
+# --- a person's place in ONE PAIR's sequence ------------------------------------------------
+# The engine gives each (person, pair) its own order of mixing styles, and the position in that
+# order picks BOTH the style and the take - and the take really does move the arrangement (measured
+# 2026-08-15: takes 1..6 of One Dance x Old Town Road place the vocal at six genuinely different
+# sets of anchors before cycling). So the position is the one number that decides whether grinding
+# the same two songs again gives you something new.
+#
+# It used to start at 0 on every fresh `/grind`, and only the "Again" button moved it. That is why
+# grinds #28, #29 and #30 were the identical file: same position -> same style -> same take -> same
+# mix id -> a cache hit rather than a new mix. Keeping the count here, per pair and on disk, is what
+# makes a second `/grind` a second mix - and it has to be on disk because Grinder restarts often and
+# an in-memory count would hand out 0 again every time it came back.
+#
+# Wraps for the same reason the set counter does: rule_for_available walks the sequence from 0 up to
+# the position, so a huge number is needless work even where it does not break.
+GRIND_POSITION_WRAP = 512
+
+
+def _already_ground(c: sqlite3.Connection, user_id: int, song1_id: str, song2_id: str) -> int:
+    """How many SINGLE-pair grinds of this exact pair this person has already had.
+
+    Only used the first time a pair is asked for, to start the count PAST the grinds that exist.
+    Without it the new counter would hand out 0 - the very position that produced the same file
+    three times - so the first `/grind` after the fix would appear to reproduce the bug.
+
+    Single-pair only: a set went through the set route and never consumed a pair position. The
+    grinds table is per-server small (tens of rows), so reading it once per new pair is nothing.
+
+    FINISHED grinds only (`ref_id IS NOT NULL`). The card's row is written at SUBMIT, before the
+    render this position is being claimed for, so counting every row would count the grind that is
+    happening right now and start everyone one step too far. A grind that failed never got a ref_id
+    and is not counted either - it produced no mix to avoid repeating."""
+    import json
+    n = 0
+    for r in c.execute("SELECT pairs FROM grinds WHERE user_id=? AND ref_id IS NOT NULL",
+                       (user_id,)):
+        try:
+            pairs = json.loads(r["pairs"] or "[]")
+        except (ValueError, TypeError):
+            continue
+        if len(pairs) == 1 and len(pairs[0]) >= 2 \
+                and pairs[0][0] == song1_id and pairs[0][1] == song2_id:
+            n += 1
+    return n
+
+
+def next_grind_position(user_id: int, song1_id: str, song2_id: str) -> int:
+    """Claim this person's next position for THIS pair (0, 1, 2, …, wrapping) and advance it.
+
+    Per PAIR, not per person: the engine's order is seeded per (person, pair), so grinding a
+    different pair must not skip this one forward."""
+    with _lock:
+        c = connect()
+        row = c.execute(
+            "SELECT next_index FROM grind_positions WHERE user_id=? AND song1_id=? AND song2_id=?",
+            (user_id, song1_id, song2_id)).fetchone()
+        start = int(row["next_index"]) if row else _already_ground(c, user_id, song1_id, song2_id)
+        # Wrapped on the way OUT as well as in, so a hand-edited or older row can never hand the
+        # engine a position that costs real time to walk.
+        current = start % GRIND_POSITION_WRAP
+        c.execute(
+            "INSERT INTO grind_positions (user_id, song1_id, song2_id, next_index) VALUES (?,?,?,?) "
+            "ON CONFLICT(user_id, song1_id, song2_id) DO UPDATE SET next_index=excluded.next_index",
+            (user_id, song1_id, song2_id, (current + 1) % GRIND_POSITION_WRAP))
         c.commit()
         return current
 
