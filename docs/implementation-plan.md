@@ -2,6 +2,16 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-15 (GRIND CARDS SURVIVE A RESTART + the dev dashboard scrolls; branches `fix/grind-card-survives-restart`, `fix/dev-dashboard-scroll`).**
+
+**"Grinder didn't respond in time"** on a card that looked fine. Measured: the card was posted 20:35, the bot restarted 21:01, no grind since - every card predated the running process. `GrindView` had a timeout and was never registered, so it lived only in the memory of the process that posted it. **A KNOWN TRAP SINCE 2026-08-14 that only became visible because I restarted the bot six times in one evening shipping fixes.** Fixed the way the door's buttons already were: persistent view, re-registered at startup, rebuilding which grind it is from the database - with the owner read from the stored row, never from the presser. `tests/test_grind_card_survives_restart.py` (7, red first). **Bot suite 500/1 -> 507/1.**
+
+**DEV DASHBOARD SCROLL.** `.wrap` had `min-height:100vh` with `overflow-y:auto`; a min-height box grows to fit (3795px in a 720px window) so its scrollbar had nothing to do, and the console's deliberate `body { overflow:hidden }` clipped the rest. `height` instead of `min-height`, with the mobile query handing scrolling back to the body. Verified in the real browser before and after.
+
+**PARKED, NEEDS ONE APPROVAL: the People tab filter.** Built and confirmed live (5 named people listed - akshay09, Lucas George, akkshay09, Aashwin, DICTATOR - with 24 untagged rows hidden and counted in a footer). **Reverted rather than shipped**, because two existing cases in `AdminScreen.test.tsx` assert the old unfiltered list and that file is a dangerous surface (`**/*.test.tsx`). Leaving the tree red or forcing the guard were both wrong; the founder's yes is pending on updating those two cases (made stricter) plus one new case.
+
+**DRIFT NOTE - the test suite writes into the LIVE `logs/grinder.log`,** and it cost time twice today: once inventing a phantom "extra voice cannot see Hollywood_Blends", and once a `test_server_setup.py` traceback that had to be ruled out while checking a real restart. Still unfixed.
+
 ## Status: **LATEST 2026-08-15 (THE HIGHLIGHT NOW KEEPS THE VOCAL; branch `fix/best-parts-keeps-the-vocal`).**
 
 **THE FIRST CHANGE THIS SESSION THAT ALTERS HOW A MIX SOUNDS.** Everything before it moved rule selection, privacy or plumbing; this one changes which three minutes of a finished mix are kept. `workers/best_parts.py` is NOT on the dangerous list, but `render.py` and `validate.py` were left untouched and no arrangement logic moved.

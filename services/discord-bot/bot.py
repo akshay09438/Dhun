@@ -104,6 +104,10 @@ class PromptDJBot(discord.Client):
         # newcomer as a community that does not work.
         self.add_view(door.DoorView())
         self.add_view(door.ReviewView())
+        # A grind card is no different: it sits in somebody's channel and its buttons must still
+        # work after a restart. Without this the founder got "didn't respond in time" on a card
+        # that looked perfectly fine (2026-08-15). It rebuilds which grind it is from the database.
+        self.add_view(GrindView())
         await self.refresh_catalog()
         await self.bring_extra_voices_online()
         try:
@@ -650,30 +654,92 @@ async def _seed_reactions(message: discord.Message) -> None:
 # them, and what comes back is the finished set. A grind is done when it arrives.
 # --------------------------------------------------------------------------------------
 class GrindView(discord.ui.View):
-    def __init__(self, ctx: GrindContext) -> None:
-        super().__init__(timeout=1800)
+    """The two buttons under a finished grind.
+
+    PERSISTENT (timeout=None + re-registered in setup_hook), like the door's views. It used to have
+    a 30-minute timeout and no registration, so it lived only in the memory of the process that
+    posted it: after a restart Discord delivered the press to a bot with no handler, nothing
+    answered, and the founder got "⚠ Grinder didn't respond in time" on a card that looked perfectly
+    fine. Six restarts in one evening on 2026-08-15 made that their whole experience of the bot.
+    """
+
+    def __init__(self, ctx: GrindContext | None = None) -> None:
+        super().__init__(timeout=None)
         self.ctx = ctx
 
-    async def _owner_only(self, interaction: discord.Interaction) -> bool:
-        """Anyone may react to and pin a grind. Only its owner may re-roll it."""
-        if interaction.user.id == self.ctx.owner_id:
+    async def _context(self, interaction: discord.Interaction) -> GrindContext | None:
+        """The grind this button belongs to — the live one, or rebuilt from the database.
+
+        A re-registered view is a fresh object that knows nothing, so after a restart the grind is
+        found again from the message the button is attached to. The OWNER is taken from that stored
+        row, never from whoever pressed, or a restart would quietly hand somebody's grind to the
+        next person who clicked."""
+        if self.ctx is not None:
+            return self.ctx
+        row = store.by_message(getattr(getattr(interaction, "message", None), "id", 0))
+        if row is None:
+            return None
+        try:
+            pairs = [(p[0], p[1]) for p in json.loads(row["pairs"])]
+        except (ValueError, TypeError, IndexError):
+            return None
+        ctx = GrindContext(interaction, pairs)
+        ctx.number = row["number"]
+        ctx.owner_id = row["user_id"]          # the real owner, not the presser
+        ctx.ref_id = row["ref_id"]
+        path = row["audio_path"]
+        if path and Path(path).exists():
+            ctx.audio_path = Path(path)
+            try:
+                ctx.duration = ui.wav_duration(Path(path))   # not stored; cheap to re-read
+            except Exception:  # noqa: BLE001
+                pass
+        return ctx
+
+    async def _owner_only(self, interaction: discord.Interaction, ctx: GrindContext) -> bool:
+        """Anyone may react to and show a grind. Only its owner may re-roll it."""
+        if interaction.user.id == ctx.owner_id:
             return True
         await interaction.response.send_message(
             "That is someone else's grind. React to it, pin it, or start your own with `/grind`.",
             ephemeral=True)
         return False
 
+    @staticmethod
+    async def _lost(interaction: discord.Interaction) -> None:
+        """Say so when the grind behind a button cannot be found.
+
+        Silence is precisely what "Grinder didn't respond in time" looks like to a person, so this
+        never just returns. Reachable when a card predates the database it is being looked up in."""
+        msg = ("I have lost track of that grind — it is older than my memory of it. "
+               "Run `/grind` and it will come straight back.")
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+        except Exception:  # noqa: BLE001
+            log.warning("could not answer a button on a lost grind", exc_info=True)
+
     @discord.ui.button(label="Again", emoji="🔁",
                        style=discord.ButtonStyle.primary, custom_id="again")
     async def again(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         """Re-roll the same line-up. Every pair stays; what changes is how they are mixed."""
-        if not await self._owner_only(interaction):
+        ctx = await self._context(interaction)
+        if ctx is None:
+            await self._lost(interaction)
+            return
+        if not await self._owner_only(interaction, ctx):
             return
         await interaction.response.defer()
         # No manual bump: the render claims the next position for this pair itself (see _render),
         # so Again and a fresh `/grind` advance by exactly ONE mechanism. Incrementing here as well
         # would move the person two steps and silently skip a take.
-        await self.ctx.run(first=False)
+        #
+        # `first=` is what tells it whether to EDIT the card or post a new one. A card rebuilt after
+        # a restart has no message handle - and an ephemeral message cannot be edited once its
+        # interaction token has aged out anyway - so that case posts a fresh card instead.
+        await ctx.run(first=ctx.message is None)
 
     # The label names the OUTCOME, not the mechanism. "Pin it" told you what the code does and
     # nothing about where it goes or why (founder, 2026-08-15: "pin is a very vague, usable thing
@@ -682,8 +748,12 @@ class GrindView(discord.ui.View):
     @discord.ui.button(label="Show this mix to everyone", emoji="📣",
                        style=discord.ButtonStyle.secondary, custom_id="pin_it")
     async def pin_it(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        ctx = await self._context(interaction)
+        if ctx is None:
+            await self._lost(interaction)
+            return
         await interaction.response.defer(ephemeral=True)
-        await interaction.followup.send(await showcase.pin(self.ctx, interaction), ephemeral=True)
+        await interaction.followup.send(await showcase.pin(ctx, interaction), ephemeral=True)
 
 
 # --------------------------------------------------------------------------------------
