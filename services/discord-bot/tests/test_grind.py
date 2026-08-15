@@ -214,7 +214,16 @@ def test_a_finished_grind_offers_no_way_to_add_another_pair():
         return botmod.GrindView(_Ctx())
 
     labels = [i.label for i in asyncio.run(make()).children]
-    assert labels == ["Again", "Pin it"]
+    # Exactly two buttons, and neither adds a pair. The share button was renamed on 2026-08-15
+    # ("Pin it" -> "Show this mix to everyone") because a private grind makes it the ONLY route to
+    # anything public, so it has to name the outcome rather than the mechanism. The point this test
+    # defends - a finished grind cannot be added to - is unchanged, and is now checked by meaning
+    # rather than by an exact string, so a future rewording cannot make it pass while an "add
+    # another pair" button quietly returns.
+    assert len(labels) == 2, f"a finished grind should offer exactly two things, got {labels}"
+    assert labels[0] == "Again"
+    assert not any("add" in (lbl or "").lower() for lbl in labels), \
+        f"a finished grind is offering a way to add another pair again: {labels}"
     assert not hasattr(botmod, "AddPairView"), "the append flow should be gone entirely"
 
 

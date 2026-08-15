@@ -476,7 +476,11 @@ class GrindContext:
                 pairs=self._store_pairs(), created_at=_now(),
                 guild_id=getattr(self.interaction.guild, "id", None),
                 channel_id=getattr(self.interaction.channel, "id", None))
-            self.message = await self.interaction.followup.send(embed=e)
+            # PRIVATE TO THE MAKER (founder, 2026-08-15). The room was filling with everybody
+            # else's finished music, and a newcomer arriving to a wall of it listens instead of
+            # making anything. Your grind now comes back only to you; `#best-mixes` is the one
+            # public wall, and it gets there because you chose to put it there.
+            self.message = await self.interaction.followup.send(embed=e, ephemeral=True)
             store.attach_message(self.number, self.message.id)
         elif self.message is not None:
             await self.message.edit(embed=e, view=None, attachments=[])
@@ -572,7 +576,10 @@ class GrindContext:
         await self.message.edit(embed=embed,
                                 attachments=[clip] if clip else [],
                                 view=GrindView(self))
-        await _seed_reactions(self.message)
+        # NO REACTIONS HERE ANY MORE. Discord refuses them on a private message - a platform rule,
+        # not a setting - so seeding would raise on every grind. They now go on the SHOWCASE post
+        # instead (showcase.pin), which is also the more honest place for them: a 🔥 on a mix
+        # somebody chose to show means more than one on a card that merely scrolled past.
         # Remember where the audio lives so it can be re-sent later straight off disk -
         # no re-render, no download, no new file. If the janitor sweeps it, it simply drops out
         # of rotation.
@@ -637,7 +644,11 @@ class GrindView(discord.ui.View):
         # would move the person two steps and silently skip a take.
         await self.ctx.run(first=False)
 
-    @discord.ui.button(label="Pin it", emoji="📌",
+    # The label names the OUTCOME, not the mechanism. "Pin it" told you what the code does and
+    # nothing about where it goes or why (founder, 2026-08-15: "pin is a very vague, usable thing
+    # for where to pin"). It matters more now the grind is private: this button is the ONLY way a
+    # mix ever becomes public, so it has to read as a decision.
+    @discord.ui.button(label="Show this mix to everyone", emoji="📣",
                        style=discord.ButtonStyle.secondary, custom_id="pin_it")
     async def pin_it(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.defer(ephemeral=True)
@@ -942,7 +953,10 @@ async def grind_cmd(interaction: discord.Interaction) -> None:
             ephemeral=True)
         return
     view = GrindBuilderView(interaction.user.id)
-    await interaction.response.send_message(embed=view.embed(), view=view)
+    # Private, like the finished mix. Leaving the picker public would keep the room filling up -
+    # with everybody's song-choosing instead of everybody's music, which is the same overwhelm one
+    # step earlier.
+    await interaction.response.send_message(embed=view.embed(), view=view, ephemeral=True)
 
 
 # HIDDEN, not merely refused. The check inside runs only AFTER somebody picks the command, so an
@@ -1028,6 +1042,22 @@ async def applications_cmd(interaction: discord.Interaction, contains: str = "")
         embeds=embeds, ephemeral=True)
 
 
+def _grind_link(row) -> str | None:
+    """A real, clickable link to a grind - or None when there honestly isn't one.
+
+    A grind card is private to its maker now, and Discord gives a private message no shareable URL.
+    Building the old guild/channel/message link for one produces a link that goes nowhere, in the
+    single place a person looks for their own work. Only a grind somebody chose to SHOW has a
+    permanent public copy, so only that gets a link."""
+    try:
+        gid, cid, mid = row["guild_id"], row["showcase_channel_id"], row["showcase_message_id"]
+    except (KeyError, IndexError):
+        return None
+    if gid and cid and mid:
+        return f"https://discord.com/channels/{gid}/{cid}/{mid}"
+    return None
+
+
 @bot.tree.command(name="mygrinds", description="Everything you have made.")
 async def mygrinds_cmd(interaction: discord.Interaction) -> None:
     rows = []
@@ -1035,11 +1065,7 @@ async def mygrinds_cmd(interaction: discord.Interaction) -> None:
         pairs = json.loads(r["pairs"])
         label = (f"{pairs[0][2]} x {pairs[0][3]}" if len(pairs) == 1
                  else f"long grind, {len(pairs)} tracks")
-        url = None
-        if r["guild_id"] and r["channel_id"] and r["message_id"]:
-            url = (f"https://discord.com/channels/{r['guild_id']}"
-                   f"/{r['channel_id']}/{r['message_id']}")
-        rows.append((r["number"], label, url))
+        rows.append((r["number"], label, _grind_link(r)))
     await interaction.response.send_message(
         embed=ui.mygrinds_embed(user=interaction.user,
                                 total=store.count_for_user(interaction.user.id), rows=rows),

@@ -103,6 +103,12 @@ _ADDED_COLUMNS = (
     # Track boundaries inside a SET, as a JSON list of seconds. A set is one continuous file, so
     # without these a skip could only abandon all five members instead of moving to the next.
     ("grinds", "seams", "TEXT"),
+    # The PUBLIC copy in the showcase, once somebody chose to show a mix (2026-08-15). Kept apart
+    # from `message_id` on purpose: that one is the grind's own card, and /mygrinds pairs it with
+    # the channel the grind happened in - overwriting it would build links that go nowhere. This is
+    # also the message reactions live on, since a private card cannot carry them.
+    ("grinds", "showcase_message_id", "INTEGER"),
+    ("grinds", "showcase_channel_id", "INTEGER"),
 )
 
 
@@ -275,10 +281,28 @@ def get(number: int) -> sqlite3.Row | None:
         return connect().execute("SELECT * FROM grinds WHERE number=?", (number,)).fetchone()
 
 
-def by_message(message_id: int) -> sqlite3.Row | None:
+def attach_showcase_message(number: int, message_id: int, channel_id: int | None = None) -> None:
+    """Remember the PUBLIC copy of this grind in the showcase.
+
+    Separate from `attach_message`: that one is the grind's own card. Since 2026-08-15 the card is
+    private to its maker, and Discord will not carry reactions on a private message - so this is the
+    message 🔥 💀 😐 live on, and the only one with a real link."""
     with _lock:
-        return connect().execute("SELECT * FROM grinds WHERE message_id=?",
-                                 (message_id,)).fetchone()
+        c = connect()
+        c.execute("UPDATE grinds SET showcase_message_id=?, showcase_channel_id=? WHERE number=?",
+                  (message_id, channel_id, number))
+        c.commit()
+
+
+def by_message(message_id: int) -> sqlite3.Row | None:
+    """The grind a reacted-to message belongs to - its own card OR its showcase copy.
+
+    Both, because reactions now happen on the showcase post while older grinds still carry them on
+    their card. Checking one column would silently drop every reaction on the other kind."""
+    with _lock:
+        return connect().execute(
+            "SELECT * FROM grinds WHERE message_id=? OR showcase_message_id=?",
+            (message_id, message_id)).fetchone()
 
 
 def mark_pinned(number: int, when: str) -> bool:
