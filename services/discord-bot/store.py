@@ -79,6 +79,10 @@ CREATE TABLE IF NOT EXISTS vouches (
     used_at     TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_applications_state ON applications(state, applied_at);
+CREATE TABLE IF NOT EXISTS set_counters (
+    user_id    INTEGER PRIMARY KEY,     -- one running count per person
+    next_index INTEGER NOT NULL         -- the ordinal their NEXT set will be handed
+);
 """
 
 # Columns added after the first release. SQLite has no "ADD COLUMN IF NOT EXISTS", and an existing
@@ -122,6 +126,41 @@ def reset_for_tests(path: Path | None = None) -> None:
         _conn = None
     if path is not None:
         DB_PATH = path
+
+
+# --- a person's SET ordinal ---------------------------------------------------------------
+# The engine picks a set's mixing-rule order from (user_id, set_index). The index is the ONLY thing
+# that makes one person's consecutive sets differ, so it has to be a real running count that
+# survives a restart - Grinder restarted six times in one evening on 2026-08-14, and an in-memory
+# count would have made the first set after every restart a repeat of the first set before it.
+#
+# WHY IT WRAPS, which is the non-obvious part. The engine's rule_shuffle._resolved_set_base RECURSES
+# from the index it is given down to 0. A large index is therefore not just slow - it raises
+# RecursionError and the set fails to build. Measured against the real engine 2026-08-15: 900 fine,
+# 1200 raises. So this wraps far below that. The cost of wrapping is one repeated ordering every
+# SET_INDEX_WRAP sets, which no one can perceive; the cost of NOT wrapping is that a heavy user's
+# sets eventually fail forever with no way back.
+SET_INDEX_WRAP = 512
+
+
+def next_set_index(user_id: int) -> int:
+    """Claim this person's next SET ordinal (0, 1, 2, …, wrapping) and advance the count.
+
+    Claimed per BUILD, not per card: a fresh number for the first render and another for each 🔁
+    Again, because Again re-runs the same pairs and only a different index gives it different rules
+    (and so a different cache id - otherwise the engine just serves the same file back)."""
+    with _lock:
+        c = connect()
+        row = c.execute("SELECT next_index FROM set_counters WHERE user_id=?",
+                        (user_id,)).fetchone()
+        # Wrap on the way OUT as well as on the way in, so a stored value that somehow got out of
+        # range (a hand-edited row, an older build) can never reach the engine and crash a set.
+        current = (int(row["next_index"]) if row else 0) % SET_INDEX_WRAP
+        c.execute("INSERT INTO set_counters (user_id, next_index) VALUES (?,?) "
+                  "ON CONFLICT(user_id) DO UPDATE SET next_index=excluded.next_index",
+                  (user_id, (current + 1) % SET_INDEX_WRAP))
+        c.commit()
+        return current
 
 
 def new_grind(*, user_id: int, user_name: str, pairs: list, created_at: str,

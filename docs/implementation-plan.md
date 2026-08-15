@@ -2,6 +2,22 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-15 (THE SET SHUFFLE WAS NEVER RESHUFFLED IN DISCORD - fixed; everything brought live; branch `fix/discord-set-variety`; NO dangerous surface touched).**
+
+**FOUND BY READING THE CODE THE FOUNDER ASKED ABOUT, NOT BY A TEST.** The founder asked whether the rule randomness (1/3/4) actually works. Inside one grind it does - measured over ~9,000 generated sets: all three styles in every set of 3, never the same style back-to-back in a set of 5, all 6/18 orderings used evenly. **But `bot.py` sent `set_index=0` hard-coded**, and that number is the only thing that varies a person's consecutive sets. So every multi-pair grind that person ever built came out in the same style order.
+
+**AND A SECOND, LARGER BUG FELL OUT OF THE SAME LINE: 🔁 Again on a multi-song grind was a no-op.** A set's cache id is built from its pairs and their rules; identical rules meant an identical id, so the engine served the byte-identical file back as a "new take". Nothing errored, and no test saw it - the only test mentioning `set_index` checks that the API client forwards the number it is handed, never what the bot hands over.
+
+**Shipped:** `store.set_counters` + `store.next_set_index()` (claimed per BUILD, so Again gets a fresh one), the `start_set` call site, `tests/test_set_variety.py` (9, all red first - the two call-site cases failing with `[0, 0]`), and read-only `scripts/command_probe.py`. **Bot suite 451/1 -> 460/1.**
+
+**A CEILING NOBODY KNEW WAS THERE, MEASURED.** `rule_shuffle._resolved_set_base` recurses from the given index down to 0: **900 works, 1200 raises RecursionError** and the set fails to build. The new counter therefore wraps at 512, on read as well as write. **The WEB app has the same exposure and is NOT fixed** - `takeNextSetIndex()` grows without bound, so a browser reaching ~1000 sets would fail every set from then on, permanently. Reported to the founder as a separate call (cap the caller, or make the engine iterative); deliberately not folded into this change's scope.
+
+**BROUGHT LIVE (all measured, nothing assumed):** engine on 8000 serving 112 songs; web app rebuilt and served; dev dashboard `/admin/*` all 200; Grinder logged in as `Grinder#7345` with **9 commands registered and visibility correct** (`/setup`, `/invitefriend`, `/applications` hidden; 6 visible) confirmed by asking Discord, not by reading `Member.status`; **extra voice #1 online**, so two rooms can have sound at once; 9 channels intact, `/setup` never run. **First real listen since the 227 marks were wired** - two 3-pair sets rendered `ready` and were handed to the founder.
+
+**NOT DONE, by explicit founder decision:** pre-warming the pair caches for sub-30s first-time mixes. **NOT DONE, blocked on the founder:** the public ngrok link (publishing the machine to the internet needs their go-ahead).
+
+**DRIFT NOTE - the dev dashboard's failure count is still partly fiction, and I added to it.** Of 248 events, 37 are synthetic (test fixtures, profiling, and my own 8 verification rows). **Real user failures: 17, the most recent 2026-08-12** - none in three days. The dashboard shows 34.
+
 ## Status: **LATEST 2026-08-15 (SESSION CLOSED - everything merged, nothing outstanding).** PRs #52, #54 and #55 are all merged; `git log origin/main..HEAD` is **empty**.
 
 **WHAT THIS SESSION ACTUALLY DID.** Catalog **33 -> 112 songs**. The founder's marking sheet reached the app for the first time: **40 of 410 marks were wired, now 267**. The Discord server was made fit for real strangers - moderator commands hidden, grinding kept out of the showcase, notice channels read-only, the welcome copy fixed, three empty rooms deleted. A full hygiene audit ran and came back clean.
