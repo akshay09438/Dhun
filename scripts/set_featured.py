@@ -76,6 +76,15 @@ PINNED: set[str] = {
     # fourth round: the founder wanted Confusion back. It was in the catalog all along, just pushed
     # off the 25 by earlier pins - six beats had piled up at 120 BPM.
     "Confusion",
+    # fifth round, 2026-08-16: Blinding Lights takes Bad Guy's place, the founder's explicit call.
+    # IT HAS TO BE PINNED because the ranking would never reach it, and the numbers are worth
+    # recording rather than rediscovering: at 171 BPM it blends cleanly with 6 of the 25 beats on
+    # show, LAST of the 23 English vocals available, against Bad Guy's 18. Nothing is refused - the
+    # forced band covers it - but most of its pairs are stretched past the safe window. The founder
+    # was shown that and chose it anyway, which is exactly what this override is for: recognisability
+    # is a real quality the tempo maths cannot see. It is fully marked (two drops and a hook at
+    # 84.57-106.72), so it lands its signature line rather than falling back to song order.
+    "Blinding Lights",
 }
 BANNED: set[str] = {
     # vocals dropped by the founder
@@ -93,6 +102,11 @@ BANNED: set[str] = {
     "BIRDS OF A FEATHER",
     # fourth round: made room for Confusion
     "Faded",
+    # fifth round, 2026-08-16: founder pulled it - "that song is just trouble every time". Its
+    # record was 13 mixes, 11 fine, 2 failed, and it blended cleanly with 18 of the 25 beats, so
+    # this is a taste call rather than a fault. Banned, never deleted: the separated parts were
+    # paid for and stay on disk, so putting it back is one line and no money.
+    "Bad Guy",
 }
 
 

@@ -25,8 +25,10 @@ from discord import app_commands
 
 import board
 import brand
+import deliver
 import editbudget
 import media
+import recall
 import server_setup
 import door
 import showcase
@@ -388,6 +390,22 @@ def _name_of(song_id: str) -> str:
     return "song"
 
 
+async def _attachment_for(wav: Path, number: int | None) -> discord.File | None:
+    """Transcode at the best bitrate that still fits Discord's limit, so a long grind always
+    attaches something audible rather than nothing.
+
+    MODULE-LEVEL, not a method, because two places now hand a mix to somebody: a grind finishing,
+    and `/mygrinds` giving one back. Two copies of this ladder would drift, and the copy nobody is
+    watching is the one that eventually hands over a file Discord refuses."""
+    wav = Path(wav)
+    mp3 = wav.with_suffix(".mp3")
+    for br in ("160k", "128k", "96k", "64k"):
+        await media.to_mp3(wav, mp3, bitrate=br)
+        if mp3.stat().st_size <= CLIP_SIZE_LIMIT_BYTES:
+            return discord.File(str(mp3), filename=f"grind-{number}.mp3")
+    return None
+
+
 def _error_embed(msg: str) -> discord.Embed:
     return ui.error_embed(msg)
 
@@ -521,15 +539,21 @@ class GrindContext:
                 # same two songs handing back the first one's file (grinds #28/#29/#30 were the
                 # identical mix because the position always restarted at 0). 🔁 Again comes through
                 # here too, so it advances by the same mechanism. See store.next_grind_position.
-                generation = store.next_grind_position(self.owner_id, a, b)
+                generation = store.next_grind_position(self.owner_id, a, b, exclude=self.number)
                 mix_id = await bot.api.start_mix(a, b, self.user_id, generation,
                                                  user_name=self.user_name)
+                # WRITTEN NOW, NOT WHEN IT FINISHES. Aashwin's second mix was orphaned because this
+                # id sat in a local variable for the whole 50-70 second render: the bot was killed
+                # at 20:28:45 and the engine finished the mix at 20:28:49, so a perfectly good
+                # render ended up with nothing in the database pointing at it. Recorded here, any
+                # restart mid-render leaves a row `/mygrinds` can recover from.
+                self.ref_id = mix_id
+                store.set_pairs(self.number, self._store_pairs(), ref_id=mix_id)
                 res = await bot.api.wait_for_mix(mix_id, on_progress=self._on_progress)
                 if res.status != "ready":
                     await self._fail(res.message or "That pair did not come out. Try another.")
                     return None
                 await bot.api.fetch_audio(mix_id, wav)
-                store.set_pairs(self.number, self._store_pairs(), ref_id=mix_id)
             else:
                 # A FRESH ordinal per build. The engine seeds a set's rule order from
                 # (user_id, set_index), so this is what stops every set this person builds coming
@@ -538,13 +562,15 @@ class GrindContext:
                 set_id = await bot.api.start_set(self.pairs, self.user_id,
                                                  set_index=store.next_set_index(self.owner_id),
                                                  user_name=self.user_name)
+                # Same as the single-mix path above, and it matters more here: a set renders
+                # several mixes and then joins them, so its orphan window is the wider one.
+                self.ref_id = set_id
+                store.set_pairs(self.number, self._store_pairs(), ref_id=set_id)
                 res = await bot.api.wait_for_set(set_id, on_progress=self._on_progress)
                 if res.status != "ready":
                     await self._fail(res.message or "That did not come out. Try another pair.")
                     return None
                 await bot.api.fetch_set_audio(set_id, wav)
-                store.set_pairs(self.number, self._store_pairs(), ref_id=set_id)
-                self.ref_id = set_id
                 # A set is ONE continuous file. `seam_at` is where each member's crossfade begins,
                 # which is what a listener hears as "the next track" - so /skip can move BETWEEN
                 # the five instead of only abandoning all of them. Some members legitimately have
@@ -580,14 +606,7 @@ class GrindContext:
         return None
 
     async def _attach(self, wav: Path) -> discord.File | None:
-        """Transcode at the best bitrate that still fits Discord's limit, so a long grind always
-        attaches something audible rather than nothing."""
-        mp3 = wav.with_suffix(".mp3")
-        for br in ("160k", "128k", "96k", "64k"):
-            await media.to_mp3(wav, mp3, bitrate=br)
-            if mp3.stat().st_size <= CLIP_SIZE_LIMIT_BYTES:
-                return discord.File(str(mp3), filename=f"grind-{self.number}.mp3")
-        return None
+        return await _attachment_for(wav, self.number)
 
     async def run(self, *, first: bool) -> None:
         await self._post_submit_card(first=first)
@@ -599,6 +618,21 @@ class GrindContext:
         self.duration = secs
 
         clip = await self._attach(wav)
+
+        # HAND IT OVER SOMEWHERE DISCORD KEEPS IT, before the card is finalised so the card can say
+        # what happened. The card itself is ephemeral - Discord stores it nowhere and deletes it the
+        # moment this person reloads - so a mix that only ever lands here is a mix they will lose.
+        # See deliver.py. This can never raise, and the belt-and-braces catch is here because a
+        # rendered mix must not be lost in the act of being given away.
+        note = ""
+        try:
+            _sent, note = await deliver.to_the_maker(
+                self.interaction.user, self.number, wav,
+                lambda w: _attachment_for(w, self.number))
+        except Exception:  # noqa: BLE001
+            log.warning("grind #%s: handing the mix over failed outright", self.number,
+                        exc_info=True)
+
         embed = ui.grind_embed(number=self.number, user=self.interaction.user,
                                pairs=self.named_pairs(), total_secs=secs)
         if clip is None:
@@ -606,6 +640,8 @@ class GrindContext:
                 name="Too long to attach",
                 value="Play it in 🔊 The Booth, or hit ✅ Done and start a fresh one.",
                 inline=False)
+        if note:
+            embed.add_field(name="​", value=note, inline=False)
         if self.message is None:
             return
         await self.message.edit(embed=embed,
@@ -754,6 +790,72 @@ class GrindView(discord.ui.View):
             return
         await interaction.response.defer(ephemeral=True)
         await interaction.followup.send(await showcase.pin(ctx, interaction), ephemeral=True)
+
+
+class _GrindPicker(discord.ui.Select):
+    """The dropdown on `/mygrinds`. Capped at Discord's 25, which is well past the 10 rows the
+    command lists anyway."""
+
+    def __init__(self, rows) -> None:
+        options = [
+            discord.SelectOption(label=f"#{r['number']}  {recall.label_of(r)}"[:100],
+                                 value=str(r["number"]))
+            for r in rows[:25]]
+        super().__init__(placeholder="Send one of these back to me…",
+                         min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await self.view.hand_back(interaction, int(self.values[0]))
+
+
+class MyGrindsView(discord.ui.View):
+    """The drawer behind the counter — pick a past grind and get the file again.
+
+    WHY THIS EXISTS (measured 2026-08-16): a grind card is ephemeral, so Discord deletes it the
+    moment its owner reloads, taking the attached MP3 with it. 23 of the 38 grinds ever made could
+    no longer be played by anybody, `/mygrinds` listed them by name with no way to hear one, and
+    🔁 Again deliberately makes a DIFFERENT take rather than the one that was lost. A stranger's
+    whole first experience could be watching a mix arrive and then never seeing it again.
+
+    Nothing new is stored. The engine keeps every render for seven days and the row already has its
+    `ref_id`, so this just asks for it again — and asking re-stamps it as recently used, which moves
+    it to the back of the eviction queue rather than leaving it next to go.
+    """
+
+    def __init__(self, rows) -> None:
+        super().__init__(timeout=600)
+        rows = list(rows or [])
+        # NO DROPDOWN WHEN THERE IS NOTHING IN IT. Discord rejects a select with zero options, so
+        # attaching one regardless would make `/mygrinds` fail outright for every brand-new person
+        # — the exact moment the command matters least and a crash costs most.
+        if rows:
+            self.add_item(_GrindPicker(rows))
+
+    async def hand_back(self, interaction: discord.Interaction, number: int) -> None:
+        row = store.get(number)
+        # The owner comes from the STORED row, never from whoever pressed — the same rule the grind
+        # card follows. These are private mixes; handing one to the wrong person would undo exactly
+        # the privacy the ephemeral card is there to give.
+        if row is None or row["user_id"] != interaction.user.id:
+            await self._say(interaction, "That is not one of yours.")
+            return
+
+        if not interaction.response.is_done():
+            await interaction.response.defer(ephemeral=True)
+
+        clip, said = await recall.recovered_file(
+            row, bot.api, lambda w: _attachment_for(w, number))
+        if clip is None:
+            await interaction.followup.send(said, ephemeral=True)
+        else:
+            await interaction.followup.send(said, file=clip, ephemeral=True)
+
+    @staticmethod
+    async def _say(interaction: discord.Interaction, msg: str) -> None:
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
 
 
 # --------------------------------------------------------------------------------------
@@ -992,10 +1094,13 @@ def _is_showcase(channel) -> bool:
 def _grinding_allowed_here(interaction: discord.Interaction) -> str | None:
     """None if `/grind` may run here, otherwise the sentence to send back.
 
-    Grinding is confined to the grind category on purpose (founder, 2026-08-11). The whole point is
-    that generation happens in public, in the same few channels, where people scroll past what
-    everyone else is throwing together. Allowed anywhere, it scatters across the server and nobody
-    sees anyone else's - at which point being in a server buys you nothing over using the app alone.
+    Grinding is confined to the grind category on purpose (founder, 2026-08-11). The ORIGINAL reason
+    was that generation happened in public where people scrolled past each other's work - that
+    stopped being true on 2026-08-15 when grinds became private, and the refusal went on saying it
+    for a day ("out in the open, so you can see what other people are throwing together"), which is
+    a promise the product no longer keeps. The confinement still earns its place for a different
+    reason: it keeps `/grind` out of the showcase and the talking rooms, which are there to be
+    scrolled and read rather than worked in.
 
     Sitting in one of the listening rooms also counts, because Discord treats a voice channel's
     built-in chat as its own channel and somebody in a room should not have to leave it to grind.
@@ -1025,8 +1130,7 @@ def _grinding_allowed_here(interaction: discord.Interaction) -> str | None:
                        or getattr(c, "category_id", None)) == CFG.grind_category_id
                    and not _is_showcase(c)]
     where = " or ".join(allowed) if allowed else "the grind channels"
-    return (f"Not here. Everyone grinds in {where}, out in the open, so you can see what other "
-            f"people are throwing together.\n"
+    return (f"Not here. Grinding happens in {where}.\n"
             f"You can also grind from inside a listening room while the music is on.")
 
 
@@ -1161,16 +1265,17 @@ def _grind_link(row) -> str | None:
 
 @bot.tree.command(name="mygrinds", description="Everything you have made.")
 async def mygrinds_cmd(interaction: discord.Interaction) -> None:
-    rows = []
-    for r in store.recent_for_user(interaction.user.id, limit=10):
-        pairs = json.loads(r["pairs"])
-        label = (f"{pairs[0][2]} x {pairs[0][3]}" if len(pairs) == 1
-                 else f"long grind, {len(pairs)} tracks")
-        rows.append((r["number"], label, _grind_link(r)))
+    raw = store.recent_for_user(interaction.user.id, limit=10)
+    rows = [(r["number"], recall.label_of(r), _grind_link(r)) for r in raw]
+    # THE DRAWER. Listing what somebody made while giving them no way to hear any of it was the
+    # single biggest hole in the product on 2026-08-16 — 23 of 38 grinds were unreachable and the
+    # list was the only place that admitted they had ever existed.
+    view = MyGrindsView(raw)
+    extra = {"view": view} if view.children else {}
     await interaction.response.send_message(
         embed=ui.mygrinds_embed(user=interaction.user,
                                 total=store.count_for_user(interaction.user.id), rows=rows),
-        ephemeral=True)
+        ephemeral=True, **extra)
 
 
 @bot.tree.command(name="play", description="Start the music in your listening room, or pick up where you stopped.")

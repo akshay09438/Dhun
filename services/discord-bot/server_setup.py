@@ -75,11 +75,11 @@ STRUCTURE: tuple[CategorySpec, ...] = (
         # is that generation happens in one place where strangers watch each other work - scatter
         # it across channels and nobody sees anyone else's, which kills the only reason to be in a
         # server rather than using the app alone.
-        ChannelSpec("the-grinder", "type /grind here. everyone grinds in the open."),
+        ChannelSpec("the-grinder", "type /grind here. your mix comes back to you."),
         # The curated half. The grinder is everything: the wins, the disasters, the noise.
-        # Fresh-grinds is the highlight reel, filled by anyone hitting 📌 on a card. Failures are
+        # Fresh-grinds is the highlight reel, filled by anyone pressing 📣 on a card. Failures are
         # entertaining but you still want somewhere to send a newcomer.
-        ChannelSpec("fresh-grinds", "the ones worth keeping. carried up with 📌."),
+        ChannelSpec("fresh-grinds", "the ones worth keeping. carried up with 📣."),
         ChannelSpec("the-booth", voice=True, display="The Booth"),
     )),
     CategorySpec("💬 TALK", (
@@ -494,8 +494,13 @@ def welcome_embeds(guild: discord.Guild, links: Links | None = None) -> list[dis
             "You pick a beat. You pick a vocal.\n"
             "It works out the rest.\n\n"
             f"**Go to {grind} and type `/grind`**\n\n"
-            "React 🔥 💀 😐 to anything you hear.\n"
-            f"Hit 📌 to send the good ones to {showcase}.\n\n"
+            # WHAT ACTUALLY HAPPENS NOW. This said "React 🔥 💀 😐 to anything you hear. Hit 📌 to
+            # send the good ones to {showcase}" - two instructions a newcomer cannot follow: a
+            # grind card is private, Discord refuses reactions on one, and the button was renamed
+            # 📣 "Show this mix to everyone" the same day.
+            "Your mix comes back to you, and only you.\n"
+            f"Press 📣 **Show this mix to everyone** to put one in {showcase} - "
+            "that is where 🔥 💀 😐 happen.\n\n"
             # Founder's own words, 2026-08-13. It sits LAST, after the instructions rather than
             # before them: leading with "do not expect perfection" tells somebody what to think
             # before they have heard anything, which is the same reason no card ever rates a mix.
@@ -552,12 +557,12 @@ def channel_copy(links: Links | None = None) -> dict[str, tuple[str, str]]:
             "in the rooms.")),
         GRIND_CHANNEL: ("this is where it happens.", (
             "Type `/grind` right here.\n\n"
-            "Everyone grinds in the open, on purpose. You see what other people are throwing "
-            "together, which is the fastest way to learn what works.\n\n"
-            "React 🔥 💀 😐 to theirs. Steal their ideas, that is allowed.\n\n"
+            "Your mix comes back to you privately. Nobody else sees it unless you press "
+            "📣 **Show this mix to everyone**.\n\n"
+            "Lost one? **/mygrinds** will send it back to you.\n\n"
             "Grinding while you sit in a voice room plays it out loud to everyone in there.")),
         SHOWCASE_CHANNEL: ("the ones worth keeping.", (
-            f"Hit 📌 on any grind in {grind} and it lands here.\n\n"
+            f"Press 📣 **Show this mix to everyone** on any grind in {grind} and it lands here.\n\n"
             "The good stuff, and the legendary disasters. Both count.\n\n"
             "Scroll it when you need ideas.")),
         "general": ("no agenda here.", (

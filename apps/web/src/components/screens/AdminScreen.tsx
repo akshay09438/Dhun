@@ -467,6 +467,22 @@ function EventRow({
   );
 }
 
+/** The rows in People that are actually PEOPLE.
+ *
+ * Founder, 2026-08-15: "When I go to People, I should see one tab for Aashwin, one for DICTATOR.
+ * That's it." The list had become mostly not-people — load-test fixtures (`u0`…`u9`), this agent's
+ * own verification runs (`experiment`, `liveness`, `hygiene-…`, `speed-probe`, `profiler`), raw
+ * browser device uuids, `(no id)` rows from before ids were recorded, and `aaaa…`/`bbbb…` test
+ * fixtures. Against 5 genuinely named people that is a list nobody can read.
+ *
+ * The line is drawn at "the app can say who this is" — a Discord display name. It HIDES rows, never
+ * deletes anything: every count elsewhere on the page still includes them, and the panel says how
+ * many are hidden, because an ops tool that quietly drops data is worse than a cluttered one.
+ */
+export function realPeople(devices: OpsDevice[]): OpsDevice[] {
+  return devices.filter((d) => Boolean(d.user_name && d.user_name.trim()));
+}
+
 function DevicesView({
   devices,
   retention,
@@ -479,6 +495,8 @@ function DevicesView({
   if (devices.length === 0) {
     return <div className={styles.state}>No devices yet.</div>;
   }
+  const people = realPeople(devices);
+  const hidden = devices.length - people.length;
   return (
     <>
       {retention && (
@@ -498,7 +516,7 @@ function DevicesView({
         </div>
       )}
       <div className={styles.list} data-testid="device-list">
-        {devices.map((d) => (
+        {people.map((d) => (
           <button
             key={d.user_id}
             className={styles.devRow}
@@ -542,7 +560,22 @@ function DevicesView({
           </button>
         ))}
       </div>
+      {people.length === 0 && (
+        <div className={styles.state} data-testid="no-named-people">
+          Nobody named has used it yet.
+        </div>
+      )}
       <p className={styles.retentionNote}>
+        Only people the app can name are listed — that means a Discord account.
+        {hidden > 0 && (
+          <>
+            {" "}
+            <b data-testid="hidden-count">{hidden}</b> untagged{" "}
+            {hidden === 1 ? "row is" : "rows are"} hidden here (load tests,
+            checks, and browsers from before ids were recorded). They are still
+            counted in every total on this page.
+          </>
+        )}{" "}
         Discord rows are real accounts, so those are solid. Web rows count a
         saved browser tag, not a verified person — the same human on a phone and
         a laptop reads as two, and cleared storage reads as new. Directional

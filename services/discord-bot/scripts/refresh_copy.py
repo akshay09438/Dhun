@@ -21,6 +21,17 @@ import asyncio
 import sys
 from pathlib import Path
 
+# The founder's machine is Windows, where the console defaults to a codepage that cannot print
+# anything outside Latin-1. `server_status.py` already carries this guard, and this script needed it
+# just as badly: the moment the copy gained a 📣 the preview stopped dead half way through
+# #read-this-first, exit code 0, no traceback. A REVIEW TOOL THAT SILENTLY TRUNCATES is worse than
+# no preview at all - the rooms it stops before are the ones nobody reads before pressing --apply.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")   # type: ignore[union-attr]
+    except Exception:                                # noqa: BLE001 - best effort, never fatal
+        pass
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import discord                                     # noqa: E402
