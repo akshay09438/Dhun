@@ -169,6 +169,21 @@ const DEVICES = [
     user_name: "akshay09",
   },
   {
+    // a SECOND named person, so "busiest-first" is still compared between two rows that are
+    // actually listed (the unnamed web row below no longer is — see realPeople)
+    user_id: "dev-3",
+    total: 1,
+    failed: 0,
+    degraded: 0,
+    first_at: "2026-08-07T11:00:00",
+    last_at: "2026-08-07T11:00:00",
+    first_day: "2026-08-07",
+    last_day: "2026-08-07",
+    active_days: 1,
+    source: "discord",
+    user_name: "Aashwin",
+  },
+  {
     user_id: "dev-1",
     total: 1,
     failed: 0,
@@ -305,10 +320,13 @@ test("the 'people' view lists people busiest-first", async () => {
   // operator nothing. Its raw id is still the key; only the label changed.
   expect(within(devList).getByText("akshay09")).toBeTruthy();
   expect(within(devList).getByText("2 made")).toBeTruthy();
-  // ordering is still the point of this test: busiest (2 made) before quieter (1 made)
+  // Ordering is still the point of this test. Both rows compared here are NAMED people, because
+  // since 2026-08-15 the list shows only people the app can name — so the fixture carries a second
+  // named person (dev-3) rather than relying on the unnamed web row, which is no longer listed.
   const rows = within(devList).getAllByRole("button");
   expect(rows[0].textContent).toContain("2 made");
   expect(rows[1].textContent).toContain("1 made");
+  expect(rows[1].textContent).toContain("Aashwin");
 });
 
 test("the 'by device' view shows the retention strip and a returning badge", async () => {
@@ -478,9 +496,14 @@ test("the person page can be backed out of, returning to the people list", async
   expect(await screen.findByTestId("device-list")).toBeTruthy();
 });
 
-test("a device with no id cannot be opened (there is no one to show)", async () => {
-  // Rows recorded before ids existed group under "(no id)" — that is several people pooled, so
-  // opening it would show a meaningless merged page. It must be inert rather than misleading.
+test("a row that is not a person is not listed at all (there is no one to show)", async () => {
+  // STRONGER than what this used to check. It used to assert the "(no id)" row rendered but was
+  // disabled — inert rather than misleading. Since 2026-08-15 the People list shows only rows the
+  // app can NAME, so such a row is not offered in the first place, and the panel says how many are
+  // hidden. Founder: "I should see one tab for Aashwin, one for DICTATOR. That's it."
+  //
+  // The point being defended is unchanged — you can never open something that is not a person —
+  // and it is now enforced by absence, which no styling or disabled-state change can erode.
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
@@ -507,10 +530,29 @@ test("a device with no id cannot be opened (there is no one to show)", async () 
   render(<AdminScreen />);
   await screen.findByTestId("event-list");
   fireEvent.click(screen.getByRole("tab", { name: "People" }));
-  const rows = within(await screen.findByTestId("device-list")).getAllByRole(
-    "button",
-  );
-  expect((rows[0] as HTMLButtonElement).disabled).toBe(true);
+  const list = await screen.findByTestId("device-list");
+  expect(within(list).queryAllByRole("button")).toHaveLength(0);
+  // and it says so, rather than showing an empty box with no explanation
+  expect(screen.getByTestId("no-named-people")).toBeTruthy();
+  expect(screen.getByTestId("hidden-count").textContent).toBe("1");
+});
+
+test("the People list shows only people the app can name, and admits what it hid", async () => {
+  // THE BUG THIS PINS. The list filled with load-test fixtures (u0…u9), the agent's own
+  // verification runs (experiment, liveness, hygiene-…, speed-probe) and raw browser device ids —
+  // 24 of them against 5 real people on the live server, which is a list nobody can read.
+  // Hiding is the fix; hiding SILENTLY would be worse, so the count has to be visible.
+  stubApi();
+  render(<AdminScreen />);
+  await screen.findByTestId("event-list");
+  fireEvent.click(screen.getByRole("tab", { name: "People" }));
+  const list = await screen.findByTestId("device-list");
+
+  const rows = within(list).getAllByRole("button");
+  expect(rows).toHaveLength(2); // akshay09 and Aashwin — the unnamed web row is not offered
+  expect(rows.every((r) => !/dev-1/.test(r.textContent ?? ""))).toBe(true);
+  // nothing is deleted: the page still admits the hidden row exists
+  expect(screen.getByTestId("hidden-count").textContent).toBe("1");
 });
 
 test("the ranked 'what is breaking' panel appears on Overview", async () => {
