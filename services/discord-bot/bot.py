@@ -494,7 +494,13 @@ class GrindContext:
         try:
             if len(self.pairs) == 1:
                 a, b = self.pairs[0]
-                mix_id = await bot.api.start_mix(a, b, self.user_id, self.generation,
+                # A FRESH POSITION in this person's order for THIS pair, every build. The position
+                # picks both the style and the take, so this is what stops a second `/grind` of the
+                # same two songs handing back the first one's file (grinds #28/#29/#30 were the
+                # identical mix because the position always restarted at 0). 🔁 Again comes through
+                # here too, so it advances by the same mechanism. See store.next_grind_position.
+                generation = store.next_grind_position(self.owner_id, a, b)
+                mix_id = await bot.api.start_mix(a, b, self.user_id, generation,
                                                  user_name=self.user_name)
                 res = await bot.api.wait_for_mix(mix_id, on_progress=self._on_progress)
                 if res.status != "ready":
@@ -626,7 +632,9 @@ class GrindView(discord.ui.View):
         if not await self._owner_only(interaction):
             return
         await interaction.response.defer()
-        self.ctx.generation += 1
+        # No manual bump: the render claims the next position for this pair itself (see _render),
+        # so Again and a fresh `/grind` advance by exactly ONE mechanism. Incrementing here as well
+        # would move the person two steps and silently skip a take.
         await self.ctx.run(first=False)
 
     @discord.ui.button(label="Pin it", emoji="📌",
