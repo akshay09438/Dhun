@@ -2,6 +2,16 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-15 (PRE-LAUNCH HYGIENE CHECK - CLEAN; server reset for real users; branch `fix/vouch-invite-lands-inside`).**
+
+**FULL SWEEP, EVERYTHING MEASURED.** Backend **838**, bot **467/1 skipped**, web **78**, typecheck + lint clean. All eight dangerous surfaces **UNTOUCHED** against `origin/main`. `.env` untracked, no token-shaped string committed. Catalog **112/112 complete** (master + 4 stems + analysis). All nine engine endpoints 200. **A real mix built end-to-end in 34.1s and its audio downloaded.** Nine Discord commands registered with correct hidden/visible split. **Voice measured per identity: BOTH the main Grinder and extra voice #1 have view + connect + speak on BOTH listening rooms.** A newcomer with no roles lands on `#read-this-first`.
+
+**SERVER RESET FOR LAUNCH.** New `scripts/clear_channels.py` (dry-run default, exact-name matching, hard `NEVER_TOUCH` block on `#best-mixes` and `#read-this-first`, reports the under/over-14-days split because Discord bulk-delete only reaches 14 days). Cleared **73 messages from `#get-shit-done` and 1 from `#general`**, keeping each room's intro post at the founder's decision - a blank room tells a newcomer nothing. **`#best-mixes` untouched: 5 messages, 3 mixes (GRIND #9, #20, #23).** Verified by an INDEPENDENT re-read, not the deleting script.
+
+**GIT: NOTHING STRANDED.** The founder had already merged the set-counter PR. Everything since is committed and pushed; one PR remains to open. Local `main` is 32 behind `origin/main` (a stale local ref, harmless). The two branches reporting "unpushed" carry only old merge commits from PRs #2/#3/#13.
+
+**THREE THINGS FOUND, NONE BLOCKING:** (1) **free disk 6.15 GB**, just above the 6 GB line where the janitor starts clearing finished mixes - today's verification renders are most of the cost; pinned mixes are protected. (2) **The bot test suite still writes into the LIVE `logs/grinder.log`** - it produced a phantom "extra voice cannot see Hollywood_Blends" line that cost real time today before a proper per-identity probe disproved it. The log is not trustworthy evidence until this is isolated. (3) The dev dashboard still reports **34 failures where only 17 are real user failures, none since 2026-08-12.**
+
 ## Status: **LATEST 2026-08-15 (THE DOOR IS REMOVED - Grinder is a normal open server; branch `fix/vouch-invite-lands-inside`; `.env` edited under recorded approval).**
 
 **FOUNDER REVERSED THE WHOLE DOOR FEATURE:** "remove the lobby/door everything - normal open to all discord server, as they enter the server, the first thing they see is the read-this-first channel." The door, built 2026-08-13 and extended 2026-08-14, is off.
