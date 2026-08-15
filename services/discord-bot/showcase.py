@@ -46,7 +46,21 @@ async def pin(ctx, interaction: discord.Interaction) -> str:
         # Re-attach the audio rather than linking back: a link makes people leave the channel,
         # and the showcase is meant to be scrollable and listenable on its own.
         clip = await ctx._attach(ctx.audio_path)
-        await channel.send(embed=embed, files=[clip] if clip else [])
+        posted = await channel.send(embed=embed, files=[clip] if clip else [])
+        # THE REACTION SIGNAL LIVES HERE NOW (2026-08-15). A grind card is private to its maker, and
+        # Discord will not put reactions on a private message, so this public copy is the only place
+        # 🔥 💀 😐 can exist. Point the grind's message id at it as well, because the bot finds a
+        # grind FROM the message that was reacted to - without this every reaction on a shared mix
+        # would be silently discarded. Best-effort: a mix that is up but unreactable is a nuisance,
+        # a pin that half-failed after posting would be worse.
+        try:
+            if posted is not None:
+                store.attach_showcase_message(ctx.number, posted.id,
+                                              channel_id=getattr(channel, "id", None))
+                for emoji in ui.REACTIONS:
+                    await posted.add_reaction(emoji)
+        except Exception:  # noqa: BLE001
+            log.warning("could not set up reactions on the showcase post", exc_info=True)
     except discord.Forbidden:
         store.mark_unpinned(ctx.number)
         return f"I cannot post in {channel.mention}. An admin needs to let me in."

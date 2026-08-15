@@ -2,6 +2,30 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-15 (THE GRIND BOARD - the empty room gets a pulse; branch `feat/private-grinds`; NO dangerous surface touched).**
+
+The mitigation offered when private grinds were built, and then asked for: one standing line in `#get-shit-done` saying how many people are grinding right now.
+
+**Shipped:** new `board.py` (live set + throttled refresh), `store.channel_boards` + `counts_today()`, `ui.board_embed`, wired at both ends of `_render` (with `finished()` in a `finally`) and at `on_ready`. `tests/test_grind_board.py` (12, red first). **Bot suite 489/1 -> 500/1.** Live: `board: posted a new one in get-shit-done (live=0, today=15)`.
+
+**THE OLD BUG IS DESIGNED OUT.** The deleted "Nobody is listening" card kept its handle in memory, so every restart posted another one. This board's id is in the database and a restart edits the same message - pinned by a test that simulates a restart and fails if a second board appears.
+
+**IT NEVER ANNOUNCES AN EMPTY ROOM,** for the same reason that card was judged nagging: a grind lasts under a minute, so a live-only count would read 0 nearly always. With nobody grinding it shows what the room has made today.
+
+**A REAL RACE FOUND BY RUNNING IT, not by reading it.** On the 20:29 restart `get_channel` returned None at `on_ready` and the board silently never appeared; the next restart worked. Discord's channel cache is not guaranteed ready there. `board.channel_for` now falls back to a real fetch, and the silent path logs - a sign that quietly does nothing is the hardest thing to notice is broken. **Found only because the board was checked against the live server rather than trusted because its tests were green.**
+
+## Status: **LATEST 2026-08-15 (PRIVATE GRINDS - the workshop and the gallery are separated; branch `feat/private-grinds`; NO dangerous surface touched).**
+
+**A PRODUCT DECISION, not a bug fix.** The founder watched `#get-shit-done` fill with finished music and judged that newcomers would consume rather than create. Three options were put up (private/ephemeral, a thread each, or public-but-self-clearing) with the trade-offs; the founder chose **private**, and renamed the share button because "pin is a very vague, usable thing for where to pin".
+
+**Shipped:** the grind card AND the song picker are `ephemeral=True`; `📌 Pin it` -> `📣 Show this mix to everyone`; reactions relocated to the showcase post (`store.attach_showcase_message`, `by_message` matching either column); new `bot._grind_link` so `/mygrinds` never offers a link that goes nowhere. `tests/test_private_grinds.py` (8, red first). **Bot suite 481/1 -> 489/1.**
+
+**TWO THINGS THE TESTS CAUGHT MID-BUILD.** (1) Reusing `message_id` for the showcase post would have paired a showcase message with the grind's own channel and produced dead `/mygrinds` links - fixed with dedicated columns. (2) The picker was still public, so the room would have filled with everybody's song-choosing instead of their music - the same overwhelm one step earlier.
+
+**KNOWN PLATFORM LIMITS, ACCEPTED WITH THE DECISION:** an ephemeral card vanishes on a Discord reload, has no shareable link, and its buttons expire after ~15 minutes. Discord also refuses reactions on ephemeral messages outright - which is why the reaction signal had to be moved rather than kept.
+
+**A RISK THE FOUNDER WAS TOLD ABOUT AND ACCEPTED:** this reverses the earlier deliberate decision that grinding stays public "so generation stays public where people can see each other work", and Midjourney - this product's stated model - drives creation precisely through a public firehose. `#get-shit-done` will now look empty, which the door design itself calls the worst thing for a new community. A one-line "N people are grinding right now" presence marker was offered as mitigation and NOT built, since it was not asked for.
+
 ## Status: **LATEST 2026-08-15 (POST-LAUNCH FIX: a fresh `/grind` now advances; branch `fix/grind-advances-position`; NO dangerous surface touched).**
 
 **FOUND IN REAL USER DATA, HOURS AFTER LAUNCH.** Grinds #28 (real user DICTAT⌀R), #29 and #30 (founder) were all One Dance x Old Town Road and all three were the IDENTICAL file. The engine built it once; the other two wrote no event at all - pure cache hits. So every pair of songs had exactly ONE mix in the whole system, for that person, forever.
