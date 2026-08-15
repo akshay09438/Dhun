@@ -2,6 +2,22 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-15 (LAUNCHED - Grinder is open to real users; branch `docs/handoff-2026-08-15-launch`).**
+
+**THE SERVER IS LIVE.** A permanent invite (`https://discord.gg/WJ9b78hFQb`, never expires, unlimited uses) lands anyone on `#read-this-first`. No form, no lobby, no approval. Everything from this session is merged to `origin/main`; `git log origin/main..HEAD` is empty.
+
+**Where the milestone stands:** the Discord surface is DONE for validation purposes - catalog, picker, grinding, sets, reactions, pinning, both listening rooms with sound, and a clean first-run experience. The web app and dev dashboard run locally only; the public link is deliberately OFF (founder decision - Discord is the launch surface).
+
+**Two dead invite links revoked** (they pointed at `#the-door` and `#applications`, now hidden), verified by an independent re-read. Every remaining invite lands on a channel people can actually see.
+
+**WHAT IS NOW IN FLIGHT: nothing in code.** The open work is entirely observational - watch the first real users on `/#dev`, and judge whether the mixes are any good.
+
+**THE ONE THING STILL NOT DONE, across three sessions: nobody has properly LISTENED.** 227 hand-marks drive the arranging and the founder has heard two mixes. Whether the mixes are actually good is unverified.
+
+**DRIFT NOTE - I called a fix complete when it was half a fix.** After fixing the vouch invite I reported the landing bug solved. The founder's question - "will not users land to read this first when invited?" - forced a measurement that showed the real cause was the 13 Aug server-wide lockdown, not the invite. The invite fix was necessary and nowhere near sufficient. Recorded because the failure mode is reporting completeness for the half that was touched.
+
+**DEFERRED BY EXPLICIT FOUNDER DECISION, not oversight:** pre-warming the pair caches (first-time pairs stay 50-70s, repeats ~18s); capping the web app's unbounded set counter (a browser reaching ~1000 sets would fail every set permanently); raising `OPEN_BELOW` 30 -> 40 (moot with no door); and deleting `#the-door` / `#applications` rather than hiding them.
+
 ## Status: **LATEST 2026-08-15 (PRE-LAUNCH HYGIENE CHECK - CLEAN; server reset for real users; branch `fix/vouch-invite-lands-inside`).**
 
 **FULL SWEEP, EVERYTHING MEASURED.** Backend **838**, bot **467/1 skipped**, web **78**, typecheck + lint clean. All eight dangerous surfaces **UNTOUCHED** against `origin/main`. `.env` untracked, no token-shaped string committed. Catalog **112/112 complete** (master + 4 stems + analysis). All nine engine endpoints 200. **A real mix built end-to-end in 34.1s and its audio downloaded.** Nine Discord commands registered with correct hidden/visible split. **Voice measured per identity: BOTH the main Grinder and extra voice #1 have view + connect + speak on BOTH listening rooms.** A newcomer with no roles lands on `#read-this-first`.
