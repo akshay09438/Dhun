@@ -86,7 +86,7 @@ def test_local_reanalysis_costs_zero_cloud(tmp_path, monkeypatch):
         raise AssertionError("a LOCAL re-analysis must not call the cloud")
 
     monkeypatch.setattr(an, "_cloud_structure", boom)
-    monkeypatch.setattr(an.replicate, "run", boom)
+    monkeypatch.setattr(an.replicate_client, "run", boom)
 
     result = an.analyze_track(sid, tmp_path / f"{sid}.wav")
 

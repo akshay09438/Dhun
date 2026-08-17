@@ -28,7 +28,7 @@ def test_separate_downloads_and_stores(tmp_path, monkeypatch):
         calls["n"] += 1
         return {s: _FakeFile(f"{s}-data".encode()) for s in STEMS}
 
-    monkeypatch.setattr(stems_mod.replicate, "run", fake_run)
+    monkeypatch.setattr(stems_mod.replicate_client, "run", fake_run)
     wav = tmp_path / "song.wav"
     wav.write_bytes(b"RIFFfake")
 
@@ -50,7 +50,7 @@ def test_cache_hit_makes_no_api_call(tmp_path, monkeypatch):
     def boom(*a, **k):
         raise AssertionError("must not call the API on a cache hit")
 
-    monkeypatch.setattr(stems_mod.replicate, "run", boom)
+    monkeypatch.setattr(stems_mod.replicate_client, "run", boom)
 
     result = separate_stems(sid, tmp_path / "unused.wav")
     assert set(result) == set(STEMS)
@@ -63,7 +63,7 @@ def test_separation_error_is_wrapped(tmp_path, monkeypatch):
     def fail(*a, **k):
         raise RuntimeError("insufficient credit")
 
-    monkeypatch.setattr(stems_mod.replicate, "run", fail)
+    monkeypatch.setattr(stems_mod.replicate_client, "run", fail)
     wav = tmp_path / "song.wav"
     wav.write_bytes(b"x")
 

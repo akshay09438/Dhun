@@ -23,10 +23,11 @@ import urllib.request
 from pathlib import Path
 
 import numpy as np
-import replicate
+import replicate  # noqa: F401 - kept for its exception types
 import soundfile as sf
 
 from app.audio.stems import stem_path
+from app.audio import replicate_client
 from app.config import settings
 
 _MODEL = "sakemin/all-in-one-music-structure-analyzer"
@@ -89,7 +90,7 @@ def _cloud_structure(wav_path: Path) -> dict:
     """BPM + beats + downbeats + sections from the cloud analyzer."""
     try:
         with open(wav_path, "rb") as audio:
-            out = replicate.run(_model_ref(), input={"music_input": audio})
+            out = replicate_client.run(_model_ref(), input={"music_input": audio})
     except Exception as e:
         raise AnalysisError(str(e)[:200])
 

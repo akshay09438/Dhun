@@ -2,7 +2,48 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
-## Status: **LATEST 2026-08-17, night (UPLOADS BUILT AND SECURITY-REVIEWED; branch `feat/wire-upload-instrumental`). NOT LIVE — Grinder has not been restarted.**
+## Status: **LATEST 2026-08-18 (UPLOADS ARE LIVE — and the first real one failed on a 5-second default; branch `fix/uploads-can-actually-reach-replicate`).**
+
+**SHIPPED.** PR #68 merged; engine and Grinder restarted 00:38; `/add` and `/mine` synced to the
+guild. Then the founder's first upload failed.
+
+**THE FAILURE, AND ITS CAUSE.** "The read operation timed out" — the same error a catalogue
+re-ingest hit an hour earlier, so a pattern, not luck. Not the network: Replicate's account endpoint
+answered in 0.8s with the same token. `replicate.run(...)` on the module builds a client with
+`timeout=None` and hands that to httpx, **whose default is 5 seconds for every operation, including
+the upload**. A normalised song is 45–85 MB, so finishing inside 5s needs 10–17 MB/s upstream. The
+call was cut off mid-send on any song of ordinary length — the feature could not have worked for
+anybody, and no test caught it because every test stubs the paid call. `app/audio/replicate_client.py`
+now holds one client at connect 30s / transfer 600s, and a test fails if either paid call goes back
+to the bare module.
+
+**WHAT THE FAILURE PROVED.** The safety work behaved exactly as designed on the first real failure
+it met: no files kept, no cap slot burned, one paid attempt recorded, and the card said so plainly.
+
+**THE SHELF DROPPED 40 → 20.** Both ceilings were 40 and spend never decrements, so the 40th
+success would have ended both at once and clearing the shelf would not have re-enabled uploads —
+a permanent dead end that reads as a bug. At 20 the recoverable limit is always hit first.
+
+**THREE ADVERSARIAL SECURITY REVIEWS, 8 + 8 + 4 findings.** Round one: the caps were decorative (30
+uploads accepted against a cap of 5, ~$3.60 committed) and the engine had no door on it (a
+multipart POST is CORS-safelisted, so any browser page could drive the paid endpoint with a forged
+uploader). Round two: the caps bounded songs kept, never money (12 failed attempts, $1.44, zero
+quota used); the stem lock reused a fail-OPEN helper and latched open on one transient bad read; we
+blocked the stems while serving the whole song. Round three: size was measured after Starlette had
+already spooled the body to disk, and the budget could be overshot because it was only checked at
+claim time. All fixed, each pinned by a test that was red first.
+
+**DRIFT LOG.**
+- The specs said "three named people, vocals only, /add does not exist" for a day after the founder
+  changed all three decisions in-session. Closed 2026-08-17.
+- The catalogue was pruned by 41 off-menu songs on the founder's call (3.34 GB). **Father Ocean went
+  with them and is the fixture for 6 real-audio end-to-end tests, which now SKIP** — a hollow green
+  this project refuses. Founder decided against restoring it (~12c). Recorded, not hidden.
+- `apps/web` shows 6 files permanently modified by CRLF churn; `git diff --ignore-all-space` is empty.
+
+**Engine 956 passed / 6 skipped. Bot 567 / 1 skipped. Web 79. Lint + typecheck clean.**
+
+## Status: **2026-08-17, night (UPLOADS BUILT AND SECURITY-REVIEWED; branch `feat/wire-upload-instrumental`). NOT LIVE — Grinder has not been restarted.**
 
 Four changes, in the founder's order: the catalogue index made safe to write, six orphaned songs
 restored, `guest_is_upload` actually wired, then `/add` + `/mine`.
