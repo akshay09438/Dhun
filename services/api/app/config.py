@@ -46,6 +46,30 @@ class Settings:
     allowed_cors_origins: tuple[str, ...] = field(default_factory=_cors_origins)
     allowed_cors_origin_regex: str | None = field(default_factory=_cors_origin_regex)
 
+    # --- /add: bring your own song (2026-08-17) ------------------------------------------------
+    # There is NO allowlist: anyone in the Discord can upload. These four numbers are therefore the
+    # only thing standing between the server and an unbounded bill or a full disk, so each is a
+    # hard refusal with a plain-English reason, never a silent failure.
+    #
+    # Uploads are a NARROWER type gate than `allowed_exts` above: Suno exports MP3, and every extra
+    # container is another decoder reachable by a stranger for no user benefit.
+    upload_exts: frozenset[str] = frozenset({".mp3", ".m4a"})
+    # 40 songs is roughly 2.6 GB stored (a ~48 MB wav plus ~16 MB of stems each) and about $2.80 of
+    # Replicate at ~7c a song — sized against the $5 balance and the disk, not chosen for feel.
+    max_uploaded_songs: int = 40
+    # Per person, so one enthusiast cannot spend the whole global cap on their own.
+    max_uploads_per_user: int = 5
+    # Refuse below this much free disk. The janitor's own sweep target is 3.0 GB, so accepting an
+    # upload under it would hand the cleaner work to do and could evict somebody's finished mix.
+    min_free_disk_gb: float = 3.0
+    # A song must be long enough to arrange and short enough not to dominate the queue.
+    min_upload_seconds: float = 30.0
+    max_upload_seconds: float = 8 * 60.0
+    # Two paid pipelines at a time. Three testers uploading together must not stack GPU calls —
+    # Replicate throttles hard at a low balance (a 429 saying "reduced to 6/min" means the balance
+    # is nearly out, not that we are too parallel).
+    max_concurrent_ingests: int = 2
+
 
 settings = Settings()
 settings.data_dir.mkdir(parents=True, exist_ok=True)

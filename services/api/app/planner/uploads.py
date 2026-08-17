@@ -100,6 +100,45 @@ def main_drop_for(song_id: str) -> list[float]:
     return [t] if t > 0 else []
 
 
+def count_all() -> int:
+    """How many uploaded songs exist across everybody — the global cap counts these."""
+    try:
+        return sum(1 for r in _rows().values() if r.get("uploaded_by"))
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def count_for(discord_id: str) -> int:
+    """How many songs this person has uploaded — the per-person cap counts these.
+
+    Counted from the manifest rather than a separate ledger so the quota and the copyright record
+    can never disagree. A song removed from the catalogue therefore returns its slot, which is the
+    behaviour we want.
+    """
+    if not discord_id:
+        return 0
+    try:
+        return sum(1 for r in _rows().values() if str(r.get("uploaded_by") or "") == discord_id)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def mine(discord_id: str) -> list[dict]:
+    """This person's own uploads, newest last — what `/mine` lists.
+
+    FILTERED ON `uploaded_by` AND NOTHING ELSE. Deliberately not on language: the 2026-08-14
+    incident hid 103 songs because a list filtered by a language tag that was not set. An upload's
+    language is a default nobody was asked for, so it must never be able to hide somebody's own
+    song from them.
+    """
+    if not discord_id:
+        return []
+    try:
+        return [r for r in _rows().values() if str(r.get("uploaded_by") or "") == discord_id]
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def upload_flags(song1_id: str, song2_id: str) -> tuple[bool, bool]:
     """(beat_is_upload, guest_is_upload) for a pair — what `routes/mix.py` hands the planner.
 
