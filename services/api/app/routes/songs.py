@@ -282,6 +282,13 @@ def _ingest(song_id: str, name: str, role: str, uploader: str, drop: float | Non
             # COUNT THE MONEY BEFORE SPENDING IT. Recorded ahead of the call, never after: an
             # attempt that dies mid-call has still been paid for, and counting it afterwards would
             # miss exactly the failures this ceiling exists to bound.
+            #
+            # CHECKED AGAIN HERE, and that is not belt-and-braces. The budget was only tested at
+            # claim time, and up to 40 slots can be claimed while the budget still has room — so
+            # they all queue, all spend, and the ceiling is overshot. Measured in the third review:
+            # 5 slots claimed with 1 attempt of budget left, 44 recorded against a ceiling of 40.
+            # A refusal here lands in the failure path, which cleans up and frees the slot.
+            spend.check_budget()
             spend.record_attempt(song_id, uploader)
             _set_stage(song_id, "separating the parts")
             separate_stems(song_id, wav)          # Replicate; cached by song_id

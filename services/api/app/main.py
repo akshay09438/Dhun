@@ -77,6 +77,20 @@ app.add_middleware(
 _MUTATING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _APP_HEADER = "x-promptdj-app"
 
+# ── SIZE, BEFORE THE BODY IS READ ────────────────────────────────────────────────────────────
+# The streaming cap inside the upload handler is applied too late to protect the DISK. Starlette
+# materialises the whole file part before the handler is entered, spooling anything over 1 MB to a
+# temp file — so by the time `_save_capped` counts a byte, the bytes are already on the disk the
+# free-space check exists to protect (measured in the 2026-08-17 third review: the handler saw a
+# 12 MB body in full, and `_free_gb()` ran after it was buffered).
+#
+# `Content-Length` is checked here, before any parsing. A client can lie about it, but a lying
+# client is then caught by the streaming cap it was always caught by — this closes the case where
+# an HONEST large upload writes gigabytes of temp that nothing accounted for. Discord's own ceiling
+# is a tier, not a control: a Nitro member can attach 500 MB, and a boosted server raises it for
+# everybody.
+_MAX_BODY_BYTES = 40 * 1024 * 1024  # a little over the 30 MB per-file cap, to allow for the envelope
+
 
 @app.middleware("http")
 async def _require_app_header(request, call_next):
@@ -89,6 +103,18 @@ async def _require_app_header(request, call_next):
     without a preflight that the CORS middleware above then refuses. So: an Origin present with no
     app header is the attack, and it is the only case blocked.
     """
+    if request.method in _MUTATING:
+        raw = request.headers.get("content-length")
+        try:
+            declared = int(raw) if raw is not None else 0
+        except ValueError:
+            declared = 0
+        if declared > _MAX_BODY_BYTES:
+            log.warning("refused a %s to %s declaring %d bytes (ceiling %d)",
+                        request.method, request.url.path, declared, _MAX_BODY_BYTES)
+            return JSONResponse(
+                {"detail": "That file is too big. The limit is 30 MB, and Discord's own limit is "
+                           "usually 10 MB."}, status_code=413)
     if (request.method in _MUTATING
             and "origin" in request.headers
             and _APP_HEADER not in request.headers):

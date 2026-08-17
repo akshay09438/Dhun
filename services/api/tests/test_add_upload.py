@@ -200,8 +200,12 @@ def test_a_stranger_without_an_account_id_gets_nowhere():
 
 
 def test_too_short_and_too_long_are_both_refused():
+    """The long one may be refused for LENGTH (400) or for SIZE (413) — the fixture is a raw WAV,
+    so nine minutes of it is 47 MB and trips the body ceiling first. Both are the same answer to
+    the person; a real upload is an MP3, where nine minutes is about 11 MB and length is what
+    catches it."""
     assert _post(_music(seconds=10)).status_code == 400
-    assert _post(_music(seconds=9 * 60)).status_code == 400
+    assert _post(_music(seconds=9 * 60)).status_code in (400, 413)
 
 
 def test_a_podcast_is_refused_before_anything_is_paid_for(monkeypatch):

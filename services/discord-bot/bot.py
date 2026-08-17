@@ -1182,6 +1182,10 @@ async def grind_cmd(interaction: discord.Interaction) -> None:
 # What the reply calls each side, in the person's own words rather than song1/song2.
 _ROLE_WORD = {"beat": "beat", "vocals": "vocal"}
 
+# Matches the engine's own per-file cap (settings.max_file_bytes). Checked here first so a
+# huge attachment is refused without ever being downloaded.
+MAX_UPLOAD_BYTES = 30 * 1024 * 1024
+
 
 def _partner_options(uploader_id: str, want_role: str) -> list[discord.SelectOption]:
     """Songs this upload can be mixed WITH: their own uploads first, then the curated menu.
@@ -1283,6 +1287,18 @@ async def add_cmd(interaction: discord.Interaction, song: discord.Attachment,
         await interaction.followup.send(
             "For a beat I need to know where the drop hits — add it as `drop:1:24`.\n"
             "You made the song, so you know better than I can work out.", ephemeral=True)
+        return
+
+    # SIZE BEFORE DOWNLOAD. `song.size` is Discord's own figure and is known without fetching a
+    # byte. The engine caps the body too, but by then the bot has already pulled the whole file
+    # into memory - and "Discord will not send more than 10 MB" is a TIER, not a control: a Nitro
+    # member can attach 500 MB and a boosted server raises the ceiling for everybody. Enough of
+    # those at once and the machine crosses the janitor's cushion, which deletes finished mixes
+    # (third review, A1).
+    if (song.size or 0) > MAX_UPLOAD_BYTES:
+        await interaction.followup.send(
+            f"That file is {song.size / 1_000_000:.0f} MB, which is more than I can take. "
+            f"The limit is {MAX_UPLOAD_BYTES // 1_000_000} MB.", ephemeral=True)
         return
 
     try:
