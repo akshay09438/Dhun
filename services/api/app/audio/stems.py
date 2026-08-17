@@ -13,8 +13,9 @@ from __future__ import annotations
 import urllib.request
 from pathlib import Path
 
-import replicate
+import replicate  # noqa: F401 - kept for its exception types
 
+from app.audio import replicate_client
 from app.config import settings
 
 STEMS: tuple[str, ...] = ("vocals", "drums", "bass", "other")
@@ -50,7 +51,7 @@ def separate_stems(song_id: str, wav_path: Path) -> dict[str, Path]:
 
     try:
         with open(wav_path, "rb") as audio:
-            out = replicate.run(
+            out = replicate_client.run(
                 _model_ref(),
                 input={"audio": audio, "model": "htdemucs", "output_format": "mp3"},
             )
