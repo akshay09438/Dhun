@@ -13,14 +13,13 @@ then adding a manifest entry.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.config import settings
+from app import library_store
 from app.storage import path_for
 
 router = APIRouter()
@@ -54,26 +53,15 @@ class LibrarySong(BaseModel):
     featured: bool = False
 
 
-def _manifest_path():
-    return settings.data_dir / "library" / "manifest.json"
-
-
 def song_names(ids, data_dir=None) -> dict:
     """Map catalog song ids -> display names, for labelling ops events on the dashboard.
     Best-effort and read-only: a missing/broken manifest, or an unknown id, simply yields no
     entry (never raises). `data_dir` lets a caller resolve against its own (possibly test) data
     folder; defaults to the configured one."""
-    dd = data_dir if data_dir is not None else settings.data_dir
-    p = dd / "library" / "manifest.json"
     out: dict[str, str] = {}
-    if not p.exists():
-        return out
-    try:
-        entries = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return out
+    entries = library_store.load(data_dir)
     wanted = set(ids)
-    for e in entries if isinstance(entries, list) else []:
+    for e in entries:
         sid = str(e.get("song_id", ""))
         if sid in wanted:
             name = str(e.get("name", "")).strip()
@@ -84,18 +72,16 @@ def song_names(ids, data_dir=None) -> dict:
 
 @router.get("/library")
 def get_library() -> dict:
-    """The curated catalog: every manifest entry whose audio actually exists."""
-    p = _manifest_path()
-    if not p.exists():
-        return {"songs": []}
-    try:
-        entries = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        log.exception("library manifest unreadable")
-        return {"songs": []}
+    """The curated catalog: every manifest entry whose audio actually exists.
 
+    Reads through `library_store.load`, which RETRIES a transient OS error rather than treating it
+    as "no catalogue". That matters on Windows: the atomic manifest write makes the file briefly
+    un-openable, and this route used to answer `{"songs": []}` in that window — an empty picker,
+    for no reason, while a song was being added.
+    """
+    entries = library_store.load()
     songs: list[LibrarySong] = []
-    for e in entries if isinstance(entries, list) else []:
+    for e in entries:
         sid = str(e.get("song_id", ""))
         name = str(e.get("name", "")).strip()
         if not name or not _HEX_ID.fullmatch(sid):

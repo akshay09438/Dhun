@@ -151,7 +151,14 @@ def test_one_person_firing_ten_grinds_cannot_occupy_more_than_their_slots():
 def test_a_person_with_too_many_already_waiting_is_told_plainly_not_silently_dropped():
     q = RenderQueue(max_concurrent=1, max_per_user=1, max_queued_per_user=2)
     release = threading.Event()
-    q.submit("running", lambda: (release.wait(timeout=10), False)[1], user_id="u")
+    # WAIT FOR THE FIRST JOB TO ACTUALLY BE RUNNING before queueing behind it. Without this the
+    # test races the worker claiming it: the queue depth this asserts on depends on whether that
+    # claim has happened yet, so under a loaded machine it read a different depth and admitted q3.
+    # Same synchronisation the test above already uses (`_wait_until(hog_running.now >= 2)`).
+    # Nothing about WHAT is asserted changes — only that the precondition is established first.
+    running = threading.Event()
+    q.submit("running", lambda: (running.set(), release.wait(timeout=10), False)[2], user_id="u")
+    assert running.wait(timeout=5), "the first job never started, so there is nothing to queue behind"
     q.submit("q1", lambda: False, user_id="u")
     q.submit("q2", lambda: False, user_id="u")
 

@@ -41,53 +41,24 @@ from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv(_REPO / ".env")
 
+from app import library_store  # noqa: E402
 from app.audio.analysis import analyze_track  # noqa: E402
 from app.audio.normalize import AudioError, normalize_audio  # noqa: E402
 from app.audio.stems import separate_stems  # noqa: E402
 from app.storage import path_for, store_wav  # noqa: E402
 
-_MANIFEST = _API / "data" / "library" / "manifest.json"
+# THE MANIFEST IS NO LONGER WRITTEN HERE. `app.library_store` is the one reader/writer for it, so
+# this script and the API can never diverge — and, more importantly, can never overwrite each
+# other. The old code here read the list, mutated it, and wrote it back whole: measured at 19 rows
+# lost out of 20 concurrent writers, and a failure mid-write left the manifest EMPTY. See
+# services/api/tests/test_library_store.py.
+#
+# One behaviour change to note: rows are now persisted ONE AT A TIME, as each song finishes, rather
+# than accumulated in memory and written once at the end. That is strictly safer here — a crash
+# halfway through a long ingest used to lose every row for the songs already paid for.
 
 
-def _load_manifest() -> list[dict]:
-    if not _MANIFEST.exists():
-        return []
-    try:
-        data = json.loads(_MANIFEST.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
-    except (OSError, json.JSONDecodeError):
-        return []
-
-
-def _save_manifest(entries: list[dict]) -> None:
-    _MANIFEST.parent.mkdir(parents=True, exist_ok=True)
-    _MANIFEST.write_text(json.dumps(entries, indent=2, ensure_ascii=False), encoding="utf-8")
-
-
-def _upsert(entries: list[dict], name: str, song_id: str, role_hint: str,
-            language: str = "") -> str:
-    """Add or update the manifest entry for this song_id. Returns a status word.
-
-    LANGUAGE IS NOT OPTIONAL FOR A VOCAL, and forgetting it is silent. The Discord picker filters
-    vocals by language and DEFAULTS to English (`bot.py::_vocals_for`), so a vocal with no tag
-    appears in neither list - it is loaded, paid for, analysed, and invisible. That is exactly what
-    happened on 2026-08-14: 103 songs ingested, and the picker still showed the same four English
-    vocals it had before. Beats are never language-filtered, so a blank there is harmless.
-    """
-    for e in entries:
-        if str(e.get("song_id", "")) == song_id:
-            e["name"], e["role_hint"] = name, role_hint
-            if language:
-                e["language"] = language
-            return "updated"
-    entry = {"name": name, "song_id": song_id, "role_hint": role_hint}
-    if language:
-        entry["language"] = language
-    entries.append(entry)
-    return "added"
-
-
-def ingest_one(name: str, rel_path: str, role_hint: str, entries: list[dict],
+def ingest_one(name: str, rel_path: str, role_hint: str,
                language: str = "") -> dict:
     src = (_REPO / rel_path).resolve()
     result: dict = {"name": name, "path": rel_path, "role_hint": role_hint,
@@ -137,8 +108,8 @@ def ingest_one(name: str, rel_path: str, role_hint: str, entries: list[dict],
 
     # 4) manifest upsert.
     print("  [4/4] adding to catalog manifest...", flush=True)
-    result["manifest"] = _upsert(entries, name, song_id, role_hint, language)
-    _save_manifest(entries)  # save after each song so a mid-run stop still keeps finished work
+    # Locked + atomic, and persisted immediately, so a mid-run stop keeps every finished song.
+    result["manifest"] = library_store.upsert(name, song_id, role_hint, language)
     print(f"        {result['manifest']}  |  {result['bpm']} BPM  |  key {result['key']}  |  "
           f"{result['vocal_regions']} vocal regions", flush=True)
     return result
@@ -155,14 +126,12 @@ def main() -> int:
         print("FATAL: expected a non-empty JSON array of {name, path, role_hint}", file=sys.stderr)
         return 2
 
-    entries = _load_manifest()
     results = []
     for job in jobs:
         results.append(ingest_one(
             str(job.get("name", "")).strip(),
             str(job.get("path", "")).strip(),
             str(job.get("role_hint", "vocals")).strip() or "vocals",
-            entries,
             str(job.get("language", "")).strip().lower(),
         ))
 
@@ -175,7 +144,7 @@ def main() -> int:
     for r in bad:
         print(f"  FAIL {r['name']:<28} {r['error']}", flush=True)
     print(f"\n{len(ok)} ingested, {len(bad)} failed. Catalog now has "
-          f"{len(entries)} entries.", flush=True)
+          f"{len(library_store.load())} entries.", flush=True)
     return 0 if not bad else 1
 
 

@@ -5,9 +5,8 @@ import json
 
 from fastapi.testclient import TestClient
 
-from app import storage
+from app import library_store, storage
 from app.main import app
-from app.routes import library as library_route
 
 client = TestClient(app)
 
@@ -16,8 +15,11 @@ MISSING = "b" * 64
 
 
 def _use_tmp(monkeypatch, tmp_path):
-    monkeypatch.setattr(library_route, "settings",
-                        dataclasses.replace(library_route.settings, data_dir=tmp_path))
+    # The route reads through `library_store` now (one reader, which also retries the transient
+    # Windows window where an atomic manifest replace makes the file briefly un-openable), so the
+    # data dir has to be redirected there rather than on the route module.
+    monkeypatch.setattr(library_store, "settings",
+                        dataclasses.replace(library_store.settings, data_dir=tmp_path))
     monkeypatch.setattr(storage, "settings",
                         dataclasses.replace(storage.settings, data_dir=tmp_path))
 
