@@ -21,7 +21,10 @@ const LIB = {
       original_name: "Father Ocean",
       url: "/songs/a/audio",
       status: "ready",
+      // `featured` matters now: the console shows the curated menu ONLY, which is also what
+      // keeps other people's uploads off this screen (security review, 2026-08-17).
       role_hint: "beat",
+      featured: true,
     },
     {
       id: "c".repeat(64),
@@ -29,6 +32,7 @@ const LIB = {
       url: "/songs/c/audio",
       status: "ready",
       role_hint: "vocals",
+      featured: true,
     },
   ],
 };

@@ -2,7 +2,64 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
-## Status: **LATEST 2026-08-17 (UPLOADS: audit done, blocker fixed, `/add` NOT BUILT; branch `feat/add-your-own-song`).**
+## Status: **LATEST 2026-08-17, night (UPLOADS BUILT AND SECURITY-REVIEWED; branch `feat/wire-upload-instrumental`). NOT LIVE — Grinder has not been restarted.**
+
+Four changes, in the founder's order: the catalogue index made safe to write, six orphaned songs
+restored, `guest_is_upload` actually wired, then `/add` + `/mine`.
+
+**THE CATALOGUE INDEX WAS UNSAFE AND NOBODY KNEW.** `manifest.json` indexes every song and was
+read-modify-written whole. Measured, red first: **20 concurrent writers lost 19 rows**, and a
+failure mid-write left the file **empty** — all 112 rows, not one. `app/library_store.py` is now
+the one reader/writer (process lock + OS file lock + fsync + atomic replace). A third hole
+surfaced from the very first test run: on Windows the atomic replace makes the file briefly
+un-openable and `routes/library.py` read that as "no catalogue", so the picker could answer **zero
+songs** mid-write. Reads now go through `library_store.load`, which retries a transient OS error
+and still degrades a genuinely malformed file to empty.
+
+**`guest_is_upload` HAD NEVER RUN.** It shipped defaulting to False with no caller, so every mix
+ever made planned as though uploads did not exist. Wired at `routes/mix.py`, and generalised to the
+mirror case with a SECOND parameter (`beat_is_upload`) rather than overloading the first — both
+reach the same branch for different reasons, and one shared name would be a lie at one of the two
+call sites. **A gap in the groundwork was found while reading it:** the hand-marked guest-verse
+branch returns EARLY, so an uploaded vocal paired with any of the five guest-verse beats still had
+the beat sing over it — the feature would not have applied to five of the beats on the menu.
+Upload checks now run first. Verified beyond the unit test: the real Wake Me Up x Rolling in the
+Deep plan re-plans **byte-identical** to the plan rendered before the change.
+
+**`/add`.** Engine endpoint (`routes/songs.py`) plus a thin bot command. The bot does no ingesting
+— no numpy, no Replicate, no ffmpeg — so an upload goes through the exact catalogue pipeline.
+Checks run cheapest-first and a free numpy pre-check gates the paid calls. **The first pre-check
+metric was measured and thrown away:** best-peak-over-band-mean scored white noise 3.21 against the
+weakest real song's 3.27, so the two populations overlapped and the gate was decoration.
+Autocorrelation at the beat period AND its first three multiples separates them cleanly. A second
+gate (density) was added after the review beat the first one with a tick over silence. Both bars
+set from measurement over all 118 catalogue songs: none wrongly rejected.
+
+**THE ADVERSARIAL SECURITY REVIEW FOUND THE CAPS WERE DECORATIVE.** Rows are written when the paid
+work ENDS, so nothing incremented while uploads queued: **30 uploads from one person against a cap
+of 5, all accepted, in 19 seconds, ~$3.60 of Replicate committed**. Slots are now reserved before
+the file is read. Also found and fixed: the engine had no door on it (a multipart POST is
+CORS-safelisted, so any page open in a browser on this machine could drive the paid endpoint with a
+forged uploader — now guarded by a header a browser cannot set cross-origin); a second upload of
+the same song could take over the first's row and, on failure, delete the stems the first had just
+paid for; a 14 MB MP3 decoded to a **2.5 GB** WAV before the length limit ran; `drop:0:nan` wrote a
+literal `NaN` into the catalogue index; and a blank name made a paid-for song invisible.
+`tests/test_upload_security.py` — 25 tests, one per finding, every one red first.
+
+**LOCKED DOWN on the founder's call:** an upload's stems are never served, and the web console shows
+the curated menu only, so nobody's unreleased track is reachable by another member.
+
+**DRIFT CLOSED.** The specs still said "three named people, vocals only, `/add` does not exist".
+The founder changed all three decisions in-session and the documents had not moved. They have now.
+
+**CATALOGUE PRUNED, founder's call:** 41 off-menu songs deleted (3.34 GB), keeping every ear-tuned
+one and holding back the one whose source file no longer exists. **KNOWN COST, recorded honestly:
+Father Ocean went with them, and it is the fixture for 6 real-audio end-to-end tests, which now
+SKIP** — the hollow green this project explicitly refuses. About 12 cents to restore; deferred.
+
+**Engine suite 877 -> 930 (6 skipped). Bot 554 -> 567. Web 79. Lint and typecheck clean.**
+
+## Status: **2026-08-17 (UPLOADS: audit done, blocker fixed, `/add` NOT BUILT; branch `feat/add-your-own-song`).**
 
 **IN FLIGHT — the feature is one commit in, and that commit is groundwork, not the feature.** `/add` does not exist. Nothing user-visible changed today.
 

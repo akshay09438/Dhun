@@ -23,7 +23,10 @@ const LIBRARY = {
       original_name: "Father Ocean",
       url: `/songs/${ID1}/audio`,
       status: "ready",
+      // `featured` matters now: the console shows the curated menu ONLY, which is also what
+      // keeps other people's uploads off this screen (security review, 2026-08-17).
       role_hint: "beat",
+      featured: true,
     },
     {
       id: ID2,
@@ -31,6 +34,7 @@ const LIBRARY = {
       url: `/songs/${ID2}/audio`,
       status: "ready",
       role_hint: "vocals",
+      featured: true,
     },
   ],
 };
