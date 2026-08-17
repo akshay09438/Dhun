@@ -57,8 +57,19 @@ class Settings:
     # 40 songs is roughly 2.6 GB stored (a ~48 MB wav plus ~16 MB of stems each) and about $2.80 of
     # Replicate at ~7c a song — sized against the $5 balance and the disk, not chosen for feel.
     max_uploaded_songs: int = 40
-    # Per person, so one enthusiast cannot spend the whole global cap on their own.
+    # Per person, so one enthusiast cannot spend the whole global cap on their own. This counts
+    # songs KEPT, not money: a failed attempt gives its slot straight back, because a Replicate
+    # outage must not burn somebody's five.
     max_uploads_per_user: int = 5
+    # ...which is why money needs its OWN ceiling. Every attempt that reaches Replicate counts
+    # here, success or failure, for everybody together (app/spend.py). The re-review measured one
+    # uploader spending $1.44 on twelve FAILED attempts while using none of their five, so the
+    # per-person cap provably does not bound the bill.
+    #
+    # 40 attempts at ~12c is ~$4.80, sized UNDER the ~$5 balance rather than over it. The founder
+    # suggested 60 and asked for lower if that was tight; 60 would be ~$7.20. Raising it is one
+    # number, and the refusal tells everybody why.
+    max_paid_upload_attempts: int = 40
     # Refuse below this much free disk. The janitor's own sweep target is 3.0 GB, so accepting an
     # upload under it would hand the cleaner work to do and could evict somebody's finished mix.
     min_free_disk_gb: float = 3.0

@@ -96,6 +96,14 @@ def get_library() -> dict:
         name = str(e.get("name", "")).strip()
         if not name or not _HEX_ID.fullmatch(sid):
             continue  # malformed entry — skip, never crash the catalog
+        # UPLOADS ARE NOT PUBLIC CATALOGUE. This is the shared, unauthenticated list; somebody's
+        # own song belongs to them and is reached through `/songs/mine/{their id}`. Listing every
+        # member's unreleased track here was the other half of the leak the stem lock only
+        # half-closed (re-review finding 5). `pending` rows are hidden for a different reason: the
+        # row is written before the paid work so the stem guard covers it, and until that finishes
+        # the song's files are still arriving.
+        if e.get("uploaded_by") or e.get("pending"):
+            continue
         if path_for(sid) is None:
             continue  # audio missing on disk — hide rather than 500 later
         songs.append(LibrarySong(

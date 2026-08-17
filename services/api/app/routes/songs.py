@@ -47,7 +47,7 @@ import soundfile as sf
 from fastapi import APIRouter, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from app import library_store
+from app import library_store, spend
 from app.audio import beatcheck
 from app.audio.analysis import analyze_track
 from app.audio.normalize import AudioError, normalize_audio, probe_seconds
@@ -103,8 +103,17 @@ class _CapFull(Exception):
 
 
 def _claim_slot(uploader: str, token: str) -> None:
-    """Take one upload slot for `uploader`, or raise _CapFull. Atomic with the check."""
+    """Take one upload slot for `uploader`, or raise _CapFull / BudgetSpent. Atomic with the check.
+
+    TWO SEPARATE CEILINGS, because they answer different questions (founder's call, 2026-08-17):
+      * how many songs you may KEEP — per person, and a failure gives its slot straight back, so a
+        Replicate outage never burns one of somebody's five;
+      * how much MONEY may ever be spent — global, counting failures, in `app.spend`. The re-review
+        proved the first does not imply the second: twelve failed attempts cost $1.44 and used no
+        quota at all.
+    """
     with _CAP_LOCK:
+        spend.check_budget()          # cheapest refusal of the lot, and the one that bounds the bill
         uploads.forget_cached_manifest()
         mine = uploads.count_for(uploader) + sum(1 for u in _RESERVED.values() if u == uploader)
         if mine >= settings.max_uploads_per_user:
@@ -118,16 +127,32 @@ def _claim_slot(uploader: str, token: str) -> None:
 
 
 def _release_slot(token: str) -> None:
-    """Give the slot back. Safe to call twice."""
+    """Give the slot back. Safe to call twice, and safe to call on a key that was re-named away."""
     with _CAP_LOCK:
         _RESERVED.pop(token, None)
 
 
-def _rename_slot(old: str, new: str) -> None:
-    """The slot is claimed before the song's id is known; re-key it once it is."""
+def _rename_slot(old: str, new: str) -> str:
+    """Re-key a reservation from its placeholder to the real song id. Returns the key now held.
+
+    RETURNS THE KEY because the caller must release the RIGHT one afterwards. The re-review found
+    two bugs here, both mine:
+      * if anything raised after the rename, the recovery path still released the OLD token, so the
+        reservation was orphaned forever and that person's five shrank until a restart;
+      * two people uploading the SAME song renamed onto one key, so one reservation vanished and
+        the cap re-opened by one.
+    Both are handled by refusing to collapse two claims into one key, and by telling the caller
+    which key it actually owns.
+    """
     with _CAP_LOCK:
-        if old in _RESERVED:
-            _RESERVED[new] = _RESERVED.pop(old)
+        if old not in _RESERVED:
+            return old
+        if new in _RESERVED:
+            # Somebody else already holds this song's slot. Keep both claims distinct so neither is
+            # silently dropped; this one stays under its own token until it is released.
+            return old
+        _RESERVED[new] = _RESERVED.pop(old)
+        return new
 
 
 def _set_stage(song_id: str, stage: str, *, error: str = "", done: bool = False) -> None:
@@ -218,8 +243,15 @@ def _artifacts(song_id: str) -> list[Path]:
             + [d / f"{song_id}.{s}.mp3" for s in ("vocals", "drums", "bass", "other")])
 
 
+def _drop_row(song_id: str) -> None:
+    """Remove this song's catalogue row, through the locked + atomic writer."""
+    rows = [r for r in library_store.load() if str(r.get("song_id", "")) != song_id]
+    library_store.save(rows)
+    uploads.forget_cached_manifest()
+
+
 def _ingest(song_id: str, name: str, role: str, uploader: str, drop: float | None,
-            pre_existing: set[Path]) -> None:
+            pre_existing: set[Path], slot_key: str) -> None:
     """The paid half, on a worker thread. Stems, then analysis, then the row.
 
     `pre_existing` is what was already on disk BEFORE this request. On failure only the files this
@@ -233,7 +265,9 @@ def _ingest(song_id: str, name: str, role: str, uploader: str, drop: float | Non
             # would overwrite the first's row — taking their name, their quota and their drop —
             # and, if it then failed, delete the stems the FIRST upload had just paid for, leaving
             # a row pointing at missing files. Both were proven in the 2026-08-17 review.
-            if any(str(r.get("song_id", "")) == song_id for r in library_store.load()):
+            done_already = any(str(r.get("song_id", "")) == song_id and not r.get("pending")
+                               for r in library_store.load())
+            if done_already:
                 log.info("upload %s: somebody else finished this exact song first", song_id[:12])
                 _set_stage(song_id, "ready", done=True)
                 return
@@ -245,6 +279,10 @@ def _ingest(song_id: str, name: str, role: str, uploader: str, drop: float | Non
             wav = path_for(song_id)
             if wav is None:
                 raise RuntimeError("the stored audio vanished before it could be split")
+            # COUNT THE MONEY BEFORE SPENDING IT. Recorded ahead of the call, never after: an
+            # attempt that dies mid-call has still been paid for, and counting it afterwards would
+            # miss exactly the failures this ceiling exists to bound.
+            spend.record_attempt(song_id, uploader)
             _set_stage(song_id, "separating the parts")
             separate_stems(song_id, wav)          # Replicate; cached by song_id
             _set_stage(song_id, "working out the beat and the key")
@@ -255,10 +293,11 @@ def _ingest(song_id: str, name: str, role: str, uploader: str, drop: float | Non
                 raise RuntimeError(f"the pipeline finished but these are missing: {missing}")
 
             _set_stage(song_id, "adding it to your songs")
-            extra = {"uploaded_by": uploader}
+            extra = {"uploaded_by": uploader, "pending": False}
             if drop is not None:
                 extra["main_drop"] = float(drop)
-            # LAST. The row is the commit point, and it is what the caps count.
+            # The row already exists (written before the paid work so the stem guard covered it);
+            # clearing `pending` is the commit point that makes the song real and visible.
             library_store.upsert(name, song_id, role, _UPLOAD_LANGUAGE, extra=extra)
             uploads.forget_cached_manifest()      # the very next grind must see it
         _set_stage(song_id, "ready", done=True)
@@ -270,12 +309,17 @@ def _ingest(song_id: str, name: str, role: str, uploader: str, drop: float | Non
                 p.unlink(missing_ok=True)
             except OSError:
                 log.warning("could not remove %s after a failed upload", p.name)
+        try:
+            _drop_row(song_id)   # the pending row goes too — it promised a song that isn't there
+        except Exception:  # noqa: BLE001 — a failed cleanup must not hide the original failure
+            log.exception("could not remove the pending row for %s", song_id[:12])
         _set_stage(song_id, "failed", error=str(e) or e.__class__.__name__, done=True)
     finally:
         # Whatever happened, the slot goes back: on success the manifest row now counts this song,
         # and on failure nothing should have been counted at all. Released in `finally` so a crash
-        # can never leak a slot and quietly shrink somebody's five forever.
-        _release_slot(song_id)
+        # can never leak a slot and quietly shrink somebody's five forever. The MONEY is not given
+        # back — `spend` only ever goes up, because a failed attempt was still paid for.
+        _release_slot(slot_key)
 
 
 @router.post("/songs/add")
@@ -310,6 +354,8 @@ def add_song(file: UploadFile,
     token = f"pending:{uuid.uuid4().hex}"
     try:
         _claim_slot(uploaded_by, token)
+    except spend.BudgetSpent as e:
+        raise HTTPException(429, str(e))
     except _CapFull as e:
         raise HTTPException(400, str(e))
 
@@ -382,11 +428,25 @@ def add_song(file: UploadFile,
         # 2026-08-14 failure, reachable through an attachment called " .mp3".
         name = (display_name or "").strip() or Path(file.filename or "").stem.strip() or "your song"
         name = name[:80]
-        _rename_slot(token, song_id)
-        _set_stage(song_id, "getting it ready")
-        threading.Thread(target=_ingest, name=f"ingest-{song_id[:8]}",
-                         args=(song_id, name, role, uploaded_by, drop, pre_existing),
-                         daemon=True).start()
+        held = _rename_slot(token, song_id)
+        try:
+            # THE ROW GOES IN BEFORE THE PAID WORK, marked `pending`. Writing it last left a
+            # minutes-wide window in which the stems existed on disk but nothing said the song was
+            # an upload, so the guard on them did not exist yet (re-review finding 4). `pending`
+            # keeps the old promise too: `GET /library` hides these, so a row never advertises a
+            # song whose files are still arriving, and a failure deletes the row again.
+            library_store.upsert(name, song_id, role, _UPLOAD_LANGUAGE,
+                                 extra={"uploaded_by": uploaded_by, "pending": True,
+                                        **({"main_drop": float(drop)} if drop is not None else {})})
+            uploads.forget_cached_manifest()
+            _set_stage(song_id, "getting it ready")
+            threading.Thread(target=_ingest, name=f"ingest-{song_id[:8]}",
+                             args=(song_id, name, role, uploaded_by, drop, pre_existing, held),
+                             daemon=True).start()
+        except BaseException:
+            _drop_row(song_id)          # never leave a pending row with no thread behind it
+            _release_slot(held)         # ...and release the key we ACTUALLY hold, not the old one
+            raise
         return {"song_id": song_id, "name": name, "role": role, "status": "processing",
                 "duplicate": False, "seconds": round(seconds, 1), "beat_score": round(score, 3)}
     except BaseException:
@@ -423,7 +483,15 @@ def my_songs(discord_id: str) -> dict:
 
 @router.get("/songs/{song_id}/audio")
 def get_audio(song_id: str):
-    """Serve a stored, cleaned WAV by its content id (hex-validated)."""
+    """Serve a stored, cleaned WAV by its content id (hex-validated).
+
+    NEVER AN UPLOAD. Locking down the separated stems while still handing out the WHOLE track was
+    incoherent — the re-review pulled a 5.6 MB "unreleased demo" straight off this route with a
+    plain GET. Somebody's own song is theirs; the product's job is to mix it, not to distribute it.
+    Catalogue songs still serve, because the web player streams them.
+    """
+    if uploads.is_upload_or_unknown(song_id) and path_for(song_id) is not None:
+        raise HTTPException(403, "That song isn't shared.")
     p = path_for(song_id)
     if p is None:
         raise HTTPException(404, "Song not found.")

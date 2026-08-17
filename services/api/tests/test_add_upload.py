@@ -287,12 +287,22 @@ def test_a_vocal_upload_is_written_as_vocals_not_vocal(no_paid_calls):
     assert row["role_hint"] == "vocals"
 
 
-def test_the_row_is_written_last(no_paid_calls, monkeypatch):
-    """A row pointing at files that do not exist is worse than no row."""
+def test_the_row_exists_during_the_paid_work_but_is_marked_pending(no_paid_calls, monkeypatch):
+    """The row USED to be written last, so that "a row pointing at files that do not exist" could
+    never happen. The security re-review showed the cost of that: stems land on disk minutes before
+    the row, and the guard that stops an upload's stems being served keys off the row — so for the
+    whole paid window there was no guard at all.
+
+    So the row goes in FIRST, marked `pending`, and the old promise is kept a different way:
+    `GET /library` hides pending rows, and a failure deletes the row again. Clearing `pending` is
+    now the commit point."""
     seen = {}
 
     def fake_analyze(song_id, wav):
-        seen["row_at_analysis"] = any(e["song_id"] == song_id for e in library_store.load())
+        row = next((e for e in library_store.load() if e["song_id"] == song_id), None)
+        seen["row"] = row is not None
+        seen["pending"] = bool(row and row.get("pending"))
+        seen["listed"] = song_id in [s["id"] for s in client.get("/library").json()["songs"]]
         for suffix in ("structure.json", "analysis.json"):
             (DD() / f"{song_id}.{suffix}").write_text("{}")
         return {}
@@ -300,7 +310,11 @@ def test_the_row_is_written_last(no_paid_calls, monkeypatch):
     monkeypatch.setattr(songs_route, "analyze_track", fake_analyze)
     sid = _post().json()["song_id"]
     _finish(sid)
-    assert seen["row_at_analysis"] is False
+    assert seen["row"] is True, "no row during the paid work, so the stem guard had nothing to read"
+    assert seen["pending"] is True, "the row did not say the song was still arriving"
+    assert seen["listed"] is False, "a half-made song was advertised in the catalogue"
+    done = next(e for e in library_store.load() if e["song_id"] == sid)
+    assert not done.get("pending"), "the song never got committed"
 
 
 # --- failing safely -------------------------------------------------------------------------

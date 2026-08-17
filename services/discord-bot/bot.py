@@ -1188,23 +1188,40 @@ def _partner_options(uploader_id: str, want_role: str) -> list[discord.SelectOpt
 
     Their own come first deliberately — mixing two of your OWN songs is a supported thing to want,
     and it is invisible unless the list puts it in front of you. Capped at Discord's 25.
+
+    THEIR UPLOADS COME FROM `/songs/mine`, NOT FROM THE CATALOGUE. `GET /library` deliberately no
+    longer lists uploads at all: it is the shared, unauthenticated list, and publishing every
+    member's unreleased track on it was half of a leak the security review found (the other half
+    being that the whole song was downloadable). So the only route to somebody's own songs is the
+    one that asks who they are.
     """
-    own, catalogue = [], []
-    for s in bot.songs:
-        if s.role_hint != want_role:
-            continue
-        (own if s.id in _my_upload_ids.get(uploader_id, set()) else catalogue).append(s)
-    catalogue = [s for s in catalogue if s.featured]     # never widen the curated menu
+    own = [s for s in _my_uploads.get(uploader_id, []) if s.role_hint == want_role]
+    catalogue = [s for s in bot.songs if s.role_hint == want_role and s.featured]
     picked = own[:12] + catalogue[: 25 - len(own[:12])]
+    own_ids = {s.id for s in own}
     return [discord.SelectOption(label=s.name[:100],
                                  value=s.id,
-                                 description="your upload" if s in own else None)
+                                 description="your upload" if s.id in own_ids else None)
             for s in picked]
 
 
-# Which song ids belong to whom, refreshed whenever somebody uploads or opens /mine. Only used to
-# label and order the partner list; the engine is the authority on who owns what.
-_my_upload_ids: dict[str, set[str]] = {}
+# Each person's OWN uploaded songs, refreshed whenever they upload or open /mine. Kept apart from
+# `bot.songs` (the public catalogue) because the engine keeps them apart: one list is shared, the
+# other is answered only for the person who asks.
+_my_uploads: dict[str, list[Song]] = {}
+
+
+async def _refresh_my_uploads(discord_id: str) -> list[Song]:
+    """Ask the engine for this person's own songs and remember them for the pickers."""
+    try:
+        body = await bot.api.my_songs(discord_id)
+    except EngineError:
+        return _my_uploads.get(discord_id, [])
+    mine = [Song(id=str(r["song_id"]), name=str(r.get("name") or "your song"),
+                 role_hint=str(r.get("role_hint") or ""), language="", featured=False)
+            for r in (body.get("songs") or []) if r.get("song_id")]
+    _my_uploads[discord_id] = mine
+    return mine
 
 
 class _PartnerSelect(discord.ui.Select):
@@ -1316,8 +1333,8 @@ async def add_cmd(interaction: discord.Interaction, song: discord.Attachment,
                 "Nothing was kept, and it has not used one of your five."))
             return
 
-    await bot.refresh_catalog()                       # the new song must be pickable NOW
-    _my_upload_ids.setdefault(str(interaction.user.id), set()).add(song_id)
+    await bot.refresh_catalog()                       # the catalogue half of the picker
+    await _refresh_my_uploads(str(interaction.user.id))   # ...and their own half
 
     word = _ROLE_WORD[role.value]
     other = _ROLE_WORD["vocals" if role.value == "beat" else "beat"]
@@ -1346,7 +1363,7 @@ async def mine_cmd(interaction: discord.Interaction) -> None:
         await interaction.followup.send(str(e), ephemeral=True)
         return
     songs = body.get("songs") or []
-    _my_upload_ids[str(interaction.user.id)] = {s["song_id"] for s in songs}
+    await _refresh_my_uploads(str(interaction.user.id))
     if not songs:
         await interaction.followup.send(
             "You have not added any songs yet. `/add` takes an MP3 or M4A under 10 MB.",

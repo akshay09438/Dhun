@@ -30,9 +30,9 @@ from api_client import EngineError, PromptDJClient, Song  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _clean():
-    botmod._my_upload_ids.clear()
+    botmod._my_uploads.clear()
     yield
-    botmod._my_upload_ids.clear()
+    botmod._my_uploads.clear()
 
 
 def _song(sid, name, role, featured=True):
@@ -54,10 +54,12 @@ def test_a_beat_upload_is_offered_vocals():
 
 
 def test_your_own_uploads_come_first_and_are_labelled():
-    """Mixing two of your OWN songs is supported, and invisible unless the list puts it in front."""
-    botmod.bot.songs = [_song("c" * 64, "Catalogue Beat", "beat"),
-                        _song("m" * 64, "My Own Beat", "beat", featured=False)]
-    botmod._my_upload_ids["111"] = {"m" * 64}
+    """Mixing two of your OWN songs is supported, and invisible unless the list puts it in front.
+
+    The catalogue list no longer contains uploads at all - `GET /library` stopped publishing them
+    after the security review - so a person's own songs arrive separately, from `/songs/mine`."""
+    botmod.bot.songs = [_song("c" * 64, "Catalogue Beat", "beat")]
+    botmod._my_uploads["111"] = [_song("m" * 64, "My Own Beat", "beat", featured=False)]
     opts = botmod._partner_options("111", "beat")
     assert opts[0].label == "My Own Beat"
     assert opts[0].description == "your upload"
@@ -65,8 +67,8 @@ def test_your_own_uploads_come_first_and_are_labelled():
 
 
 def test_a_stranger_does_not_see_your_uploads_as_theirs():
-    botmod.bot.songs = [_song("m" * 64, "My Own Beat", "beat", featured=False)]
-    botmod._my_upload_ids["111"] = {"m" * 64}
+    botmod.bot.songs = []
+    botmod._my_uploads["111"] = [_song("m" * 64, "My Own Beat", "beat", featured=False)]
     assert botmod._partner_options("222", "beat") == []
 
 

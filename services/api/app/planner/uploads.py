@@ -73,6 +73,39 @@ def is_upload(song_id: str) -> bool:
         return False
 
 
+def is_upload_or_unknown(song_id: str) -> bool:
+    """FAILS CLOSED. True if this is an upload OR if we cannot tell. For ACCESS CONTROL only.
+
+    `is_upload` above fails OPEN by design — a planner that cannot read the catalogue must not
+    silence a catalogue beat's vocal mid-mix. Reusing it as the guard on somebody's uploaded stems
+    was a category error, and the re-review broke it in two ways: corrupt the manifest and every
+    upload's stems became downloadable, and because `_rows()` caches on (mtime, size), a single
+    transient empty read LATCHED that open until something wrote the file again.
+
+    A permission check has the opposite duty to a planner: when it does not know, the answer is no.
+    Refusing a catalogue stem for a moment is a nuisance; serving a stranger's unreleased track is
+    not undoable.
+
+    THE "UNKNOWN" THAT MATTERS IS AN UNREADABLE CATALOGUE, not a song that simply has no row.
+    Every upload gets its row BEFORE the paid work starts, so "not in the catalogue" reliably means
+    "not an upload" — an orphan, or a song from the old web upload path. Refusing those too was a
+    first attempt at this and it was too broad: it broke the web player on any song that predates
+    the catalogue, which is a real regression bought for no safety at all.
+    """
+    try:
+        rows = _rows()
+    except Exception:  # noqa: BLE001 — cannot read the catalogue, so assume it is somebody's
+        log.exception("could not read the catalogue while guarding %s; refusing", song_id)
+        return True
+    if not rows:
+        # Empty is ambiguous, and the two cases pull opposite ways: a file that is NOT THERE is a
+        # fresh install with nothing to protect, while a file that IS there and still read as empty
+        # is the corrupt-or-transient case that opened this lock in the review. The file's own
+        # existence is what tells them apart.
+        return library_store.manifest_path().exists()
+    return bool((rows.get(song_id) or {}).get("uploaded_by"))
+
+
 def uploaded_by(song_id: str) -> str:
     """The Discord id that added this song, or "" — the per-person cap counts these."""
     try:
@@ -101,9 +134,13 @@ def main_drop_for(song_id: str) -> list[float]:
 
 
 def count_all() -> int:
-    """How many uploaded songs exist across everybody — the global cap counts these."""
+    """How many uploaded songs exist across everybody — the global cap counts these.
+    PENDING ROWS DO NOT COUNT. A row is written before the paid work so the stem guard covers
+    that window, but the in-flight upload is ALREADY counted by its reservation - counting
+    both halved everybody's effective limit (measured: 3 accepted against a cap of 5).
+    """
     try:
-        return sum(1 for r in _rows().values() if r.get("uploaded_by"))
+        return sum(1 for r in _rows().values() if r.get("uploaded_by") and not r.get("pending"))
     except Exception:  # noqa: BLE001
         return 0
 
@@ -114,11 +151,16 @@ def count_for(discord_id: str) -> int:
     Counted from the manifest rather than a separate ledger so the quota and the copyright record
     can never disagree. A song removed from the catalogue therefore returns its slot, which is the
     behaviour we want.
+    
+    PENDING ROWS DO NOT COUNT. A row is written before the paid work so the stem guard covers
+    that window, but the in-flight upload is ALREADY counted by its reservation - counting
+    both halved everybody's effective limit (measured: 3 accepted against a cap of 5).
     """
     if not discord_id:
         return 0
     try:
-        return sum(1 for r in _rows().values() if str(r.get("uploaded_by") or "") == discord_id)
+        return sum(1 for r in _rows().values()
+                   if str(r.get("uploaded_by") or "") == discord_id and not r.get("pending"))
     except Exception:  # noqa: BLE001
         return 0
 
@@ -134,7 +176,8 @@ def mine(discord_id: str) -> list[dict]:
     if not discord_id:
         return []
     try:
-        return [r for r in _rows().values() if str(r.get("uploaded_by") or "") == discord_id]
+        return [r for r in _rows().values()
+                if str(r.get("uploaded_by") or "") == discord_id and not r.get("pending")]
     except Exception:  # noqa: BLE001
         return []
 

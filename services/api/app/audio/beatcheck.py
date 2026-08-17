@@ -1,4 +1,26 @@
-"""Is this actually music with a pulse? A FREE, local gate in front of the paid calls.
+"""Is this actually music with a pulse? A FREE, local COURTESY FILTER in front of the paid calls.
+
+THIS IS NOT A SECURITY CONTROL, and it is important that nobody later mistakes it for one.
+
+Its job is to stop an ACCIDENT costing money: somebody attaches a podcast, a voice note or the
+wrong file, and it is refused in seconds instead of paying about 12 cents to separate speech into
+four stems. It does that well.
+
+It cannot stop somebody who is TRYING. Two rounds of the security review beat it twice — first with
+a tick over silence, then, after a density gate was added, with the same tick over a quiet drone
+(260 KB, straight through both gates). Neither gate looks at timbre, harmony or spectral variety,
+so the whole bar is "periodic and not silent", and both are trivially synthesised. Tuning it
+against each new crafted payload is an arms race with no end, and every turn of it risks the
+expensive mistake in the other direction: rejecting a real song somebody made.
+
+**The real defence against a hostile uploader is `app/spend.py`** — a hard, durable ceiling on how
+many paid attempts can ever happen, counted across everybody, successes and failures alike. That
+bounds the bill no matter what the file is. Founder's call, 2026-08-17: leave the threshold, write
+the limitation down, move on.
+
+So the bar below stays where the MEASUREMENT put it (0 of 118 real songs rejected) and is not to be
+raised chasing a crafted sample — raising it costs real uploads and buys nothing.
+
 
 WHY IT EXISTS. `/add` spends real money on every accepted file — Replicate stem separation plus the
 cloud structure analyser, about 12 cents a song. A podcast, a voice note or a phone recording will
