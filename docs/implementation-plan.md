@@ -2,6 +2,22 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-17 (UPLOADS: audit done, blocker fixed, `/add` NOT BUILT; branch `feat/add-your-own-song`).**
+
+**IN FLIGHT — the feature is one commit in, and that commit is groundwork, not the feature.** `/add` does not exist. Nothing user-visible changed today.
+
+**What was done.** A full read-the-code audit of the analysis pipeline (published as an artifact) answering: every stored field, what produces it, stems, caching, hand-marks, the grind-time contract, and cost. Then the one change the founder called a blocker.
+
+**The blocker, and it was not what the handoff said it was.** The open item read "Anchor Point talks over its guest — one line on a hand-maintained list is the fix". Measured across the 216 real mixplans on disk, that is wrong in both directions: Anchor Point averages 44% guest share over 20 plans (not broken), while the specific reported pair Anchor Point × Location gives the guest 20% (33s vs 135s), and **8 of 30 beats leave the guest under half** — I Was Never There is 27%, worse than Anchor Point. One list entry would have fixed roughly one pairing.
+
+**What shipped instead.** `build_mix_plan(..., guest_is_upload=False)`. When Song 2 is an upload, Song 1's own vocal is not placed and the guest carries the whole mix — every beat at once, no per-beat ear-work. Kept as a separate condition beside `instrumental_beats.is_instrumental_only()` rather than folded into it, because that function's contract is "is this beat on the hand-picked list" and it documents at length why it must never widen into a guess. Default False; a test asserts the default plan is byte-identical to the pre-change one. `tests/test_upload_guest_keeps_the_mic.py` (5, red first). **Engine suite 845 -> 850.**
+
+**Decisions frozen by the founder for `/add`:** uploads stay on the laptop (3 users × 5 = 15 songs); $5 Replicate is enough; uploads never enter the 25-slot picker (the `/add` reply carries the grind action); every upload is a VOCAL (song2 only); 3 hardcoded Discord ids; uploader asserts ownership, we store the uploader id per song; keep the Replicate allin1 wrapper — local allin1 is dropped.
+
+**DRIFT NOTE — the audit found the docs' own architecture map is wrong.** `CLAUDE.md` Part B lists `workers/analyze.py` and `workers/stems.py`. Neither exists; analysis lives in `services/api/app/audio/analysis.py` and stems in `app/audio/stems.py`. Also worth recording because it changes a design assumption: **our cloud analyzer already IS allin1** — `sakemin/all-in-one-music-structure-analyzer` is a Replicate wrapper of `mir-aidj/all-in-one`, so BPM, beats, downbeats and sections have come from allin1 all along.
+
+**DRIFT NOTE — a wrong inference I made and had to withdraw.** I first sized the guest-squeeze problem from `instrumental_beats.vocal_coverage()` and reported 22 broken beats. The function's own docstring forbids exactly that: _"a beat is NEVER auto-silenced from a coverage number — that wrongly muted beats with real vocals (e.g. I Adore You, which reads ~99% vocal but sings fine)."_ Coverage is a diagnostic signal only. The mixplan measurement replaced it.
+
 ## Status: **LATEST 2026-08-16 (CATALOG SWAP + the grind room reset; branch `fix/the-mix-always-reaches-you`).**
 
 **Bad Guy BANNED, Blinding Lights PINNED** in `scripts/set_featured.py`. Blinding Lights was already ingested, so no Replicate spend — which was the deciding constraint, the balance being zero. Pinning was required: at 171 BPM it scores 6/25 clean against Bad Guy's 18, last of the 23 English vocals available, so the ranking would never reach it.
