@@ -124,6 +124,49 @@ _How it is built. Starts as the intended design (from the PRD + discovery deltas
 >
 > **LATEST — 2026-08-07 (merged to `main`).** **NEW base rules under every rule (Rule 1/3/4): never-decline tempo auto-match + empirical (measured-from-audio) key match.** When a pair is too far apart for the safe band, the fence no longer declines — `legal_options(force_tempo=True)` keeps the beat native and stretches the vocal FULLY onto it (`tempo_forced`), per-bar beat-locked with a widened grip (`WARP_*_FORCED`) so it can't drift; `_fold_source` folds all octaves so the forced stretch is provably in `[FORCE_STRETCH_LO, FORCE_STRETCH_HI]`. When a key LABEL is untrusted (`keys.resolve_key_shift` returns "key-skip"), the vocal shift is MEASURED from the audio (`app/audio/chroma.py::empirical_shift` — AutoMashUpper cosine over beat-sync chroma, reusing the existing `chroma()`), ±3 semitones formant-preserved, applied via the Signalsmith executor. The referee (`validate.py`) widens the B3 stretch band + R7 warp band ONLY for a `tempo_forced` plan (plus a single-segment-drift guard) — every other guard unchanged; gated behind `plan._FORCE_TEMPO_ENABLED` folded into `ENGINE_VERSION` (`m11rule`→`m12match+m12force`). Beat-sensor health logged per mix (`planner/beatgrid.py`). Adversarially reviewed; full suite 554 green. _(The rest of this banner — per-mix RULE selection — is unchanged:)_ Per-mix **RULE selection**, honoring the brain-plans/engine-executes principle. A `rule` field flows `MixRequest`/`SetPairRequest` → `mix_id_for`/`set_id_for` (rule-tagged cache ids; rule 1 byte-identical) → `build_mix_plan(rule=…)` → `_run_mix`. **Rule 3 (chop & repeat)** is two NEW, non-guarded modules: `app/planner/rule3.py` (the deterministic chop-schedule brain — hook A/C blocks, beat-locked bars, word-safe word-ends, trade gaps, weave) and `workers/rule3.py` (the renderer, which REUSES `render.py`'s beat-lock/echo/reverb primitives by import, so **the guarded `render.py`/`validate.py` are NOT edited**). **Rule 4 gating** is planner-only: `build_mix_plan` sets the echo/reverb `reverb_bed` flag only when `rule==4` (dry is the default; `_ENGINE_VERSION_BASE` bumped `m9band15`→`m11rule` so stale echo-default mixes re-render). The **shared foundation** (BPM stretch + key shift + fence decline) runs first for every rule; the **best-parts crop** (`workers/best_parts.py`) and **set seams** (`workers/set_render.py`) are common to all rules (a set joins finished, cropped mixes and reads only rule-independent metadata). `assert_render` guards every rule's output. Web: a per-song rule picker in `SetupScreen`, threaded through `study.ts`/`api.ts`. Full rule design: [docs/RULEBOOK.md](RULEBOOK.md).
 
+
+## Uploads (`/add`) — as built, 2026-08-18
+
+**The bot ingests nothing.** `services/discord-bot` has no numpy, no Replicate and no ffmpeg; it
+posts the bytes to `POST /songs/add` and reports what comes back. One pipeline, so an upload cannot
+drift from the catalogue.
+
+**Order of checks, cheapest first** (`app/routes/songs.py`): uploader id shape → role → drop parse
+→ spend budget → per-person and shelf caps → free disk → extension → declared body size → streamed
+size cap → `probe_seconds` (ffprobe, before any decode) → `normalize_audio` with a decode cap →
+duration → `beatcheck` → hash → dedupe on the manifest ROW → row written `pending` → paid work →
+`pending` cleared. Nothing costs money until everything free has passed.
+
+**Two ceilings, deliberately different questions.** `max_uploads_per_user` (5) and
+`max_uploaded_songs` (20) count songs KEPT — a failure returns its slot, so an outage never burns
+somebody's five. `app/spend.py` counts PAID ATTEMPTS (40, ~$4.80), successes and failures alike,
+in a durable file; an unreadable record reads as spent, never as zero. The shelf is deliberately
+below the budget so the recoverable limit is always the one hit first.
+
+**Reservations, not row-counting.** A slot is claimed before the file is read (`_claim_slot`) and
+released in a `finally`. Counting finished rows capped nothing: rows are written after the paid
+work, so 30 uploads from one person against a cap of 5 were all accepted.
+
+**`app/audio/replicate_client.py` is the only route to a paid call.** One client, connect 30s /
+transfer 600s. The module default is httpx's 5 seconds, which cannot upload a song — this was the
+cause of the first two real upload failures.
+
+**Access control fails CLOSED** (`uploads.is_upload_or_unknown`), unlike the planner's
+`is_upload`, which fails open on purpose so a bad read cannot silence a catalogue beat mid-mix.
+Uploads are excluded from `GET /library`, their whole audio is refused by `GET /songs/{id}/audio`,
+and their stems 403. `/songs/mine/{id}` is the only route to somebody's own songs, and it filters
+on `uploaded_by` alone — never language.
+
+**Cross-site guard** (`app/main.py`): a mutating request carrying an `Origin` but no
+`X-PromptDJ-App` header is refused, plus a `Content-Length` ceiling checked before the body is
+parsed (Starlette spools anything over 1 MB to disk before the handler runs, so the streaming cap
+was too late to protect the disk).
+
+**The beat pre-check is a courtesy filter, not a security control** (`app/audio/beatcheck.py`).
+It stops an accidental podcast costing 12 cents. It was beaten twice by crafted audio and is
+deliberately not being tuned further; the spend ceiling is the real defence.
+
+
 ## The one architectural principle (do not violate)
 
 **The language model plans. The audio engine executes. They never mix.** The LLM turns (analysis + request) into a structured `MixPlan` (Feature 1) or a `LiveOp` (Feature 2). A deterministic render/playback engine executes those objects with DSP. The LLM never touches audio samples. This buys: editability, near-zero LLM cost, no hallucinated audio, and full debuggability.
