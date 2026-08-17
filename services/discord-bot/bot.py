@@ -1326,9 +1326,14 @@ def plan_uploads(my_beat, my_vocal) -> UploadPlan:
                 "it needs to be an MP3 or an M4A."))
         size = getattr(att, "size", 0) or 0
         if size > MAX_UPLOAD_BYTES:
+            # MB HERE MEANS 1024 KB, WHICH IS WHAT THE CAP IS COUNTED IN. Dividing by a million
+            # instead (inherited from the old /add) rendered the 30 MB ceiling as "31 MB" - the
+            # app quoting a limit that matches nothing else it says, including the engine's own
+            # refusal. Caught by walking the journey, not by a test.
+            mb = 1024 * 1024
             return UploadPlan(refusal=(
-                f"**{name}** is {size / 1_000_000:.0f} MB, which is more than I can take. "
-                f"The limit is {MAX_UPLOAD_BYTES // 1_000_000} MB."))
+                f"**{name}** is {size / mb:.0f} MB, which is more than I can take. "
+                f"The limit is {MAX_UPLOAD_BYTES // mb} MB."))
 
     if len(uploads) == 2:
         a, b = uploads[0][1], uploads[1][1]
@@ -1461,6 +1466,33 @@ class UploadedSongView(discord.ui.View):
 _FIRST_TIME_NOTE = ("\n_First time two songs meet, the mix takes 50–70 seconds — after that, "
                     "the same pair is about 20. It is slowest the very first time._")
 
+# SAID OUT LOUD BECAUSE THE ALTERNATIVE IS SILENCE. See `_drop_went_nowhere`.
+_OLD_DROP_NOTE = ("\n⚠️ That beat was already in your songs, so it kept the drop it already had — "
+                  "the time you just typed was not saved. Nothing was charged for it.")
+
+
+def _drop_went_nowhere(got_in: list, drop: str) -> bool:
+    """Did somebody type a drop that the engine then quietly ignored?
+
+    `POST /songs/add` dedupes on the manifest ROW and returns early when the song is already
+    there — before it ever writes `main_drop`. That is right for money (a duplicate costs nothing
+    and must not spend a slot) and wrong for the person, who was asked a question, answered it, and
+    got no sign that the answer went in the bin.
+
+    THIS IS NOT HYPOTHETICAL AND IT BITES THE FOUNDER FIRST. Both of their own uploads are stored
+    as `vocals` with NO drop, because until tonight declaring a beat forced you to supply one and
+    declaring a vocal did not — so the fastest way past the question was to call every song a
+    vocal. The moment they re-attach one as `my_beat` and type the real drop, this is the path they
+    are on.
+
+    The bot cannot fix it: recording the drop means changing `routes/songs.py`, which is a
+    dangerous-path surface and is STAGED for the founder rather than applied overnight. So the bot
+    does the one thing it can do honestly, which is say so.
+    """
+    if not (drop or "").strip():
+        return False
+    return any(role == "beat" and was_here for role, _sid, _name, was_here in got_in)
+
 
 async def _ingest_uploads(interaction: discord.Interaction, plan: UploadPlan, drop: str) -> None:
     """Take the attached song(s) in, then go straight on to the grind.
@@ -1501,7 +1533,7 @@ async def _ingest_uploads(interaction: discord.Interaction, plan: UploadPlan, dr
             body.append("Nothing was kept, and it has not used one of your five.")
             await card.edit(embed=ui.error_embed("\n".join(body)))
             return
-        role_in, id_in, name_in = got_in[0]
+        role_in, id_in, name_in, _dup = got_in[0]
         body.append(f"\n**{name_in}** did go in, though. Pick a "
                     f"{_ROLE_WORD['vocals' if role_in == 'beat' else 'beat']} "
                     f"below and I will grind that one.")
@@ -1512,7 +1544,7 @@ async def _ingest_uploads(interaction: discord.Interaction, plan: UploadPlan, dr
                                             description="\n".join(body)),
                         view=view if view.children else None)
 
-    got_in: list[tuple[str, str, str]] = []      # (role, song_id, name)
+    got_in: list[tuple[str, str, str, bool]] = []      # (role, song_id, name, was_already_here)
     for idx, (role, att) in enumerate(plan.uploads, 1):
         stem = Path(att.filename).stem
         await show(idx, stem, "checking it")
@@ -1534,7 +1566,8 @@ async def _ingest_uploads(interaction: discord.Interaction, plan: UploadPlan, dr
             return
 
         song_id = str(started["song_id"])
-        if not started.get("duplicate"):
+        was_here = bool(started.get("duplicate"))
+        if not was_here:
             try:
                 finished = await bot.api.wait_for_add(
                     song_id, on_stage=lambda t, i=idx, n=stem: show(i, n, t))
@@ -1544,14 +1577,16 @@ async def _ingest_uploads(interaction: discord.Interaction, plan: UploadPlan, dr
             if finished.get("error"):
                 await stopped(stem, str(finished["error"]), got_in)
                 return
-        got_in.append((role, song_id, str(started.get("name") or stem)))
+        got_in.append((role, song_id, str(started.get("name") or stem), was_here))
 
     await bot.refresh_catalog()                  # the catalogue half of the picker
     await _refresh_my_uploads(who)               # ...and their own half
 
+    kept_its_old_drop = _drop_went_nowhere(got_in, drop)
+
     if len(got_in) == 2:
-        beat_id = next(sid for role, sid, _ in got_in if role == "beat")
-        vocal_id = next(sid for role, sid, _ in got_in if role == "vocals")
+        beat_id = next(sid for role, sid, _n, _d in got_in if role == "beat")
+        vocal_id = next(sid for role, sid, _n, _d in got_in if role == "vocals")
         if beat_id == vocal_id:
             # THE REAL SAME-SONG GUARD. `plan_uploads` compares names and sizes, which a rename
             # defeats; a song_id is a hash of the NORMALISED audio, so this catches the same track
@@ -1561,21 +1596,26 @@ async def _ingest_uploads(interaction: discord.Interaction, plan: UploadPlan, dr
                 "Those two are the same song, so there is nothing to mix together. "
                 "Send a different track for one of the two sides."))
             return
-        beat_name = next(n for role, _, n in got_in if role == "beat")
-        vocal_name = next(n for role, _, n in got_in if role == "vocals")
+        beat_name = next(n for role, _s, n, _d in got_in if role == "beat")
+        vocal_name = next(n for role, _s, n, _d in got_in if role == "vocals")
+        body = [f"**{beat_name}** on the beat, **{vocal_name}** singing over it.",
+                "Grinding it now — no catalogue song involved."]
+        if kept_its_old_drop:
+            body.append(_OLD_DROP_NOTE)
         await card.edit(embed=discord.Embed(
             title="Both of yours are in", colour=brand.PRIMARY,
-            description=f"**{beat_name}** on the beat, **{vocal_name}** singing over it."
-                        f"\nGrinding it now — no catalogue song involved." + _FIRST_TIME_NOTE))
+            description="\n".join(body) + _FIRST_TIME_NOTE))
         await GrindContext(interaction, [(beat_id, vocal_id)]).run(first=True)
         return
 
-    role, song_id, name = got_in[0]
+    role, song_id, name, _dup = got_in[0]
     other = _ROLE_WORD["vocals" if role == "beat" else "beat"]
     body = [f"**{name}** is in, as a **{_ROLE_WORD[role]}**.",
             f"Pick a {other} below and I will grind it — or run `/grind` again with your own "
-            f"{other} attached and mix two of your own songs together.",
-            _FIRST_TIME_NOTE]
+            f"{other} attached and mix two of your own songs together."]
+    if kept_its_old_drop:
+        body.append(_OLD_DROP_NOTE)
+    body.append(_FIRST_TIME_NOTE)
     view = UploadedSongView(interaction.user.id, song_id, role)
     await card.edit(embed=discord.Embed(title="Your song is ready", colour=brand.PRIMARY,
                                         description="\n".join(body)),

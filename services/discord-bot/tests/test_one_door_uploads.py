@@ -171,6 +171,15 @@ def test_the_size_limit_matches_the_engines_own_cap():
     assert botmod.MAX_UPLOAD_BYTES == 30 * 1024 * 1024
 
 
+def test_the_refusal_quotes_the_limit_everything_else_quotes():
+    """It said "the limit is 31 MB" — because it divided by a million while the cap counts in
+    1024s. The engine's own refusal says 30 MB, so the app was quoting a ceiling that matched
+    nothing else it says. Found by walking the journey; no test would have noticed."""
+    plan = botmod.plan_uploads(_Att("huge.mp3", size=40 * 1024 * 1024), None)
+    assert "30 MB" in plan.refusal, f"quoted the wrong limit: {plan.refusal}"
+    assert "40 MB" in plan.refusal, f"quoted the wrong file size: {plan.refusal}"
+
+
 # --- the drop, read the way the engine reads it ------------------------------------------------
 
 @pytest.mark.parametrize("raw,expected", [
@@ -283,6 +292,39 @@ def test_a_good_drop_goes_through_to_the_ingest(monkeypatch):
     modal.drop._value = "1:24"
     asyncio.run(modal.on_submit(_Interaction({})))
     assert got["drop"] == "1:24"
+
+
+# --- a drop that goes nowhere is said out loud ---------------------------------------------------
+
+def test_a_drop_typed_for_a_song_already_here_is_admitted_not_swallowed():
+    """`POST /songs/add` returns early on a duplicate, BEFORE it writes `main_drop`. So somebody
+    who re-attaches a song they already uploaded is asked for the drop, answers, and the answer is
+    binned with nothing on screen saying so.
+
+    IT BITES THE FOUNDER FIRST: both of their own uploads are stored as `vocals` with no drop,
+    because until tonight declaring a beat forced you to supply one and declaring a vocal did not.
+    Re-attaching one as `my_beat` is exactly this path."""
+    got_in = [("beat", "b" * 64, "My Beat", True)]        # True = it was already here
+    assert botmod._drop_went_nowhere(got_in, "1:24") is True
+
+
+def test_a_drop_on_a_brand_new_beat_is_not_flagged():
+    got_in = [("beat", "b" * 64, "My Beat", False)]
+    assert botmod._drop_went_nowhere(got_in, "1:24") is False
+
+
+def test_a_vocal_that_was_already_here_raises_nothing():
+    """A vocal is never asked for a drop, so there is no answer to lose."""
+    got_in = [("vocals", "v" * 64, "My Vocal", True)]
+    assert botmod._drop_went_nowhere(got_in, "") is False
+    assert botmod._drop_went_nowhere(got_in, "1:24") is False
+
+
+def test_the_warning_says_no_money_was_taken():
+    """The person is being told something went wrong. The very next thing they will wonder is
+    whether it cost them, so it is answered in the same breath."""
+    assert "charged" in botmod._OLD_DROP_NOTE or "cost" in botmod._OLD_DROP_NOTE
+    assert "not saved" in botmod._OLD_DROP_NOTE
 
 
 # --- the old door is closed ---------------------------------------------------------------------

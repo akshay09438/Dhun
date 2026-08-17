@@ -2,7 +2,63 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
-## Status: **LATEST 2026-08-18 (UPLOADS ARE LIVE — and the first real one failed on a 5-second default; branch `fix/uploads-can-actually-reach-replicate`).**
+## Status: **LATEST 2026-08-18, small hours (ONE DOOR — `/grind` carries your own songs; `/add` deleted. Branch `feat/one-door-bring-your-own-songs`.)**
+
+**THE FOUNDER'S REPORT WAS ABOUT THE JOURNEY, NOT THE SOUND.** _"I like the mixes they are making
+but this is the issue and the experience is the issue."_ Three complaints, all reproduced in the
+code before anything changed: `/add` took ONE song so two of your own could never meet; the `drop`
+box was shown while adding a VOCAL (never enforced there — Discord displays every option whatever
+you picked, so the check was fine and the shape was wrong); and uploading was a separate errand
+from grinding.
+
+**WHAT SHIPPED.** `/grind` gained two optional attachments, `my_beat` and `my_vocal`. Nothing
+attached is the picker exactly as before, pinned by a test. Either one attached and you choose its
+partner from the menu. **Both attached and it mixes two of your own songs with no catalogue song
+involved** — which had never been reachable. The drop question left the command and became a modal
+asked ONLY when a beat is attached. `/add` is deleted; `/mine` stays.
+
+**THE PLATFORM WALL THE FOUNDER'S FIRST CHOICE HIT.** They wanted an "Add your own song" button
+inside the `/grind` screen. Discord does not permit it — a button or select cannot open a file
+picker and a modal takes text only — so a file can only ever arrive attached to a command. Told to
+them at kickoff; they chose the attachment shape over a second command.
+
+**PROVEN AGAINST THE LIVE ENGINE, WHICH IS THE WHOLE POINT AFTER LAST NIGHT.** The new ingest path
+was driven for real against `localhost:8000` with the founder's own two files, and the pair was
+rendered **both ways round**: `drones x heal` ready in 26.8s, `heal x drones` in 16.1s. No silence,
+no clipping, ~31 dB of movement. **This is the first time in the product's life that two uploaded
+songs have been mixed together.** MP3 highlights were written for the founder to judge by ear.
+
+**TWO THINGS THE HANDOFF SAID THAT WERE ALREADY UNTRUE, corrected here so they are not re-derived.**
+(1) _"IN FLIGHT: one commit, pushed, NO PR yet"_ — PR **#69 was merged at 2026-08-17T19:34Z** with
+**two** commits; the timeout fix has been on `main` all along and my own first check missed it
+because it shelled out to `gh`, which is **not installed on this machine**, and the failure was
+swallowed. (2) _"NO UPLOAD HAS EVER SUCCEEDED… catalogue 0 uploads"_ — **two uploads have
+succeeded**; the founder's own `/songs/mine` reads **2 of 5**. `GET /library` deliberately excludes
+uploads, so reading the catalogue can never see them. **I repeated that error to the founder at
+kickoff**, telling them their songs were not in the app and asking them to authorise ~24c on that
+basis. They were already there, both ingests came back `duplicate`, and **no money was spent** —
+paid attempts sat at 3 before and after.
+
+**A SILENT NO-OP FOUND, ADMITTED, AND STAGED RATHER THAN FIXED.** `POST /songs/add` returns early
+on a duplicate, BEFORE writing `main_drop` — so a drop typed for a song already in the hopper is
+binned with nothing on screen. It bites the founder first: both their uploads are stored as
+`vocals` with no drop, because until tonight the fastest way past the drop question was to call
+every song a vocal. The bot now says so plainly. The real fix edits `routes/songs.py`, a
+dangerous-path surface, so it is **staged for the founder's approval, not applied overnight**.
+
+**A COPY BUG THE DRY RUN CAUGHT AND NO TEST WOULD HAVE.** The oversize refusal divided by
+1,000,000 while the cap counts in 1024s, so the 30 MB limit was announced as **"31 MB"**.
+
+**TWO EXISTING TESTS REWRITTEN, BOTH STRICTER, NEITHER WEAKENED** — they pinned the decision the
+founder reversed, and one had left an instruction for exactly this case.
+
+**DECLINED BY THE FOUNDER AT KICKOFF, recorded so they are not mistaken for omissions:** surfacing
+`/mine` inside the picker, and repairing the 6 silently-skipping real-audio tests. **Those 6 still
+skip.**
+
+**Bot suite 567 → 606. Engine, web, lint and typecheck: see the verification table in the handoff.**
+
+## Status: **2026-08-18 (UPLOADS ARE LIVE — and the first real one failed on a 5-second default; branch `fix/uploads-can-actually-reach-replicate`, MERGED as PR #69).**
 
 **SHIPPED.** PR #68 merged; engine and Grinder restarted 00:38; `/add` and `/mine` synced to the
 guild. Then the founder's first upload failed.
