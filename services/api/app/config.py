@@ -54,9 +54,15 @@ class Settings:
     # Uploads are a NARROWER type gate than `allowed_exts` above: Suno exports MP3, and every extra
     # container is another decoder reachable by a stranger for no user benefit.
     upload_exts: frozenset[str] = frozenset({".mp3", ".m4a"})
-    # 40 songs is roughly 2.6 GB stored (a ~48 MB wav plus ~16 MB of stems each) and about $2.80 of
-    # Replicate at ~7c a song — sized against the $5 balance and the disk, not chosen for feel.
-    max_uploaded_songs: int = 40
+    # DELIBERATELY LOWER THAN THE SPEND CEILING BELOW, and that gap is the point. Set equal, the
+    # 40th successful upload would exhaust both at the same instant — and because spend never
+    # decrements, clearing the shelf would not bring uploads back. Whoever hit that would meet a
+    # permanent, unexplained dead end and reasonably read it as a bug. At 20 the shelf fills first,
+    # with a message that says so and a fix (remove a song) that works. Founder's call, 2026-08-18.
+    #
+    # 20 songs is roughly 1.7 GB stored — an 8-minute upload normalises to ~85 MB, not the ~48 MB
+    # this was first sized against (measured in the third security review).
+    max_uploaded_songs: int = 20
     # Per person, so one enthusiast cannot spend the whole global cap on their own. This counts
     # songs KEPT, not money: a failed attempt gives its slot straight back, because a Replicate
     # outage must not burn somebody's five.
