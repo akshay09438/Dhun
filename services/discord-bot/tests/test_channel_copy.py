@@ -307,14 +307,20 @@ def test_no_copy_mentions_a_command_that_does_not_exist():
 
 
 def test_help_does_not_promise_grind_options_that_do_not_exist():
-    """/help offered `/grind beat: ... vocal: ...`. /grind takes no options, so that is an
-    instruction that silently does nothing."""
+    """/help once offered `/grind beat: ... vocal: ...` after those options were deleted, so it
+    taught a shortcut that silently did nothing.
+
+    REWRITTEN 2026-08-18, on the instruction the previous version left behind ("/grind grew options
+    again, so this test needs rewriting rather than the copy"). /grind now genuinely accepts two
+    file options, so the rule is stated as what it always meant: every `/grind something:` form
+    /help shows must be an option the command actually accepts. That is strictly stronger than the
+    old assertion, which could only ever check the empty case."""
     grind = botmod.bot.tree.get_command("grind")
-    assert not getattr(grind, "parameters", []), \
-        "/grind grew options again, so this test needs rewriting rather than the copy"
+    real = {p.name for p in getattr(grind, "parameters", [])}
     text = _text(ui.help_embed())
-    assert not re.search(r"/grind\s+\w+\s*:", text), \
-        "/help still shows a /grind option form the command does not accept"
+    shown = set(re.findall(r"/grind\s+(\w+)\s*:", text))
+    assert shown <= real, \
+        f"/help shows a /grind option the command does not accept: {sorted(shown - real)}"
 
 
 def test_no_copy_mentions_a_role_that_was_deleted():

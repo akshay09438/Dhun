@@ -1,38 +1,45 @@
 {
-  "session": "2026-08-12-goodnight-night3-hygiene-panda-and-the-costing",
+  "session": "2026-08-18-goodnight-one-door-uploads",
   "invoked": "/zuko:goodnight",
-  "kickoff_context": "Runs straight after the founder confirmed BY EAR that two listening rooms play at the same time and that nothing starts on its own any more. Tonight's hour of confusion was caused by a GHOST BOT - a Grinder process from 18:34 still running invisibly with the old code; it was killed live, and it explains the auto-play, the 'only one room' refusal and the Unknown-interaction 404s. Free disk at kickoff: 8.68 GB.",
+  "kickoff_context": "The founder used /add for real and found the JOURNEY wrong, not the sound: 'I like the mixes they are making but this is the issue and the experience is the issue.' Three concrete complaints, all reproduced in the code: (1) /add takes ONE song, so you cannot bring your own beat AND your own vocal; (2) the `drop` field is VISIBLE on the /add command even when you choose vocal, so it reads as being asked for something irrelevant (the code only ENFORCES it for beats - Discord shows all options regardless of the choice, which is the platform's behaviour, not a bug in our check); (3) uploading is a separate errand from grinding, so you go to two places to do one thing. Free disk at kickoff: 6.45 GB. Engine UP, Grinder UP, catalogue 77 songs / 0 uploads, paid attempts 1 of 40.",
+  "the_platform_wall_stated_plainly": "Discord does NOT allow a button or a select menu to open a file picker, and modals accept text inputs only. A bot can receive a file in exactly two ways: as a slash-command ATTACHMENT option, or from a message the user posts in a channel (which needs the privileged MESSAGE_CONTENT intent AND would make an unreleased track publicly visible - directly against the founder's own locked-down rule that an upload is never shown to anybody else). So the founder's priority-1 as literally described - an 'Add your own song' BUTTON inside the /grind screen - cannot be built. This was told to the founder at kickoff before they chose.",
   "decisions": [
     {
       "id": "D1",
-      "question": "How much will a typical member actually make mixes (for the costing)?",
-      "answer": "SHOW ALL THREE CASES SIDE BY SIDE - light (mostly listeners), baseline (a few a week each), heavy (constant grinding).",
-      "detail": "Chosen so the founder can see where the cost cliff is and decide how hard to push growth. Listening is free once a mix exists; only MAKING mixes costs money, so member count alone does not drive the bill."
+      "question": "Given a button cannot open a file picker, what shape should the journey take?",
+      "answer": "THE FILES RIDE WITH /grind. One door.",
+      "detail": "/grind gains two OPTIONAL attachment fields. Attach nothing and it is exactly today's picker, unchanged and byte-identical - that is pinned by a test, because /grind is the single path the whole product runs through and a regression there takes the server down. Attach your own beat, or your own vocal, or BOTH. Whatever you attach, you are not asked to pick that side from the menu; whatever you leave out, you pick as usual. Both attached means your own two songs with no catalogue song involved, straight to grinding. This satisfies the founder's stated goal ('users don't go here and there') better than their own priority-1 would have, because it removes the second command entirely rather than hiding it behind a button."
     },
     {
       "id": "D2",
-      "question": "'Make all songs play no matter what' - how far does that go?",
-      "answer": "SWEEP AND REPORT, DO NOT WEAKEN THE REFEREE.",
-      "detail": "Stated to the founder at kickoff and not objected to. The never-decline rule already means no pair is refused for tempo or key. The only remaining refusal is the quality referee catching a render that genuinely sounds bad, and disabling that is the one thing the project's own rules forbid - it is what stops the app quietly shipping mush. Instead: sweep every pair, and report each one that cannot ship WITH ITS REAL REASON, so the founder decides per song."
+      "question": "The two test songs need paid splitting. Spend it?",
+      "answer": "YES - approximately 24 cents, 2 of the 40 paid attempts.",
+      "detail": "IMPORTANT CORRECTION TO THE FOUNDER'S OWN BELIEF, told to them at kickoff: they said 'both the songs I have already uploaded in the application, so you can check... you don't have to maybe again run through the stems.' They are NOT in the application. The catalogue index has no trace of either; the library reports 0 uploads. Both sit on the Desktop as MP3s (2.5 MB and 4.7 MB). Last night's single failed paid attempt was almost certainly one of them. So proving the new journey for real REQUIRES paying to split them, and the founder said yes. Cap: 2 attempts for the planned work; do not exceed 4 without stopping and reporting."
     },
     {
       "id": "D3",
-      "question": "The Panda fix - can it be applied overnight?",
-      "answer": "NO. STAGED FOR A HUMAN YES.",
-      "detail": "Not a preference - the deterministic floor. If the cause is where the evidence points (the vocal chain or the referee) the fix touches a dangerous-path file, so it is built and reviewed but left on the founder's desk. Expect one decision card in the morning, not a finished fix."
+      "question": "How should the drop be asked for when somebody uploads a beat?",
+      "answer": "ASK IN A POP-UP BOX, AND ONLY WHEN A BEAT WAS ATTACHED.",
+      "detail": "This is the direct fix for complaint (2). The `drop` field comes OFF the command entirely, so it can never again be shown to somebody uploading a vocal. Instead, when - and only when - a beat is attached, a modal asks where the drop hits. A modal is a legal FIRST response to a slash command, so this costs no extra step and no extra command. Upload a vocal and you are asked nothing at all. Founder explicitly rejected both 'let me skip it' and 'never ask' after being shown that the app's own drop detection measured ~36% precision (7 drops found on a song with 2)."
+    },
+    {
+      "id": "D4",
+      "question": "What else tonight?",
+      "answer": "OPEN THE PR FOR THE TIMEOUT FIX. Nothing else.",
+      "detail": "Founder chose this one extra and declined the other two offered (surfacing /mine inside the picker, and repairing the 6 silently-skipping tests). Those two stay unbuilt and are NOT to be done opportunistically - they were offered and turned down, which is a decision, not an oversight. Record them as declined in the morning report so they are not rediscovered as omissions."
     }
   ],
-  "already_known_at_kickoff": [
-    "The clip the founder heard was mix 221.5s-441.1s of a 474.7s render (envelope alignment, match 0.68 vs next-best 0.65 - weak, state the confidence).",
-    "The PLAN places Panda's vocal for 87.4s of that 220s clip (40%), so it is not a planning failure - the question is whether it survived the render.",
-    "Two suspects: the parked vocal-loudness issue (vocals ~6-8 dB under the beat, no makeup gain, recorded 2026-08-08) and half_time_pair (122 BPM beat vs 72 BPM vocal, vocal_stretch 0.85 - right at the recorded 15% warble threshold).",
-    "A vocal-band energy check was inconclusive and confounded by the arrangement's energy arc. Do not present it as evidence."
-  ],
+  "risk_calibration": {
+    "T1_grind_takes_uploads": "sensitivity=internal, reversibility=additive, maturity=prelaunch -> score 2, route AUTO-APPLY. It touches NO dangerous glob: the whole change lives in services/discord-bot/, and the engine already accepts role + main_drop + uploaded_by on POST /songs/add, so services/api/app/routes/songs.py is NOT edited. Verified by reading api_client.add_song before planning.",
+    "note_the_scorer_does_not_capture": "The scorer measures DANGER, not blast radius. /grind is the single command the entire Discord runs on, so a regression there is a total outage even though nothing sensitive is touched. Mitigation is therefore self-imposed, not scored: the no-attachment path must remain byte-identical and be pinned by a test that fails if it drifts."
+  },
   "standing_rules_that_apply_tonight": [
     "The founder's Discord server is hand-tuned and OFF LIMITS. Never run /setup, with any flag.",
     "The bot NEVER judges a mix - no rating, score, verdict, tempo or key, anywhere.",
-    "Never weaken, skip or delete a test to reach green.",
+    "Never weaken, skip or delete a test to reach green. The 6 already-skipping tests stay skipping and are reported as such.",
     "Nothing merges to main overnight. One branch, one PR.",
-    "Disk: the catalog sweep must delete each render as soon as it is judged. Free space at kickoff is 8.68 GB; below 2 GB, stop and say so."
+    "An upload's stems are NEVER served, and uploads never enter the public catalogue or the web console.",
+    "Disk: free space at kickoff is 6.45 GB; below 2 GB, stop and say so.",
+    "Paid attempts: 1 of 40 spent at kickoff. Budget for tonight is 2, hard ceiling 4."
   ]
 }

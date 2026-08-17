@@ -256,15 +256,33 @@ def _flat(e) -> str:
 # Two things a newcomer hit on 2026-08-11, both the same mistake: the interface described its own
 # mechanics instead of saying what would happen.
 
-def test_grind_takes_no_options_at_all():
-    """Typing /grind offered `beat` and `vocal` as optional fields. A first-timer sees two blanks,
-    does not know what goes in them, and cannot tell that pressing enter is the right move. The
-    command should take nothing: type it, press enter, the picker opens."""
+def test_grind_takes_no_options_except_your_own_files():
+    """REWRITTEN 2026-08-18, because the founder reversed the decision this pinned. It is not
+    weakened: it pins MORE than it used to.
+
+    The original rule was "/grind takes nothing", written after `beat` and `vocal` options were
+    removed - a first-timer seeing two blanks cannot tell that pressing enter is the right move.
+    The REASON those two were wrong is that they duplicated the picker sitting underneath, so the
+    blanks were a second way to do the thing the screen was already doing.
+
+    Attachments are the opposite case: Discord will not let a button or a select menu open a file
+    chooser, and a modal takes text only, so an attachment can ONLY arrive on the command. The
+    alternative to these two options is a second command, which is what the founder asked to be
+    rid of.
+
+    So the rule is now sharper: the ONLY options /grind may ever carry are the person's own files,
+    every one of them optional, and never a song CHOICE - that belongs to the picker."""
     import bot as botmod
+    import discord
 
     cmd = next(c for c in botmod.bot.tree.get_commands() if c.name == "grind")
-    assert list(getattr(cmd, "parameters", [])) == [], \
-        "/grind should have no options; the picker is the whole interface"
+    params = list(getattr(cmd, "parameters", []))
+    assert [p.name for p in params] == ["my_beat", "my_vocal"], \
+        "/grind grew an option that is not one of the person's own files"
+    for p in params:
+        assert not p.required, f"/grind option {p.name!r} is required; typing /grind must still work"
+        assert p.type is discord.AppCommandOptionType.attachment, \
+            f"/grind option {p.name!r} is not a file - a song CHOICE belongs to the picker"
 
 
 def test_the_empty_picker_says_what_stacking_actually_produces(monkeypatch):
