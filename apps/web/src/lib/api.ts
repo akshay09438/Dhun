@@ -12,6 +12,24 @@ export type PollOpts = { pollMs?: number; maxTries?: number };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Every request the app makes goes through here so it carries `X-PromptDJ-App`.
+ *
+ * The engine refuses POST/PUT/PATCH/DELETE without that header. CORS alone does not stop a
+ * cross-origin request from EXECUTING - it only withholds the response - and a multipart POST is
+ * CORS-safelisted, so it gets no preflight at all. A custom header cannot be set cross-origin
+ * without a preflight, and that preflight is refused, so this one header is what stops any page
+ * open in the browser from driving the API. See services/api/app/main.py.
+ */
+export function apiFetch(
+  input: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const headers = new Headers(init.headers ?? {});
+  headers.set("X-PromptDJ-App", "web");
+  return fetch(input, { ...init, headers });
+}
+
 export type SongDTO = {
   id: string;
   original_name: string;
@@ -19,11 +37,18 @@ export type SongDTO = {
   status: string;
 };
 
-export type LibrarySongDTO = SongDTO & { role_hint?: string };
+export type LibrarySongDTO = SongDTO & {
+  role_hint?: string;
+  language?: string;
+  /** One of the curated menu songs. Uploads are never featured. */
+  featured?: boolean;
+  /** Added by a person with /add. Kept out of this console - it is their song. */
+  uploaded?: boolean;
+};
 
 /** The curated song catalog (MVP: users pick from these instead of uploading). */
 export async function getLibrary(): Promise<LibrarySongDTO[]> {
-  const res = await fetch(`${API_BASE}/library`);
+  const res = await apiFetch(`${API_BASE}/library`);
   if (!res.ok) throw new Error("Couldn't load the song library.");
   const data = await res.json();
   return data.songs ?? [];
@@ -38,7 +63,7 @@ export async function uploadSongs(
   body.append("song1", file1);
   body.append("song2", file2);
 
-  const res = await fetch(`${API_BASE}/songs`, { method: "POST", body });
+  const res = await apiFetch(`${API_BASE}/songs`, { method: "POST", body });
   if (!res.ok) {
     const msg = await res.json().catch(() => ({ detail: "Upload failed." }));
     throw new Error(msg.detail ?? "Upload failed.");
@@ -54,7 +79,7 @@ export type StemSetDTO = {
 
 /** Start splitting a song in the cloud. Returns immediately (status "processing"). */
 export async function startSplit(songId: string): Promise<StemSetDTO> {
-  const res = await fetch(`${API_BASE}/songs/${songId}/stems`, {
+  const res = await apiFetch(`${API_BASE}/songs/${songId}/stems`, {
     method: "POST",
   });
   if (!res.ok) {
@@ -66,7 +91,7 @@ export async function startSplit(songId: string): Promise<StemSetDTO> {
 
 /** Check how the split is going: processing / ready (with URLs) / error. */
 export async function getStemStatus(songId: string): Promise<StemSetDTO> {
-  const res = await fetch(`${API_BASE}/songs/${songId}/stems`);
+  const res = await apiFetch(`${API_BASE}/songs/${songId}/stems`);
   if (!res.ok) {
     throw new Error("Could not check the split status.");
   }
@@ -107,7 +132,7 @@ export type TrackAnalysisDTO = {
 
 /** Start analyzing a song (beat, key, structure). Returns immediately. */
 export async function startAnalysis(songId: string): Promise<TrackAnalysisDTO> {
-  const res = await fetch(`${API_BASE}/songs/${songId}/analysis`, {
+  const res = await apiFetch(`${API_BASE}/songs/${songId}/analysis`, {
     method: "POST",
   });
   if (!res.ok) {
@@ -121,7 +146,7 @@ export async function startAnalysis(songId: string): Promise<TrackAnalysisDTO> {
 export async function getAnalysisStatus(
   songId: string,
 ): Promise<TrackAnalysisDTO> {
-  const res = await fetch(`${API_BASE}/songs/${songId}/analysis`);
+  const res = await apiFetch(`${API_BASE}/songs/${songId}/analysis`);
   if (!res.ok) {
     throw new Error("Could not check the analysis status.");
   }
@@ -209,7 +234,7 @@ export async function startMix(
         rule,
         source: SOURCE,
       };
-  const res = await fetch(`${API_BASE}/mix`, {
+  const res = await apiFetch(`${API_BASE}/mix`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -226,7 +251,7 @@ export async function startMix(
 
 /** Check how the mix is going: processing / ready (with plan + url) / error. */
 export async function getMixStatus(mixId: string): Promise<MixDTO> {
-  const res = await fetch(`${API_BASE}/mix/${mixId}`);
+  const res = await apiFetch(`${API_BASE}/mix/${mixId}`);
   if (!res.ok) {
     throw new Error("Could not check the mix status.");
   }
@@ -262,7 +287,7 @@ export async function getMixName(
   song2Name: string,
   prompt = "",
 ): Promise<string> {
-  const res = await fetch(`${API_BASE}/mix/name`, {
+  const res = await apiFetch(`${API_BASE}/mix/name`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -299,7 +324,7 @@ export type LiveContextDTO = { bpm: number | null; downbeats: number[] };
 export async function getSuggestions(
   mixId: string,
 ): Promise<SectionSuggestionsDTO[]> {
-  const res = await fetch(`${API_BASE}/live/suggestions/${mixId}`);
+  const res = await apiFetch(`${API_BASE}/live/suggestions/${mixId}`);
   if (!res.ok) throw new Error("Couldn't load suggestions.");
   const data = await res.json();
   return data.sections ?? [];
@@ -311,7 +336,7 @@ export async function postLiveCommand(
   song2Id: string,
   text: string,
 ): Promise<LiveOpDTO> {
-  const res = await fetch(`${API_BASE}/live/command`, {
+  const res = await apiFetch(`${API_BASE}/live/command`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ song1_id: song1Id, song2_id: song2Id, text }),
@@ -322,7 +347,7 @@ export async function postLiveCommand(
 
 /** The beatgrid the live player schedules on (Song 1's tempo + downbeats). */
 export async function getLiveContext(song1Id: string): Promise<LiveContextDTO> {
-  const res = await fetch(`${API_BASE}/live/context/${song1Id}`);
+  const res = await apiFetch(`${API_BASE}/live/context/${song1Id}`);
   if (!res.ok) throw new Error("Couldn't load the beat map.");
   return res.json();
 }
@@ -369,7 +394,7 @@ export async function startSet(
         source: SOURCE,
       }
     : { sets: pairs, source: SOURCE };
-  const res = await fetch(`${API_BASE}/set`, {
+  const res = await apiFetch(`${API_BASE}/set`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -385,7 +410,7 @@ export async function startSet(
 
 /** Check how the set build is going: processing / ready (url + line-up) / error. */
 export async function getSetStatus(setId: string): Promise<SetDTO> {
-  const res = await fetch(`${API_BASE}/set/${setId}`);
+  const res = await apiFetch(`${API_BASE}/set/${setId}`);
   if (!res.ok) throw new Error("Could not check the set status.");
   return res.json();
 }
@@ -552,7 +577,7 @@ function adminHeaders(): Record<string, string> {
 }
 
 async function getAdmin<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { headers: adminHeaders() });
+  const res = await apiFetch(`${API_BASE}${path}`, { headers: adminHeaders() });
   if (res.status === 401) {
     throw new DashboardLockedError(
       "This dashboard is locked — an access token is required.",
@@ -619,7 +644,7 @@ const VOCAL_BUS_POLL_MS = 1500;
 /** Fetch the arranged-vocal-bus WAV for a mix, polling past 202 while it renders. */
 export async function fetchVocalBus(mixId: string): Promise<ArrayBuffer> {
   for (let i = 0; i < 80; i++) {
-    const res = await fetch(`${API_BASE}/live/vocal-bus/${mixId}`);
+    const res = await apiFetch(`${API_BASE}/live/vocal-bus/${mixId}`);
     if (res.status === 200) return res.arrayBuffer();
     if (res.status === 202) {
       await new Promise((r) => setTimeout(r, VOCAL_BUS_POLL_MS));

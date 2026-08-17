@@ -10,8 +10,11 @@ from dotenv import load_dotenv
 # before anything reads them. Safe no-op if the file is absent.
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
+import logging  # noqa: E402
+
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 from app.config import settings  # noqa: E402
@@ -44,6 +47,8 @@ async def _lifespan(_app: FastAPI):
         await janitor.stop()
 
 
+log = logging.getLogger("promptdj.api")
+
 app = FastAPI(title="Prompt-DJ API", lifespan=_lifespan)
 
 app.add_middleware(
@@ -53,6 +58,71 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── CROSS-SITE REQUEST GUARD ─────────────────────────────────────────────────────────────────
+# CORS DOES NOT STOP THE REQUEST. It withholds the RESPONSE from a disallowed origin; the request
+# still executes and its side effects still happen. `multipart/form-data` is a CORS-safelisted
+# content type, so a POST carrying one gets no preflight at all — which meant (proven in the
+# 2026-08-17 security review) that ANY web page open in a browser on this machine could drive
+# `POST /songs/add` in a loop and spend the Replicate balance, with a forged `uploaded_by`.
+#
+# The fix is the standard one and it needs no shared secret: require a header a browser CANNOT
+# set on a cross-origin request without triggering a preflight. The preflight is then answered by
+# the CORS middleware above, which refuses any origin not on the allowlist. A same-origin page,
+# the bot, and curl are all unaffected — they simply send the header.
+#
+# GETs are deliberately NOT covered: they are reads, they are what the audio <source> tags and the
+# dashboard use, and requiring a header there would break plain browser media loading.
+_MUTATING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_APP_HEADER = "x-promptdj-app"
+
+# ── SIZE, BEFORE THE BODY IS READ ────────────────────────────────────────────────────────────
+# The streaming cap inside the upload handler is applied too late to protect the DISK. Starlette
+# materialises the whole file part before the handler is entered, spooling anything over 1 MB to a
+# temp file — so by the time `_save_capped` counts a byte, the bytes are already on the disk the
+# free-space check exists to protect (measured in the 2026-08-17 third review: the handler saw a
+# 12 MB body in full, and `_free_gb()` ran after it was buffered).
+#
+# `Content-Length` is checked here, before any parsing. A client can lie about it, but a lying
+# client is then caught by the streaming cap it was always caught by — this closes the case where
+# an HONEST large upload writes gigabytes of temp that nothing accounted for. Discord's own ceiling
+# is a tier, not a control: a Nitro member can attach 500 MB, and a boosted server raises it for
+# everybody.
+_MAX_BODY_BYTES = 40 * 1024 * 1024  # a little over the 30 MB per-file cap, to allow for the envelope
+
+
+@app.middleware("http")
+async def _require_app_header(request, call_next):
+    """Refuse a mutating request that came FROM A PAGE and does not carry the app header.
+
+    Conditioned on `Origin` deliberately. This defence only ever protects against a browser —
+    anything else (the bot, curl, a script) can set whatever headers it likes, so demanding the
+    header from them buys nothing and would only break every non-browser caller. A browser, on the
+    other hand, always attaches `Origin` to a cross-origin POST and cannot add a custom header
+    without a preflight that the CORS middleware above then refuses. So: an Origin present with no
+    app header is the attack, and it is the only case blocked.
+    """
+    if request.method in _MUTATING:
+        raw = request.headers.get("content-length")
+        try:
+            declared = int(raw) if raw is not None else 0
+        except ValueError:
+            declared = 0
+        if declared > _MAX_BODY_BYTES:
+            log.warning("refused a %s to %s declaring %d bytes (ceiling %d)",
+                        request.method, request.url.path, declared, _MAX_BODY_BYTES)
+            return JSONResponse(
+                {"detail": "That file is too big. The limit is 30 MB, and Discord's own limit is "
+                           "usually 10 MB."}, status_code=413)
+    if (request.method in _MUTATING
+            and "origin" in request.headers
+            and _APP_HEADER not in request.headers):
+        log.warning("blocked a %s to %s from origin %r with no %s header",
+                    request.method, request.url.path, request.headers.get("origin"), _APP_HEADER)
+        return JSONResponse(
+            {"detail": "This request did not come from the app."}, status_code=403)
+    return await call_next(request)
 
 
 @app.get("/health")

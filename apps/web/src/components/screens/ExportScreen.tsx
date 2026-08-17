@@ -1,3 +1,4 @@
+import { apiFetch } from "../../lib/api";
 import { useState } from "react";
 import { API_BASE } from "../../lib/api";
 import styles from "./ExportScreen.module.css";
@@ -24,7 +25,7 @@ export default function ExportScreen({
     // answers 404 rather than re-rendering. Making the mix again rebuilds it, so say that.
     let res: Response;
     try {
-      res = await fetch(`${API_BASE}${audioPath}`);
+      res = await apiFetch(`${API_BASE}${audioPath}`);
     } catch {
       setNote("Couldn't reach the mixer. Check it's running and try again.");
       return;

@@ -78,7 +78,12 @@ def _friendly(resp: httpx.Response) -> str:
 class PromptDJClient:
     def __init__(self, base_url: str, timeout: float = 30.0):
         self._base = base_url.rstrip("/")
-        self._client = httpx.AsyncClient(base_url=self._base, timeout=timeout)
+        # Every mutating call carries this header. The engine refuses POSTs without it, which is
+        # what stops a random web page open in a browser on this machine driving the API: a
+        # browser cannot set a custom header cross-origin without a preflight, and the preflight
+        # is refused. See app/main.py.
+        self._client = httpx.AsyncClient(base_url=self._base, timeout=timeout,
+                                         headers={"X-PromptDJ-App": "grinder"})
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -118,6 +123,62 @@ class PromptDJClient:
         if r.status_code not in (200, 202):
             raise EngineError(_friendly(r))
         return r.json()["mix_id"]
+
+    # --- bring your own song -------------------------------------------------------------
+    # The bot NEVER ingests anything itself: it has no numpy, no Replicate and no ffmpeg, and a
+    # second copy of that pipeline is exactly how uploads would start behaving differently from
+    # the catalogue. It hands the bytes to the engine and reports what comes back.
+
+    async def add_song(self, data: bytes, filename: str, *, uploaded_by: str, role: str,
+                       main_drop: str = "", display_name: str = "") -> dict:
+        """Hand an uploaded file to the engine. Returns as soon as the FREE checks pass.
+
+        Raises EngineError with the engine's own plain-English reason on a refusal — those
+        sentences are written to be shown to a person unchanged.
+        """
+        r = await self._client.post(
+            "/songs/add",
+            files={"file": (filename, data)},
+            data={"uploaded_by": uploaded_by, "role": role,
+                  "main_drop": main_drop, "display_name": display_name},
+            timeout=120.0)
+        if r.status_code != 200:
+            raise EngineError(_friendly(r))
+        return r.json()
+
+    async def add_status(self, song_id: str) -> dict:
+        """Where an in-flight upload has got to, for the progress line on the card."""
+        r = await self._client.get(f"/songs/add/{song_id}")
+        if r.status_code != 200:
+            raise EngineError(_friendly(r))
+        return r.json()
+
+    async def wait_for_add(self, song_id: str, *, poll: float = 2.0, timeout: float = 900.0,
+                           on_stage=None) -> dict:
+        """Poll until the ingest finishes, calling `on_stage(text)` whenever the stage CHANGES.
+
+        Long timeout on purpose: stem separation plus the structure analysis is minutes, and the
+        person is watching a card that says what is happening.
+        """
+        waited, last = 0.0, None
+        while waited < timeout:
+            st = await self.add_status(song_id)
+            stage = str(st.get("stage") or "")
+            if on_stage is not None and stage and stage != last:
+                last = stage
+                await on_stage(stage)
+            if st.get("done"):
+                return st
+            await asyncio.sleep(poll)
+            waited += poll
+        raise EngineError("That took longer than expected. Your song may still be on its way.")
+
+    async def my_songs(self, discord_id: str) -> dict:
+        """Somebody's own uploads. Filtered by who added them and nothing else."""
+        r = await self._client.get(f"/songs/mine/{discord_id}")
+        if r.status_code != 200:
+            raise EngineError(_friendly(r))
+        return r.json()
 
     async def keep_render(self, render_id: str) -> bool:
         """Ask the engine never to routine-tidy this render. Used when a grind is pinned to

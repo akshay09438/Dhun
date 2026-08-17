@@ -303,10 +303,29 @@ def _confident(a1: TrackAnalysis) -> bool:
 
 
 def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement], stretch: float,
-                      entry_floor: float = 0.0) -> tuple[list[Placement], list[tuple[float, float]]]:
+                      entry_floor: float = 0.0, guest_is_upload: bool = False,
+                      beat_is_upload: bool = False,
+                      ) -> tuple[list[Placement], list[tuple[float, float]]]:
     """On a confident Song 1: let Song 1 LEAD with its own vocal in the gaps (both songs trade —
     Step 1) and put a filter-sweep into the final (big) entry. On a shaky Song 1, play safe — no
-    flourishes and at most two placements — rather than bet fancy moves on bad data."""
+    flourishes and at most two placements — rather than bet fancy moves on bad data.
+
+    `guest_is_upload` (Song 2 is an upload) and `beat_is_upload` (Song 1 is an upload) are TWO
+    parameters on purpose. They reach the same branch, but for different reasons — the guest owning
+    its own mix, versus a Suno beat's own singer colliding with a catalog vocal — and one shared
+    name would be a lie at one of the two call sites.
+    """
+    # AN UPLOAD IS INVOLVED -> the beat never sings, and this is checked FIRST.
+    #
+    # It has to come before the hand-marked guest-verse window below, which returns early. Five
+    # menu beats are on that hand list (Wake Me Up, Faded, Lean On, Closer, Confusion), so with the
+    # order the other way round an uploaded vocal paired with any of them still got the beat's
+    # window sung over it — the feature would simply not apply to five of the beats on offer. A
+    # catalog taste call must not outrank the person who uploaded the track and waited for it.
+    if guest_is_upload or beat_is_upload:
+        if len(placements) >= 2:
+            placements[-1].fx = "sweep_in"
+        return placements, []
     # VOCAL-RICH BEAT (hand-marked): the beat sings ONE founder-verified guest-verse window, then hands
     # the mic to Song 2 (held out until the window ends by the entry floor, vocal_windows). Only that
     # window is placed as the beat's own vocal - never the whole song - so a non-stop singer (Lean On)
@@ -331,6 +350,17 @@ def _apply_flourishes(a1: TrackAnalysis, placements: list[Placement], stretch: f
     # remix of Khuda Jaane): NEVER weave in Song 1's own vocal — it is a whole second song's lyrics
     # and would overlap Song 2's vocal. Keep the Song 2 flourish (the filter sweep into the final
     # entry); just return no Song 1 vocal regions so only Song 2 sings. (founder decision 2026-07-15)
+    # AN UPLOAD OWNS ITS OWN MIX (2026-08-17). Same outcome as the hand-list above, reached for a
+    # different and explicit reason. Measured across the 216 real plans on disk: a catalog beat is
+    # usually a full vocal song too, so the trade gives the beat's singer 41-73% of the singing — on
+    # Anchor Point x Location the guest got 33s to the host's 135s. For the catalog that is a taste
+    # call, answered by ear in beat_guest_verse.GUEST_VERSE. For somebody who uploaded their OWN
+    # vocal and waited for a render it is not a taste call: a beat that sings most of their mix reads
+    # as the feature being broken. Kept as a separate condition rather than folded into
+    # is_instrumental_only(), whose contract is specifically "is this beat on the hand-picked list" —
+    # and which documents at length why it must never widen into a guess.
+    # (The upload cases are handled at the top of this function; they must outrank the hand-marked
+    # guest-verse window, which returns before this point.)
     if instrumental_beats.is_instrumental_only(a1):
         if len(placements) >= 2:
             placements[-1].fx = "sweep_in"
@@ -771,7 +801,8 @@ def _emit_vocal_chain(placements: list[Placement], cfg: VocalChainConfig,
 def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
                    prompt: str = "", take: int = 1,
                    chain: VocalChainConfig | None = None,
-                   effect_variety: bool = True, rule: int = 1) -> MixPlan:
+                   effect_variety: bool = True, rule: int = 1,
+                   guest_is_upload: bool = False, beat_is_upload: bool = False) -> MixPlan:
     """Produce the arrangement recipe. Raises MixDeclined if the pair can't blend.
 
     `chain` is the vocal-chain config (Phase 0). Defaults to OFF (`VocalChainConfig()`), so a mix
@@ -822,7 +853,9 @@ def build_mix_plan(mix_id: str, a1: TrackAnalysis, a2: TrackAnalysis,
         placements = _dedupe_nonoverlapping(rebuilt, opts["vocal_stretch"])
         source = "rules"
     placements, s1_regions = _apply_flourishes(a1g, placements, opts["vocal_stretch"],
-                                               opts.get("vocal_entry_floor", 0.0))
+                                               opts.get("vocal_entry_floor", 0.0),
+                                               guest_is_upload=guest_is_upload,
+                                               beat_is_upload=beat_is_upload)
     # Beat song finishes ITS OWN line too: extend each Song-1 vocal region to the beat singer's next
     # breath so the beat's lyric completes before handing off — bounded to the R1 crossfade allowance
     # (the clamp below + the referee re-check R1). Uses a1's own breath map (a1g == a1 with windowing off).

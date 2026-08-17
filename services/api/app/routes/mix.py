@@ -37,6 +37,7 @@ from app.planner import anomaly
 from app.planner import beatgrid
 from app.planner import hooks
 from app.planner import instrumental_beats
+from app.planner import uploads
 from app.planner import name as name_planner
 from app.planner import beat_guest_verse
 from app.planner import rule_shuffle
@@ -481,7 +482,19 @@ def _run_mix(mix_id: str, song1_id: str, song2_id: str, prompt: str, take: int, 
         # `rule` selects the arrangement style ON TOP of the shared BPM+key foundation build_mix_plan does:
         # 1 = dry simple mix, 3 = chop & repeat (rendered below), 4 = echo + reverb (build_mix_plan gates it).
         stages.mark("planning the arrangement")
-        plan = build_mix_plan(mix_id, a1, a2, prompt, take=take, chain=SHIPPED_CHAIN, rule=rule)
+        # WHOSE SONG IS THIS? Read off the catalogue rows, not assumed. When either side is an
+        # upload the catalog song's own singer stands down — a guest who uploaded their vocal wants
+        # to hear THEIR track, and a Suno beat brings its own singer that would collide with a
+        # catalog vocal. Both can be true at once: mixing two of your own uploads is supported.
+        # (This call site is the whole point of the flags — they shipped defaulting to False with
+        # no caller on 2026-08-17, so until now they had never once run. Pinned by
+        # tests/test_uploads_wired.py.)
+        beat_is_upload, guest_is_upload = uploads.upload_flags(song1_id, song2_id)
+        if beat_is_upload or guest_is_upload:
+            log.info("mix %s uploads: beat=%s guest=%s -> the beat plays instrumental",
+                     mix_id, beat_is_upload, guest_is_upload)
+        plan = build_mix_plan(mix_id, a1, a2, prompt, take=take, chain=SHIPPED_CHAIN, rule=rule,
+                              guest_is_upload=guest_is_upload, beat_is_upload=beat_is_upload)
         # Phase 0 (T1.2): log the key-fit on every render — informational only, never gated. Lets us
         # look at the log and find how many "good" pairs were quietly key-clashing.
         cf = plan.camelot_fit

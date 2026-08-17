@@ -51,6 +51,16 @@ class LibrarySong(BaseModel):
     # The ENGINE ignores this completely: every song stays fully mixable, and the web app shows all
     # of them. It only decides what fits in a dropdown.
     featured: bool = False
+    # SOMEBODY ADDED THIS WITH /add, rather than it being part of the curated catalogue.
+    #
+    # Exposed as its own flag rather than inferred from `featured`, because those are two different
+    # questions and conflating them broke both: "is it on the 25-slot menu" is about dropdown space,
+    # "is it somebody's private upload" is about whose song it is. The web console filters on THIS,
+    # so a stranger's unreleased track never appears there (2026-08-17 security review), while the
+    # Discord side still receives uploads so a person can mix their own.
+    #
+    # Never carries WHO uploaded it — that stays server-side, on the manifest row.
+    uploaded: bool = False
 
 
 def song_names(ids, data_dir=None) -> dict:
@@ -86,6 +96,14 @@ def get_library() -> dict:
         name = str(e.get("name", "")).strip()
         if not name or not _HEX_ID.fullmatch(sid):
             continue  # malformed entry — skip, never crash the catalog
+        # UPLOADS ARE NOT PUBLIC CATALOGUE. This is the shared, unauthenticated list; somebody's
+        # own song belongs to them and is reached through `/songs/mine/{their id}`. Listing every
+        # member's unreleased track here was the other half of the leak the stem lock only
+        # half-closed (re-review finding 5). `pending` rows are hidden for a different reason: the
+        # row is written before the paid work so the stem guard covers it, and until that finishes
+        # the song's files are still arriving.
+        if e.get("uploaded_by") or e.get("pending"):
+            continue
         if path_for(sid) is None:
             continue  # audio missing on disk — hide rather than 500 later
         songs.append(LibrarySong(
@@ -95,5 +113,6 @@ def get_library() -> dict:
             role_hint=str(e.get("role_hint", "")),
             language=str(e.get("language", "")),
             featured=bool(e.get("featured", False)),
+            uploaded=bool(e.get("uploaded_by")),
         ))
     return {"songs": [s.model_dump() for s in songs]}

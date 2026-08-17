@@ -2,6 +2,79 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
+## Status: **LATEST 2026-08-17, night (UPLOADS BUILT AND SECURITY-REVIEWED; branch `feat/wire-upload-instrumental`). NOT LIVE — Grinder has not been restarted.**
+
+Four changes, in the founder's order: the catalogue index made safe to write, six orphaned songs
+restored, `guest_is_upload` actually wired, then `/add` + `/mine`.
+
+**THE CATALOGUE INDEX WAS UNSAFE AND NOBODY KNEW.** `manifest.json` indexes every song and was
+read-modify-written whole. Measured, red first: **20 concurrent writers lost 19 rows**, and a
+failure mid-write left the file **empty** — all 112 rows, not one. `app/library_store.py` is now
+the one reader/writer (process lock + OS file lock + fsync + atomic replace). A third hole
+surfaced from the very first test run: on Windows the atomic replace makes the file briefly
+un-openable and `routes/library.py` read that as "no catalogue", so the picker could answer **zero
+songs** mid-write. Reads now go through `library_store.load`, which retries a transient OS error
+and still degrades a genuinely malformed file to empty.
+
+**`guest_is_upload` HAD NEVER RUN.** It shipped defaulting to False with no caller, so every mix
+ever made planned as though uploads did not exist. Wired at `routes/mix.py`, and generalised to the
+mirror case with a SECOND parameter (`beat_is_upload`) rather than overloading the first — both
+reach the same branch for different reasons, and one shared name would be a lie at one of the two
+call sites. **A gap in the groundwork was found while reading it:** the hand-marked guest-verse
+branch returns EARLY, so an uploaded vocal paired with any of the five guest-verse beats still had
+the beat sing over it — the feature would not have applied to five of the beats on the menu.
+Upload checks now run first. Verified beyond the unit test: the real Wake Me Up x Rolling in the
+Deep plan re-plans **byte-identical** to the plan rendered before the change.
+
+**`/add`.** Engine endpoint (`routes/songs.py`) plus a thin bot command. The bot does no ingesting
+— no numpy, no Replicate, no ffmpeg — so an upload goes through the exact catalogue pipeline.
+Checks run cheapest-first and a free numpy pre-check gates the paid calls. **The first pre-check
+metric was measured and thrown away:** best-peak-over-band-mean scored white noise 3.21 against the
+weakest real song's 3.27, so the two populations overlapped and the gate was decoration.
+Autocorrelation at the beat period AND its first three multiples separates them cleanly. A second
+gate (density) was added after the review beat the first one with a tick over silence. Both bars
+set from measurement over all 118 catalogue songs: none wrongly rejected.
+
+**THE ADVERSARIAL SECURITY REVIEW FOUND THE CAPS WERE DECORATIVE.** Rows are written when the paid
+work ENDS, so nothing incremented while uploads queued: **30 uploads from one person against a cap
+of 5, all accepted, in 19 seconds, ~$3.60 of Replicate committed**. Slots are now reserved before
+the file is read. Also found and fixed: the engine had no door on it (a multipart POST is
+CORS-safelisted, so any page open in a browser on this machine could drive the paid endpoint with a
+forged uploader — now guarded by a header a browser cannot set cross-origin); a second upload of
+the same song could take over the first's row and, on failure, delete the stems the first had just
+paid for; a 14 MB MP3 decoded to a **2.5 GB** WAV before the length limit ran; `drop:0:nan` wrote a
+literal `NaN` into the catalogue index; and a blank name made a paid-for song invisible.
+`tests/test_upload_security.py` — 25 tests, one per finding, every one red first.
+
+**LOCKED DOWN on the founder's call:** an upload's stems are never served, and the web console shows
+the curated menu only, so nobody's unreleased track is reachable by another member.
+
+**DRIFT CLOSED.** The specs still said "three named people, vocals only, `/add` does not exist".
+The founder changed all three decisions in-session and the documents had not moved. They have now.
+
+**CATALOGUE PRUNED, founder's call:** 41 off-menu songs deleted (3.34 GB), keeping every ear-tuned
+one and holding back the one whose source file no longer exists. **KNOWN COST, recorded honestly:
+Father Ocean went with them, and it is the fixture for 6 real-audio end-to-end tests, which now
+SKIP** — the hollow green this project explicitly refuses. About 12 cents to restore; deferred.
+
+**Engine suite 877 -> 930 (6 skipped). Bot 554 -> 567. Web 79. Lint and typecheck clean.**
+
+## Status: **2026-08-17 (UPLOADS: audit done, blocker fixed, `/add` NOT BUILT; branch `feat/add-your-own-song`).**
+
+**IN FLIGHT — the feature is one commit in, and that commit is groundwork, not the feature.** `/add` does not exist. Nothing user-visible changed today.
+
+**What was done.** A full read-the-code audit of the analysis pipeline (published as an artifact) answering: every stored field, what produces it, stems, caching, hand-marks, the grind-time contract, and cost. Then the one change the founder called a blocker.
+
+**The blocker, and it was not what the handoff said it was.** The open item read "Anchor Point talks over its guest — one line on a hand-maintained list is the fix". Measured across the 216 real mixplans on disk, that is wrong in both directions: Anchor Point averages 44% guest share over 20 plans (not broken), while the specific reported pair Anchor Point × Location gives the guest 20% (33s vs 135s), and **8 of 30 beats leave the guest under half** — I Was Never There is 27%, worse than Anchor Point. One list entry would have fixed roughly one pairing.
+
+**What shipped instead.** `build_mix_plan(..., guest_is_upload=False)`. When Song 2 is an upload, Song 1's own vocal is not placed and the guest carries the whole mix — every beat at once, no per-beat ear-work. Kept as a separate condition beside `instrumental_beats.is_instrumental_only()` rather than folded into it, because that function's contract is "is this beat on the hand-picked list" and it documents at length why it must never widen into a guess. Default False; a test asserts the default plan is byte-identical to the pre-change one. `tests/test_upload_guest_keeps_the_mic.py` (5, red first). **Engine suite 845 -> 850.**
+
+**Decisions frozen by the founder for `/add`:** uploads stay on the laptop (3 users × 5 = 15 songs); $5 Replicate is enough; uploads never enter the 25-slot picker (the `/add` reply carries the grind action); every upload is a VOCAL (song2 only); 3 hardcoded Discord ids; uploader asserts ownership, we store the uploader id per song; keep the Replicate allin1 wrapper — local allin1 is dropped.
+
+**DRIFT NOTE — the audit found the docs' own architecture map is wrong.** `CLAUDE.md` Part B lists `workers/analyze.py` and `workers/stems.py`. Neither exists; analysis lives in `services/api/app/audio/analysis.py` and stems in `app/audio/stems.py`. Also worth recording because it changes a design assumption: **our cloud analyzer already IS allin1** — `sakemin/all-in-one-music-structure-analyzer` is a Replicate wrapper of `mir-aidj/all-in-one`, so BPM, beats, downbeats and sections have come from allin1 all along.
+
+**DRIFT NOTE — a wrong inference I made and had to withdraw.** I first sized the guest-squeeze problem from `instrumental_beats.vocal_coverage()` and reported 22 broken beats. The function's own docstring forbids exactly that: _"a beat is NEVER auto-silenced from a coverage number — that wrongly muted beats with real vocals (e.g. I Adore You, which reads ~99% vocal but sings fine)."_ Coverage is a diagnostic signal only. The mixplan measurement replaced it.
+
 ## Status: **LATEST 2026-08-16 (CATALOG SWAP + the grind room reset; branch `fix/the-mix-always-reaches-you`).**
 
 **Bad Guy BANNED, Blinding Lights PINNED** in `scripts/set_featured.py`. Blinding Lights was already ingested, so no Replicate spend — which was the deciding constraint, the balance being zero. Pinning was required: at 171 BPM it scores 6/25 clean against Bad Guy's 18, last of the 23 English vocals available, so the ranking would never reach it.

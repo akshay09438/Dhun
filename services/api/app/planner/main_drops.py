@@ -14,7 +14,7 @@ song's own (native) timeline; the planner snaps each to the nearest downbeat and
 
 from __future__ import annotations
 
-from app.planner import marks_generated
+from app.planner import marks_generated, uploads
 
 MAIN_DROPS: dict[str, list[float]] = {
     # Merrygo beat (trimmed) — a D&B remix of Khuda Jaane; flat energy gave the detector no drop.
@@ -60,4 +60,12 @@ def main_drops_for(song_id: str) -> list[float]:
     hand = MAIN_DROPS.get(song_id)
     if hand is not None:
         return hand
-    return marks_generated.GEN_MAIN_DROPS.get(song_id, [])
+    gen = marks_generated.GEN_MAIN_DROPS.get(song_id)
+    if gen is not None:
+        return gen
+    # LAST: the drop an uploader typed into /add. Uploads are asked for their drop because the
+    # energy detector is the worst-performing thing we have on this input — measured ~36% precision
+    # on the catalog (14 found for 6 real), and Suno masters loud and flat, which is exactly the
+    # signal that detector leans on. The uploader made the song and knows where it hits.
+    # Deliberately BELOW both hand tables: an upload must never retune a catalog beat.
+    return uploads.main_drop_for(song_id)

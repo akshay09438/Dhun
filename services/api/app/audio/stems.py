@@ -35,6 +35,10 @@ def _model_ref() -> str:
     return f"{_MODEL}:{version}"
 
 
+# A stem download that never returns is worse than one that fails: failure cleans up and frees the
+# slot, hanging holds it forever. Generous enough for a large mp3 on a slow line.
+_DOWNLOAD_TIMEOUT_S = 180
+
 def separate_stems(song_id: str, wav_path: Path) -> dict[str, Path]:
     """Return {stem_name: file_path} for the song, splitting it if needed.
 
@@ -61,7 +65,12 @@ def separate_stems(song_id: str, wav_path: Path) -> dict[str, Path]:
         item = out.get(s)
         if item is None:
             raise SeparationError(f"separation missing stem: {s}")
-        data = item.read() if hasattr(item, "read") else urllib.request.urlopen(str(item)).read()
+        # TIMEOUT. A hung download holds one of the two ingest slots AND its uploader's
+        # reservation for as long as it hangs, and `_release_slot` sits in a `finally` a stuck
+        # thread never reaches - so two of these stop uploads for everybody until the engine is
+        # restarted, and each one permanently costs its owner one of their five (third review, A3).
+        data = (item.read() if hasattr(item, "read")
+                else urllib.request.urlopen(str(item), timeout=_DOWNLOAD_TIMEOUT_S).read())
         dst = stem_path(song_id, s)
         dst.write_bytes(data)
         result[s] = dst

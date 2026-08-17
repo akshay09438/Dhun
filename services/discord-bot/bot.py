@@ -1170,6 +1170,234 @@ async def grind_cmd(interaction: discord.Interaction) -> None:
 # DISCORD hide it from anyone without Manage Server, which is the same treatment /setup already has.
 # The in-body check STAYS: default_permissions is a display rule a server admin can override, so it
 # is the wrong thing to trust on its own.
+# --------------------------------------------------------------------------------------
+# Bring your own song.
+#
+# The bot does NO ingesting: it has no numpy, no Replicate, no ffmpeg. It hands the bytes to the
+# engine's /songs/add and reports what comes back, so an upload goes through the exact pipeline the
+# catalogue does. A second copy here is precisely how uploads would start behaving differently
+# from catalogue songs, and nobody would find out until a tester complained.
+# --------------------------------------------------------------------------------------
+
+# What the reply calls each side, in the person's own words rather than song1/song2.
+_ROLE_WORD = {"beat": "beat", "vocals": "vocal"}
+
+# Matches the engine's own per-file cap (settings.max_file_bytes). Checked here first so a
+# huge attachment is refused without ever being downloaded.
+MAX_UPLOAD_BYTES = 30 * 1024 * 1024
+
+
+def _partner_options(uploader_id: str, want_role: str) -> list[discord.SelectOption]:
+    """Songs this upload can be mixed WITH: their own uploads first, then the curated menu.
+
+    Their own come first deliberately — mixing two of your OWN songs is a supported thing to want,
+    and it is invisible unless the list puts it in front of you. Capped at Discord's 25.
+
+    THEIR UPLOADS COME FROM `/songs/mine`, NOT FROM THE CATALOGUE. `GET /library` deliberately no
+    longer lists uploads at all: it is the shared, unauthenticated list, and publishing every
+    member's unreleased track on it was half of a leak the security review found (the other half
+    being that the whole song was downloadable). So the only route to somebody's own songs is the
+    one that asks who they are.
+    """
+    own = [s for s in _my_uploads.get(uploader_id, []) if s.role_hint == want_role]
+    catalogue = [s for s in bot.songs if s.role_hint == want_role and s.featured]
+    picked = own[:12] + catalogue[: 25 - len(own[:12])]
+    own_ids = {s.id for s in own}
+    return [discord.SelectOption(label=s.name[:100],
+                                 value=s.id,
+                                 description="your upload" if s.id in own_ids else None)
+            for s in picked]
+
+
+# Each person's OWN uploaded songs, refreshed whenever they upload or open /mine. Kept apart from
+# `bot.songs` (the public catalogue) because the engine keeps them apart: one list is shared, the
+# other is answered only for the person who asks.
+_my_uploads: dict[str, list[Song]] = {}
+
+
+async def _refresh_my_uploads(discord_id: str) -> list[Song]:
+    """Ask the engine for this person's own songs and remember them for the pickers."""
+    try:
+        body = await bot.api.my_songs(discord_id)
+    except EngineError:
+        return _my_uploads.get(discord_id, [])
+    mine = [Song(id=str(r["song_id"]), name=str(r.get("name") or "your song"),
+                 role_hint=str(r.get("role_hint") or ""), language="", featured=False)
+            for r in (body.get("songs") or []) if r.get("song_id")]
+    _my_uploads[discord_id] = mine
+    return mine
+
+
+class _PartnerSelect(discord.ui.Select):
+    def __init__(self, options: list[discord.SelectOption], word: str) -> None:
+        super().__init__(placeholder=f"Pick a {word} to mix it with…",
+                         min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await self.view.start(interaction, self.values[0])
+
+
+class UploadedSongView(discord.ui.View):
+    """The reply after an upload finishes. It carries the grind, because an upload never enters
+    the 25-slot `/grind` menu — so without this the song would exist and be unreachable."""
+
+    def __init__(self, owner_id: int, song_id: str, role: str) -> None:
+        super().__init__(timeout=900)
+        self.owner_id, self.song_id, self.role = owner_id, song_id, role
+        want = "vocals" if role == "beat" else "beat"
+        opts = _partner_options(str(owner_id), want)
+        if opts:
+            self.add_item(_PartnerSelect(opts, _ROLE_WORD[want]))
+
+    async def start(self, interaction: discord.Interaction, partner_id: str) -> None:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("That is somebody else's song.", ephemeral=True)
+            return
+        # Whichever side was uploaded, the BEAT is always song1 and the VOCAL always song2.
+        pair = ((self.song_id, partner_id) if self.role == "beat" else (partner_id, self.song_id))
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(view=self)
+        await GrindContext(interaction, [pair]).run(first=True)
+        self.stop()
+
+
+@bot.tree.command(name="add", description="Add your own song, then mix it. MP3 or M4A, under 10 MB.")
+@app_commands.describe(
+    song="Your own track. MP3 or M4A. Discord will not send anything over 10 MB.",
+    role="Is this the beat, or the vocal that sits on top?",
+    drop="Beats only: where the drop hits, like 1:24 (or 84 for seconds).")
+@app_commands.choices(role=[
+    app_commands.Choice(name="a vocal: the singing goes on top of a beat", value="vocals"),
+    app_commands.Choice(name="a beat: something else sings over it", value="beat"),
+])
+async def add_cmd(interaction: discord.Interaction, song: discord.Attachment,
+                  role: app_commands.Choice[str], drop: str = "") -> None:
+    """Take somebody's own song into the hopper, then offer to mix it straight away."""
+    blocked = door.blocked_reason(interaction)
+    if blocked is not None:
+        await interaction.response.send_message(blocked, ephemeral=True)
+        return
+
+    # DEFER FIRST, before anything that can be slow. Discord gives a command three seconds to say
+    # something, and the download alone can outlast that; everything after this edits the reply.
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    if role.value == "beat" and not drop.strip():
+        await interaction.followup.send(
+            "For a beat I need to know where the drop hits — add it as `drop:1:24`.\n"
+            "You made the song, so you know better than I can work out.", ephemeral=True)
+        return
+
+    # SIZE BEFORE DOWNLOAD. `song.size` is Discord's own figure and is known without fetching a
+    # byte. The engine caps the body too, but by then the bot has already pulled the whole file
+    # into memory - and "Discord will not send more than 10 MB" is a TIER, not a control: a Nitro
+    # member can attach 500 MB and a boosted server raises the ceiling for everybody. Enough of
+    # those at once and the machine crosses the janitor's cushion, which deletes finished mixes
+    # (third review, A1).
+    if (song.size or 0) > MAX_UPLOAD_BYTES:
+        await interaction.followup.send(
+            f"That file is {song.size / 1_000_000:.0f} MB, which is more than I can take. "
+            f"The limit is {MAX_UPLOAD_BYTES // 1_000_000} MB.", ephemeral=True)
+        return
+
+    try:
+        data = await song.read()
+    except Exception:  # noqa: BLE001
+        await interaction.followup.send("I could not read that file off Discord.", ephemeral=True)
+        return
+
+    msg = await interaction.followup.send(
+        embed=discord.Embed(title="Taking your song in", colour=brand.PRIMARY,
+                            description=f"**{song.filename}**\nChecking it before anything else."),
+        ephemeral=True, wait=True)
+
+    async def show(text: str) -> None:
+        try:
+            await msg.edit(embed=discord.Embed(
+                title="Taking your song in", colour=brand.PRIMARY,
+                description=f"**{song.filename}**\n{text}…\n\n"
+                            "_This part takes a couple of minutes. You can close Discord — "
+                            "it will be here when you come back._"))
+        except discord.HTTPException:
+            pass  # the card going stale must never break the ingest
+
+    try:
+        started = await bot.api.add_song(
+            data, song.filename, uploaded_by=str(interaction.user.id), role=role.value,
+            main_drop=drop, display_name=Path(song.filename).stem)
+    except EngineError as e:
+        # The engine's refusals are already written for a person to read.
+        await msg.edit(embed=ui.error_embed(str(e)))
+        return
+
+    song_id = started["song_id"]
+    if started.get("duplicate"):
+        await msg.edit(embed=discord.Embed(
+            title="Already in the hopper", colour=brand.PRIMARY,
+            description=f"**{started.get('name') or song.filename}** is already here, so I did not "
+                        "add it again — and it did not count against your five."))
+    else:
+        try:
+            done = await bot.api.wait_for_add(song_id, on_stage=show)
+        except EngineError as e:
+            await msg.edit(embed=ui.error_embed(str(e)))
+            return
+        if done.get("error"):
+            await msg.edit(embed=ui.error_embed(
+                f"That one did not make it through: {done['error']}\n"
+                "Nothing was kept, and it has not used one of your five."))
+            return
+
+    await bot.refresh_catalog()                       # the catalogue half of the picker
+    await _refresh_my_uploads(str(interaction.user.id))   # ...and their own half
+
+    word = _ROLE_WORD[role.value]
+    other = _ROLE_WORD["vocals" if role.value == "beat" else "beat"]
+    body = [f"**{started.get('name') or song.filename}** is in, as a **{word}**."]
+    if role.value == "beat":
+        body.append(f"Pick a {other} below and I will grind it — or run `/add` again with your own "
+                    f"{other} and mix two of your own songs together.")
+    else:
+        body.append(f"Pick a {other} below and I will grind it.")
+    body.append("\n_First time two songs meet, the mix takes 50–70 seconds — after that, "
+                "the same pair is about 20. It is slowest the very first time._")
+
+    view = UploadedSongView(interaction.user.id, song_id, role.value)
+    await msg.edit(embed=discord.Embed(title="Your song is ready", colour=brand.PRIMARY,
+                                       description="\n".join(body)),
+                   view=view if view.children else None)
+
+
+@bot.tree.command(name="mine", description="The songs you have added, and how many you have left.")
+async def mine_cmd(interaction: discord.Interaction) -> None:
+    """Your own uploads. They are not in the `/grind` menu, so this is how you find them again."""
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    try:
+        body = await bot.api.my_songs(str(interaction.user.id))
+    except EngineError as e:
+        await interaction.followup.send(str(e), ephemeral=True)
+        return
+    songs = body.get("songs") or []
+    await _refresh_my_uploads(str(interaction.user.id))
+    if not songs:
+        await interaction.followup.send(
+            "You have not added any songs yet. `/add` takes an MP3 or M4A under 10 MB.",
+            ephemeral=True)
+        return
+    lines = []
+    for s in songs:
+        bit = f"• **{s['name']}** — {_ROLE_WORD.get(s.get('role_hint') or '', 'song')}"
+        if s.get("main_drop"):
+            bit += f", drop at {ui.mmss(s['main_drop'])}"
+        lines.append(bit)
+    left = int(body.get("limit", 0)) - int(body.get("used", 0))
+    lines.append(f"\n{left} of your {body.get('limit')} left. Use `/add` to add another.")
+    await interaction.followup.send(
+        embed=discord.Embed(title="Your songs", colour=brand.PRIMARY,
+                            description="\n".join(lines)), ephemeral=True)
+
+
 @bot.tree.command(name="invitefriend",
                   description="A one-use link that lets somebody in without the form.")
 @app_commands.default_permissions(manage_guild=True)

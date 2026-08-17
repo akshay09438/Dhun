@@ -41,8 +41,17 @@ export default function SetupScreen({
   }, []);
 
   // Each slot only offers songs for its role: Song 1 = beats, Song 2 = vocals.
-  const beats = library.filter((s) => s.role_hint === "beat");
-  const vocals = library.filter((s) => s.role_hint === "vocals");
+  //
+  // NO UPLOADS HERE. A song somebody added with /add belongs to them: it is reachable from their
+  // own /add reply and from /mine in Discord, and listing everybody's would put a stranger's
+  // unreleased track in front of every web user (2026-08-17 security review).
+  //
+  // Filtered on `uploaded` rather than on `featured`, which was the first attempt: "is it on the
+  // 25-slot menu" and "is it somebody's private upload" are different questions, and answering the
+  // second with the first emptied this console for every catalogue song that is off the menu.
+  const mixable = library.filter((s) => !s.uploaded);
+  const beats = mixable.filter((s) => s.role_hint === "beat");
+  const vocals = mixable.filter((s) => s.role_hint === "vocals");
 
   // Any click outside the open dropdown closes it.
   useEffect(() => {
