@@ -64,6 +64,27 @@ _MIN_SCORE = 0.03
 # How many multiples of the candidate beat period to check. A real pulse recurs at all of them.
 _COMB_TEETH = 4
 
+# THE SECOND GATE: how much of the track is actually SOUNDING.
+#
+# The comb alone is beaten by the cheapest possible payload — eight minutes of near-silence with a
+# tick every half second scores 0.86-0.90, because it is perfectly periodic. It is also a few tens
+# of KB, so it uploads instantly, which made it the ideal way to drive requests at the paid
+# pipeline (2026-08-17 security review). Periodicity is necessary for music; it is not sufficient.
+#
+# Music is DENSE: nearly every 20 ms of it is within 40 dB of the track's loudest moment. A ticker
+# over silence is not. Measured over all 118 catalogue songs against the attack:
+#
+#     silence + ticker (three variants)  0.040
+#     weakest real song (Bad Guy)        0.909
+#     median real song                   1.000
+#
+# Bar at 0.35 — nine times clear of the attack, and well under half the weakest real song. A first
+# attempt measured the level against the 95th percentile and scored the attack 1.000, because on a
+# sparse tick track the 95th percentile IS the silence; the peak is the right reference.
+_MIN_ACTIVITY = 0.35
+_ACTIVITY_FLOOR_DB = 0.01     # -40 dB relative to the loudest frame
+_ACTIVITY_HOP_S = 0.02
+
 
 def _onset_envelope(mono: np.ndarray, sr: int) -> tuple[np.ndarray, float]:
     """Half-wave-rectified spectral flux: how much the sound brightens, frame by frame."""
@@ -125,10 +146,37 @@ def beat_score(wav_path) -> tuple[float, float]:
     return max(0.0, score), 60.0 * fps / lag
 
 
+def activity(wav_path) -> float:
+    """Share of the track within 40 dB of its own loudest moment. ~1.0 for music, ~0 for a ticker
+    over silence. See _MIN_ACTIVITY for why the reference is the PEAK and not a percentile."""
+    y, sr = sf.read(str(wav_path), dtype="float32", always_2d=True)
+    mono = y.mean(axis=1)
+    want = int(_SECONDS * sr)
+    if len(mono) > want:
+        start = (len(mono) - want) // 2
+        mono = mono[start : start + want]
+    hop = max(1, int(sr * _ACTIVITY_HOP_S))
+    n = len(mono) // hop
+    if n < 10:
+        return 0.0
+    rms = np.sqrt(np.array([np.mean(mono[i * hop : (i + 1) * hop] ** 2) for i in range(n)]) + 1e-12)
+    loudest = float(rms.max())
+    if loudest <= 0:
+        return 0.0
+    return float(np.mean(rms > loudest * _ACTIVITY_FLOOR_DB))
+
+
 def has_a_steady_beat(wav_path) -> tuple[bool, float, float]:
-    """(ok, score, bpm). False only when there is no periodic pulse worth calling music."""
+    """(ok, score, bpm). False when there is no periodic pulse, OR when the track is mostly silence.
+
+    BOTH gates are needed. Periodicity alone is satisfied by a tick over silence, which is the
+    cheapest file anyone could upload and therefore the best way to drive the paid pipeline.
+    """
     score, bpm = beat_score(wav_path)
-    ok = score >= _MIN_SCORE
-    log.info("beat pre-check: score %.2f (bar %.2f) bpm~%.0f -> %s",
-             score, _MIN_SCORE, bpm, "music" if ok else "REJECTED")
+    act = activity(wav_path)
+    ok = score >= _MIN_SCORE and act >= _MIN_ACTIVITY
+    why = "music" if ok else ("REJECTED: too little sound" if act < _MIN_ACTIVITY
+                              else "REJECTED: no pulse")
+    log.info("beat pre-check: pulse %.3f (bar %.2f) density %.3f (bar %.2f) bpm~%.0f -> %s",
+             score, _MIN_SCORE, act, _MIN_ACTIVITY, bpm, why)
     return ok, score, bpm

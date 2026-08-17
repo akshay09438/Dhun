@@ -45,6 +45,23 @@ def _iso(monkeypatch, tmp_path):
         if hasattr(mod, "settings"):
             monkeypatch.setattr(mod, "settings",
                                 dataclasses.replace(mod.settings, data_dir=tmp_path))
+    # START CLEAN, not just finish clean. An ingest thread leaked by an EARLIER TEST FILE still
+    # holds one of the two shared slots, and two of those starve every test here - which is exactly
+    # how this file passed alone and failed in the full suite.
+    for t in list(threading.enumerate()):
+        if t.name.startswith("ingest-") and t.is_alive():
+            t.join(timeout=30)
+    songs_route._INGEST_SLOTS = threading.Semaphore(songs_route.settings.max_concurrent_ingests)
+    # AND the cap reservations. Several tests here deliberately never wait for their ingest, so
+    # they leave a slot claimed; five of those and every later test is refused for hitting the
+    # per-person cap, with a KeyError on the missing song_id as the only clue.
+    with songs_route._CAP_LOCK:
+        songs_route._RESERVED.clear()
+    # THE DISK CHECK IS STUBBED for every test except the one that is about it. Otherwise the
+    # suite passes or fails on how full the laptop happens to be: at 2.13 GB free the
+    # endpoint correctly answered 507 and twelve unrelated tests went red. A test should
+    # exercise the logic, not the machine.
+    monkeypatch.setattr(songs_route, "_free_gb", lambda: 999.0)
     uploads.forget_cached_manifest()
     songs_route._PROGRESS.clear()
     yield
@@ -58,10 +75,15 @@ def _iso(monkeypatch, tmp_path):
     for t in list(threading.enumerate()):
         if t.name.startswith("ingest-") and t.is_alive():
             t.join(timeout=20)
+    with songs_route._CAP_LOCK:
+        songs_route._RESERVED.clear()
     uploads.forget_cached_manifest()
 
 
-def _music(seconds: float = 60.0, bpm: float = 120.0) -> bytes:
+def _music(seconds: float = 32.0, bpm: float = 120.0) -> bytes:
+    # SHORT and 16-BIT on purpose. These get stored on disk once per upload, and at 60s of
+    # 32-bit float that is ~10 MB a time - a full suite run left 3.3 GB of pytest temp
+    # behind and took the machine to 0.63 GB free. Just over the 30s minimum, PCM_16.
     """A click track — unambiguously periodic, so it passes the beat pre-check on merit."""
     sr = 44100
     n = int(sr * seconds)
@@ -73,11 +95,13 @@ def _music(seconds: float = 60.0, bpm: float = 120.0) -> bytes:
     x += np.random.default_rng(1).normal(0, 0.01, n).astype("float32")
     import io
     buf = io.BytesIO()
-    sf.write(buf, x, sr, format="WAV")
+    sf.write(buf, x, sr, format="WAV", subtype="PCM_16")
     return buf.getvalue()
 
 
 def _speech(seconds: float = 60.0) -> bytes:
+    # Stays long: a REJECTED upload is never stored, so this one costs no disk, and 30s of
+    # synthetic speech is short enough for the statistics to wobble.
     """Irregular bursts with pauses — a podcast, as far as the pre-check is concerned."""
     sr = 44100
     rng = np.random.default_rng(7)
@@ -92,7 +116,7 @@ def _speech(seconds: float = 60.0) -> bytes:
             t += int(sr * rng.uniform(0.4, 1.5))
     import io
     buf = io.BytesIO()
-    sf.write(buf, x / (np.max(np.abs(x)) or 1), sr, format="WAV")
+    sf.write(buf, x / (np.max(np.abs(x)) or 1), sr, format="WAV", subtype="PCM_16")
     return buf.getvalue()
 
 
@@ -232,6 +256,7 @@ def test_the_shared_shelf_has_a_ceiling(no_paid_calls, monkeypatch):
 
 
 def test_a_full_disk_refuses_rather_than_fills_up(monkeypatch):
+    """The one test that IS about the disk, so it sets the level itself."""
     monkeypatch.setattr(songs_route, "_free_gb", lambda: 0.5)
     r = _post()
     assert r.status_code == 507

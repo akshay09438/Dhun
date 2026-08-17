@@ -51,6 +51,16 @@ class LibrarySong(BaseModel):
     # The ENGINE ignores this completely: every song stays fully mixable, and the web app shows all
     # of them. It only decides what fits in a dropdown.
     featured: bool = False
+    # SOMEBODY ADDED THIS WITH /add, rather than it being part of the curated catalogue.
+    #
+    # Exposed as its own flag rather than inferred from `featured`, because those are two different
+    # questions and conflating them broke both: "is it on the 25-slot menu" is about dropdown space,
+    # "is it somebody's private upload" is about whose song it is. The web console filters on THIS,
+    # so a stranger's unreleased track never appears there (2026-08-17 security review), while the
+    # Discord side still receives uploads so a person can mix their own.
+    #
+    # Never carries WHO uploaded it — that stays server-side, on the manifest row.
+    uploaded: bool = False
 
 
 def song_names(ids, data_dir=None) -> dict:
@@ -95,5 +105,6 @@ def get_library() -> dict:
             role_hint=str(e.get("role_hint", "")),
             language=str(e.get("language", "")),
             featured=bool(e.get("featured", False)),
+            uploaded=bool(e.get("uploaded_by")),
         ))
     return {"songs": [s.model_dump() for s in songs]}

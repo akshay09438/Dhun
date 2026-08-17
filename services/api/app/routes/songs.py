@@ -35,10 +35,12 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import re
 import shutil
 import tempfile
 import threading
+import uuid
 from pathlib import Path
 
 import soundfile as sf
@@ -48,7 +50,7 @@ from fastapi.responses import FileResponse
 from app import library_store
 from app.audio import beatcheck
 from app.audio.analysis import analyze_track
-from app.audio.normalize import AudioError, normalize_audio
+from app.audio.normalize import AudioError, normalize_audio, probe_seconds
 from app.audio.stems import separate_stems
 from app.config import settings
 from app.models import Song
@@ -80,6 +82,53 @@ _INGEST_SLOTS = threading.Semaphore(settings.max_concurrent_ingests)
 _PROGRESS: dict[str, dict] = {}
 _PROGRESS_LOCK = threading.Lock()
 
+# ── THE CAPS ARE RESERVATIONS, NOT A COUNT OF FINISHED SONGS ─────────────────────────────────
+# Measured in the 2026-08-17 security review: counting manifest rows alone does NOT cap anything.
+# A row is only written when the paid work finishes, minutes later, so nothing increments while
+# uploads are queuing — 30 uploads from ONE person against a cap of 5 were all accepted in 19
+# seconds, committing ~$3.60 of Replicate. The 2-at-a-time semaphore bounds the RATE, never the
+# bill: every queued job still pays eventually.
+#
+# So a slot is claimed BEFORE the file is even read, under one lock with the check, and released
+# only when the row exists (or the attempt dies). Rows + live reservations is the real total.
+#
+# In-memory on purpose: a reservation only means "a thread of this process is working on it", and
+# a restart kills those threads, so the correct value after a restart is zero.
+_RESERVED: dict[str, str] = {}          # song_id (or a placeholder) -> uploader id
+_CAP_LOCK = threading.RLock()
+
+
+class _CapFull(Exception):
+    """No slot available — carries the sentence the person should be shown."""
+
+
+def _claim_slot(uploader: str, token: str) -> None:
+    """Take one upload slot for `uploader`, or raise _CapFull. Atomic with the check."""
+    with _CAP_LOCK:
+        uploads.forget_cached_manifest()
+        mine = uploads.count_for(uploader) + sum(1 for u in _RESERVED.values() if u == uploader)
+        if mine >= settings.max_uploads_per_user:
+            raise _CapFull(f"You've added your {settings.max_uploads_per_user} songs. "
+                           "Nothing is lost — that's just the limit for now.")
+        total = uploads.count_all() + len(_RESERVED)
+        if total >= settings.max_uploaded_songs:
+            raise _CapFull("The shared upload shelf is full "
+                           f"({settings.max_uploaded_songs} songs). Nothing has broken.")
+        _RESERVED[token] = uploader
+
+
+def _release_slot(token: str) -> None:
+    """Give the slot back. Safe to call twice."""
+    with _CAP_LOCK:
+        _RESERVED.pop(token, None)
+
+
+def _rename_slot(old: str, new: str) -> None:
+    """The slot is claimed before the song's id is known; re-key it once it is."""
+    with _CAP_LOCK:
+        if old in _RESERVED:
+            _RESERVED[new] = _RESERVED.pop(old)
+
 
 def _set_stage(song_id: str, stage: str, *, error: str = "", done: bool = False) -> None:
     with _PROGRESS_LOCK:
@@ -99,13 +148,22 @@ def parse_drop(raw: str) -> float | None:
         if ":" in s:
             mins, _, secs = s.partition(":")
             m, sec = float(mins), float(secs)
-            if sec < 0 or sec >= 60 or m < 0:
+            v = m * 60.0 + sec
+            if not (0 <= sec < 60) or m < 0:
                 return None
-            return m * 60.0 + sec
-        v = float(s)
-        return v if v >= 0 else None
+        else:
+            v = float(s)
     except ValueError:
         return None
+    # NaN AND INFINITY MUST DIE HERE. Every comparison against NaN is False, so "0:nan" walked
+    # through the range check above AND the "past the end of the song" check, and `json.dump`
+    # then wrote a literal `NaN` into the manifest that indexes all 118 catalogue songs. Python
+    # reads that back happily, so nothing would notice — but the file is no longer valid JSON for
+    # any other reader. Found in the 2026-08-17 security review, reachable from Discord as
+    # `/add drop:0:nan`.
+    if not math.isfinite(v) or v < 0:
+        return None
+    return v
 
 
 def _validate_ext(f: UploadFile) -> None:
@@ -170,6 +228,20 @@ def _ingest(song_id: str, name: str, role: str, uploader: str, drop: float | Non
     """
     try:
         with _INGEST_SLOTS, library_store.song_lock(song_id):
+            # RE-CHECK INSIDE THE LOCK. Two people can upload the same track seconds apart: both
+            # pass dedupe (neither has a row yet) and both queue. Without this the second one
+            # would overwrite the first's row — taking their name, their quota and their drop —
+            # and, if it then failed, delete the stems the FIRST upload had just paid for, leaving
+            # a row pointing at missing files. Both were proven in the 2026-08-17 review.
+            if any(str(r.get("song_id", "")) == song_id for r in library_store.load()):
+                log.info("upload %s: somebody else finished this exact song first", song_id[:12])
+                _set_stage(song_id, "ready", done=True)
+                return
+            # `pre_existing` stays as it was at REQUEST time, before store_wav. Re-taking it here
+            # would count the wav this request just stored as "already here" and so leave it behind
+            # on failure. The row check above is what protects somebody else's work: two uploads of
+            # the same song serialise on this lock, so if the other one finished we have already
+            # returned, and if it has not started yet it has created nothing to lose.
             wav = path_for(song_id)
             if wav is None:
                 raise RuntimeError("the stored audio vanished before it could be split")
@@ -199,6 +271,11 @@ def _ingest(song_id: str, name: str, role: str, uploader: str, drop: float | Non
             except OSError:
                 log.warning("could not remove %s after a failed upload", p.name)
         _set_stage(song_id, "failed", error=str(e) or e.__class__.__name__, done=True)
+    finally:
+        # Whatever happened, the slot goes back: on success the manifest row now counts this song,
+        # and on failure nothing should have been counted at all. Released in `finally` so a crash
+        # can never leak a slot and quietly shrink somebody's five forever.
+        _release_slot(song_id)
 
 
 @router.post("/songs/add")
@@ -222,15 +299,6 @@ def add_song(file: UploadFile,
     if role == "beat" and drop is None:
         raise HTTPException(400, "For a beat I need the drop — like 1:24, or 84 for seconds.")
 
-    # --- the caps, before a single byte is read -----------------------------------------------
-    uploads.forget_cached_manifest()   # count against the manifest as it is RIGHT NOW
-    mine = uploads.count_for(uploaded_by)
-    if mine >= settings.max_uploads_per_user:
-        raise HTTPException(400, f"You've added your {settings.max_uploads_per_user} songs. "
-                                 "Nothing is lost — that's just the limit for now.")
-    if uploads.count_all() >= settings.max_uploaded_songs:
-        raise HTTPException(400, "The shared upload shelf is full "
-                                 f"({settings.max_uploaded_songs} songs). Nothing has broken.")
     if _free_gb() < settings.min_free_disk_gb:
         raise HTTPException(507, "There isn't enough room on the machine right now. Try later.")
 
@@ -238,61 +306,92 @@ def add_song(file: UploadFile,
     if ext not in settings.upload_exts:
         raise HTTPException(400, "I can take an MP3 or an M4A. Discord also caps a file at 10 MB.")
 
-    with tempfile.TemporaryDirectory() as td:
-        src = Path(td) / "in"
-        _save_capped(file, src)
-        clean = Path(td) / "clean.wav"
-        try:
-            normalize_audio(src, clean)
-        except AudioError:
-            raise HTTPException(400, "I couldn't read that as audio.")
+    # --- CLAIM A SLOT before a single byte is read, and hold it until the row exists ------------
+    token = f"pending:{uuid.uuid4().hex}"
+    try:
+        _claim_slot(uploaded_by, token)
+    except _CapFull as e:
+        raise HTTPException(400, str(e))
 
-        try:
-            info = sf.info(str(clean))
-            seconds = float(info.frames) / float(info.samplerate or 1)
-        except Exception:  # noqa: BLE001
-            raise HTTPException(400, "I couldn't read that as audio.")
-        if seconds < settings.min_upload_seconds:
-            raise HTTPException(400, "That's too short to mix — 30 seconds is the minimum.")
-        if seconds > settings.max_upload_seconds:
-            raise HTTPException(400, "That's over 8 minutes, which is longer than I can work with.")
-        if drop is not None and drop >= seconds:
-            m, s = divmod(int(seconds), 60)
-            raise HTTPException(400, f"That drop is past the end — the song is {m}:{s:02d} long.")
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "in"
+            _save_capped(file, src)
 
-        # FREE, and the whole reason this step exists: a podcast must never reach a paid call.
-        try:
-            musical, score, _bpm = beatcheck.has_a_steady_beat(clean)
-        except Exception:  # noqa: BLE001
-            raise HTTPException(400, "I couldn't read that as audio.")
-        if not musical:
-            raise HTTPException(400, "I couldn't hear a beat in that, so I stopped before "
-                                     "spending anything. Speech and voice notes land here.")
+            # LENGTH BEFORE DECODE. A 14 MB, 4-hour, 8 kbps MP3 expands to a 2.5 GB WAV, so
+            # checking the limit after normalising is far too late — one request could take the
+            # machine under its free-disk floor and make the cleaner delete other people's mixes.
+            claimed = probe_seconds(src)
+            if claimed and claimed > settings.max_upload_seconds:
+                raise HTTPException(400, "That's over 8 minutes, which is longer than I can "
+                                         "work with.")
 
-        # The id is the hash of these exact bytes, which is what `store_wav` will name the file.
-        # Working it out BEFORE storing is what lets us record which files were already here — so a
-        # later failure can never delete the audio of a song that existed before this request (an
-        # orphan, or a catalogue song somebody re-uploaded).
-        song_id = hashlib.sha256(clean.read_bytes()).hexdigest()
-        pre_existing = {p for p in _artifacts(song_id) if p.exists()}
-        stored = store_wav(clean)
-        if stored != song_id:  # cannot happen; if it ever does, do not guess which id is real
-            raise HTTPException(500, "Something went wrong storing that song.")
+            clean = Path(td) / "clean.wav"
+            try:
+                # ...and cap the decode too, because the header above is the file's own claim and
+                # a hostile file can lie about it.
+                normalize_audio(src, clean, max_seconds=settings.max_upload_seconds + 5.0)
+            except AudioError:
+                raise HTTPException(400, "I couldn't read that as audio.")
 
-    # DEDUPE ON THE ROW, not the wav. `path_for` only proves the audio is here — a song half
-    # ingested by an earlier failure would otherwise read as a duplicate and be waved through with
-    # no stems and no analysis.
-    row = next((r for r in library_store.load() if str(r.get("song_id", "")) == song_id), None)
-    if row is not None:
-        return {"song_id": song_id, "name": str(row.get("name") or ""), "role": str(row.get("role_hint") or ""),
-                "status": "ready", "duplicate": True}
+            try:
+                info = sf.info(str(clean))
+                seconds = float(info.frames) / float(info.samplerate or 1)
+            except Exception:  # noqa: BLE001
+                raise HTTPException(400, "I couldn't read that as audio.")
+            if seconds < settings.min_upload_seconds:
+                raise HTTPException(400, "That's too short to mix — 30 seconds is the minimum.")
+            if seconds > settings.max_upload_seconds:
+                raise HTTPException(400, "That's over 8 minutes, which is longer than I can "
+                                         "work with.")
+            if drop is not None and drop >= seconds:
+                m, s = divmod(int(seconds), 60)
+                raise HTTPException(400, f"That drop is past the end — the song is {m}:{s:02d} "
+                                         "long.")
 
-    name = (display_name or Path(file.filename or "").stem or "your song").strip()[:80]
-    _set_stage(song_id, "getting it ready")
-    threading.Thread(target=_ingest, name=f"ingest-{song_id[:8]}",
-                     args=(song_id, name, role, uploaded_by, drop, pre_existing), daemon=True).start()
-    return {"song_id": song_id, "name": name, "role": role, "status": "processing",
-            "duplicate": False, "seconds": round(seconds, 1), "beat_score": round(score, 3)}
+            # FREE, and the whole reason this step exists: a podcast must never reach a paid call.
+            try:
+                musical, score, _bpm = beatcheck.has_a_steady_beat(clean)
+            except Exception:  # noqa: BLE001
+                raise HTTPException(400, "I couldn't read that as audio.")
+            if not musical:
+                raise HTTPException(400, "I couldn't hear a beat in that, so I stopped before "
+                                         "spending anything. Speech and voice notes land here.")
+
+            # The id is the hash of these exact bytes, which is what `store_wav` will name the
+            # file. Working it out BEFORE storing is what lets us record which files were already
+            # here — so a later failure can never delete the audio of a song that existed before
+            # this request (an orphan, or a catalogue song somebody re-uploaded).
+            song_id = hashlib.sha256(clean.read_bytes()).hexdigest()
+            pre_existing = {p for p in _artifacts(song_id) if p.exists()}
+            stored = store_wav(clean)
+            if stored != song_id:  # cannot happen; if it does, do not guess which id is real
+                raise HTTPException(500, "Something went wrong storing that song.")
+
+        # DEDUPE ON THE ROW, not the wav. `path_for` only proves the audio is here — a song half
+        # ingested by an earlier failure would otherwise read as a duplicate and be waved through
+        # with no stems and no analysis.
+        row = next((r for r in library_store.load() if str(r.get("song_id", "")) == song_id), None)
+        if row is not None:
+            _release_slot(token)   # already in the catalogue: it costs nobody a slot
+            return {"song_id": song_id, "name": str(row.get("name") or ""),
+                    "role": str(row.get("role_hint") or ""), "status": "ready", "duplicate": True}
+
+        # A name is never blank: an empty one is dropped by GET /library, so the song would be
+        # stored, split, analysed, PAID FOR, hold a slot, and be invisible everywhere — the exact
+        # 2026-08-14 failure, reachable through an attachment called " .mp3".
+        name = (display_name or "").strip() or Path(file.filename or "").stem.strip() or "your song"
+        name = name[:80]
+        _rename_slot(token, song_id)
+        _set_stage(song_id, "getting it ready")
+        threading.Thread(target=_ingest, name=f"ingest-{song_id[:8]}",
+                         args=(song_id, name, role, uploaded_by, drop, pre_existing),
+                         daemon=True).start()
+        return {"song_id": song_id, "name": name, "role": role, "status": "processing",
+                "duplicate": False, "seconds": round(seconds, 1), "beat_score": round(score, 3)}
+    except BaseException:
+        _release_slot(token)   # nothing was queued, so the slot must go straight back
+        raise
 
 
 @router.get("/songs/add/{song_id}")

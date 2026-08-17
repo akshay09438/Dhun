@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse
 
 from app.audio.stems import STEMS, separate_stems, stem_path
 from app.models import StemSet
+from app.planner import uploads
 from app.storage import path_for
 
 router = APIRouter()
@@ -77,9 +78,21 @@ def stems_status(song_id: str) -> StemSet:
 
 @router.get("/songs/{song_id}/stems/{stem}")
 def get_stem(song_id: str, stem: str):
-    """Serve one stem by id + name (both validated before any disk access)."""
+    """Serve one stem by id + name (both validated before any disk access).
+
+    NEVER FOR AN UPLOAD. A stem is the song pulled apart — the isolated vocal of somebody's
+    unreleased Suno track, downloadable by anyone who has seen its id. Stem export and
+    redistribution is an explicit non-goal in the product profile, and for a catalogue song it is
+    at least a commercially released track; for somebody's own upload it is their unreleased work
+    being handed to a stranger. Flagged in the 2026-08-17 security review; the founder's call was
+    to lock it down.
+
+    Catalogue stems still serve, because the web console's live mixer plays from them.
+    """
     if stem not in STEMS or not _HEX_ID.fullmatch(song_id):
         raise HTTPException(404, "Not found.")
+    if uploads.is_upload(song_id):
+        raise HTTPException(403, "That song's parts are not shared.")
     p = stem_path(song_id, stem)
     if not p.exists():
         raise HTTPException(404, "Not found.")

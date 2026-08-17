@@ -1,3 +1,4 @@
+import { apiFetch } from "./api";
 import {
   API_BASE,
   fetchVocalBus,
@@ -62,7 +63,7 @@ export class LivePlayer {
   ): Promise<void> {
     await Promise.all(
       stemBuses.map(async (bus) => {
-        const res = await fetch(`${API_BASE}/songs/${song1Id}/stems/${bus}`);
+        const res = await apiFetch(`${API_BASE}/songs/${song1Id}/stems/${bus}`);
         const buf = await this.ctx.decodeAudioData(await res.arrayBuffer());
         this.addBus(bus, buf);
       }),

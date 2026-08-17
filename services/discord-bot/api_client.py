@@ -78,7 +78,12 @@ def _friendly(resp: httpx.Response) -> str:
 class PromptDJClient:
     def __init__(self, base_url: str, timeout: float = 30.0):
         self._base = base_url.rstrip("/")
-        self._client = httpx.AsyncClient(base_url=self._base, timeout=timeout)
+        # Every mutating call carries this header. The engine refuses POSTs without it, which is
+        # what stops a random web page open in a browser on this machine driving the API: a
+        # browser cannot set a custom header cross-origin without a preflight, and the preflight
+        # is refused. See app/main.py.
+        self._client = httpx.AsyncClient(base_url=self._base, timeout=timeout,
+                                         headers={"X-PromptDJ-App": "grinder"})
 
     async def close(self) -> None:
         await self._client.aclose()
