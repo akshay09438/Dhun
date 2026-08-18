@@ -4,10 +4,9 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
-**2026-08-18, overnight run.** **THE JOURNEY IS REBUILT: `/grind` now carries your own songs and `/add` is gone.** The founder's report was about the experience, not the sound — _"I like the mixes they are making but this is the issue and the experience is the issue."_ And for the first time in this product's life, **two uploaded songs have been mixed together.**
+**2026-08-18, midday.** **THE NEW JOURNEY IS LIVE IN DISCORD.** `/grind` now carries your own beat, your own vocal, or both; `/add` is gone. Verified by asking Discord directly, not by reading a log. The drop fix is shipped too — and its tests are **parked, not passing**, which is the one thing to know.
 
-**IN FLIGHT: [PR #70](https://github.com/akshay09438/Dhun/pull/70)** (`feat/one-door-bring-your-own-songs` → main, 2 commits, pushed, **not merged**).
-**MERGED EARLIER: PR #69** — the timeout fix has been on `main` since 2026-08-17T19:34Z.
+**MERGED: PR #70** (one door). **OPEN: [PR #71](https://github.com/akshay09438/Dhun/pull/71)** (the drop fix, already applied and running on the live engine).
 
 **THE LINK: `https://discord.gg/WJ9b78hFQb`** — permanent, lands on `#read-this-first`.
 
@@ -15,107 +14,57 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ---
 
-## ⚠️ DO THIS FIRST — nothing is live yet
+## Live state, measured 2026-08-18 midday (not claimed)
 
-**Grinder is still running last night's code.** The new `/grind` does not exist in Discord until Grinder is restarted, which also re-syncs the command list and makes `/add` disappear. **I deliberately did not restart it**: that ships a changed command to real members while you were asleep and before you had seen the PR. It is your call, and it is one action.
-
-Order for the morning: **listen → read PR #70 → decide the one staged card → restart Grinder.**
-
----
-
-## Two things the last handoff said that were NOT TRUE
-
-Written plainly because I repeated one of them to the founder's face.
-
-1. **"IN FLIGHT: one commit, pushed, NO PR yet."** Wrong on all three counts. **PR #69 was MERGED** at 2026-08-17T19:34Z with **two** commits. The timeout fix has been on `main` all along. **My own first check agreed with the handoff and was also wrong** — it shelled out to `gh`, which is **not installed on this machine**, and `ErrorActionPreference='SilentlyContinue'` swallowed the error, so "no output" was read as "no PR". A command that cannot run is not evidence of anything.
-
-2. **"NO UPLOAD HAS EVER SUCCEEDED. Catalogue: 0 uploads."** Wrong. **Two uploads have succeeded** — `GET /songs/mine` reads **2 of 5** for the founder. The catalogue reads 0 because **`GET /library` deliberately excludes uploads** (the security review), so no amount of looking at the catalogue can ever see one.
-
-   **I repeated this error at kickoff**, told the founder their two songs were not in the app, and asked them to authorise ~24 cents on that basis. They were already there. Both ingests returned `duplicate`, and **no money was spent** — paid attempts read **3 before and 3 after**. The authorisation was never used.
+|                             |                                                             |
+| --------------------------- | ----------------------------------------------------------- |
+| Engine (uvicorn :8000)      | UP, **restarted onto the drop fix**; `/health` 200          |
+| Grinder                     | UP, restarted onto the new `/grind`; commands synced; 2 voices |
+| `/grind` options in Discord | `my_beat` and `my_vocal`, both **FILE**, both **optional**   |
+| `/add`                      | **unregistered** — Discord confirms it is gone               |
+| Commands registered         | 10, visibilities all correct                                 |
+| Founder's uploads           | **2 of 5**, both `role_hint=vocals`, both `main_drop=None`   |
+| Paid attempts               | **3 of 40**, unchanged all session                            |
+| Engine suite                | **956 passed, 6 skipped**                                     |
 
 ---
 
-## 🎧 LISTEN TO THIS FIRST
+## 🎧 STILL UNHEARD
 
-Two real mixes of the founder's own two songs, in `C:\Users\Akshay\OneDrive\Desktop\Prompt-DJ mixes to listen to\`:
+Two mixes of the founder's own two songs sit in `C:\Users\Akshay\OneDrive\Desktop\Prompt-DJ mixes to listen to`. **Nobody has listened to either.** They are the first mixes ever made from two uploaded songs.
 
-|       | what it is                                                     | length |
-| ----- | -------------------------------------------------------------- | ------ |
-| **A** | _The drones keep droning_ is the beat, _Heal the planet_ sings | 3:26   |
-| **B** | _Heal the planet_ is the beat, _The drones keep droning_ sings | 2:00   |
+- **A** — *The drones keep droning* is the beat (grid confidence 0.83), *Heal the planet* sings. 3:26.
+- **B** — the reverse (grid confidence 0.10, so the planner plays safe). 2:00.
 
-**Both directions, on purpose — the measurements do not settle it.** _The drones_ has a trustworthy beat-grid (confidence **0.83**) but using it as the beat means the other vocal is **sped up**, and this project has measured that speeding a vocal up warbles while slowing one down sounds fine. _Heal the planet_ gives the kinder stretch but its grid confidence is **0.10**, well under the 0.5 the planner needs before it risks its better moves — so on B the app deliberately plays safe. Their keys (7B and 7A) are relative major/minor, the most compatible pair there is, so key is not the variable either way.
-
-**Which one is better is an ear question, and only yours counts.** Neither is silent, neither clips, both move ~31 dB.
+Both measure like real music: no silence, no clipping, ~31 dB of movement. Which is *better* is an ear question and only the founder's counts.
 
 ---
 
-## What shipped tonight
+## ⚠️ THE DROP FIX SHIPPED WITH ITS TESTS PARKED
 
-**The journey, measured in questions asked:**
+The fix works: a drop typed for a song already in the hopper is now saved instead of silently binned. Applied after the founder's explicit yes, recorded against the staged content hash, engine restarted onto it, and the guard verified live (re-posting a song as a **vocal** with a drop left it unchanged and cost nothing).
 
-| you type                    | what happens                                    | questions |
-| --------------------------- | ----------------------------------------------- | --------- |
-| `/grind`                    | today's picker, unchanged                       | 0         |
-| `/grind my_vocal:`          | goes in, you pick a beat from the menu          | **0**     |
-| `/grind my_beat:`           | one pop-up asks the drop, then you pick a vocal | 1         |
-| `/grind my_beat: my_vocal:` | one pop-up, then **straight to your own mix**   | 1         |
+**But `services/api/tests/parked/drop_saved_for_a_song_already_here.py` is not in the suite.** Both tests are correct — red without the fix, green with it — yet adding that FILE to the suite makes one or two **unrelated** tests fail, reproducibly. Ten full-suite runs ruled out leaked ingest threads, a shared test account, the manifest cache key, byte-identical fixture audio, the paid-attempt budget, and machine load. **The cause is unidentified.**
 
-Before tonight, mixing your own beat with your own vocal took **two commands, two role choices, a drop box shown twice and needed once — and was still not reachable in one go.**
+The founder chose to ship the fix and hold the tests rather than keep drilling. `services/api/tests/parked/README.md` records every dead end and the one thing not yet tried: **move the two tests into an existing upload test file instead of adding a new one.**
 
-**The drop question is off the command entirely.** It is now a pop-up that appears **only when a beat is attached**, so a vocal is never asked. Getting the time wrong re-asks with the reason on the box instead of throwing your upload away.
-
-**`/add` is deleted.** Its machinery is reused, not lost. **`/mine` stays** — it answers a different question.
+**The cost, stated rather than hidden: the fix is live and nothing in the suite guards it.**
 
 ---
 
-## What could NOT be built, and why
+## A latent weakness found and deliberately NOT shipped
 
-The founder's first choice was an **"Add your own song" button inside the `/grind` screen**. **Discord does not allow it.** A button or menu cannot open a file picker, and a pop-up box takes typing only. A file can only ever arrive attached to a command. The alternative was not a nicer button — it was a second command, which is the thing being removed. Told to the founder at kickoff, before they chose.
-
----
-
-## ⚠️ ONE CARD WAITING FOR YOUR YES
-
-**`save-the-drop-for-a-song-already-added`** — `services/api/app/routes/songs.py`, verdict `not-proven-safe` (the cautious default; it has not been run against the engine suite yet).
-
-**Why you will want it:** if you attach a beat you have **already** added and type its drop, the drop is **thrown away** — the app recognises the song, skips ahead (which is why it costs nothing), and never records the new time. **Both of your own songs are stored as `vocals` with no drop**, because until tonight the fastest way past the drop question was to call every song a vocal. So the first time you use `/grind my_beat:` on either of them, you are standing on this bug. **Without this change you cannot set a drop on your own songs at all.**
-
-The bot already **says so on the card** rather than staying silent. The staged change makes it actually save. It touches the upload file, which is on your stop-and-ask list, so it waits.
-
-⚠️ **The queue also still holds `disk-sweep-floors-and-age`, which was WITHDRAWN on 2026-08-13** after two adversarial reviews returned `unsafe`. It is a stale record, **not** a pending decision — do not approve it.
-
----
-
-## Verification evidence — run 2026-08-18
-
-| Check                                | Result                                                                                              |
-| ------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `pytest services/api -q`             | **956 passed, 6 skipped** in 185.68s                                                                |
-| bot suite                            | **606 passed** (was 567)                                                                            |
-| `npm test`                           | **79 passed** (9 files)                                                                             |
-| `npm run lint` / `npm run typecheck` | clean, exit 0                                                                                       |
-| Live engine `/health`                | 200                                                                                                 |
-| Real ingest through the NEW code     | both songs accepted, returned `duplicate`, £0                                                       |
-| Real render, `drones x heal`         | ready **26.8s**, 307.3s full / 206.4s highlight, peak −1.66 dBFS                                    |
-| Real render, `heal x drones`         | ready **16.1s**, 204.2s / 120.1s, peak −1.27 dBFS                                                   |
-| Near-silent seconds, both highlights | **0.0%**                                                                                            |
-| Dangerous surfaces                   | `routes/songs.py`, `render.py`, `validate.py`, `storage.py`, `.github/workflows/**` — all unchanged |
-| `.zuko/risk.js`                      | score 2, route `auto-apply`                                                                         |
-| Paid attempts                        | **3 of 40**, unchanged across the night                                                             |
-| Free disk                            | **7.6 GB**                                                                                          |
-
-**THE 6 SKIPS ARE STILL HOLLOW.** `test_effect_pool_e2e.py` (5) and `test_rule3_parked.py` (1) still skip silently because their fixture, Father Ocean, was deleted in the catalogue prune. **You were offered this tonight and declined it.** Recorded as a decision, not an oversight.
+`uploads._stamp()` keys the manifest cache on `(mtime, size)` with **no path in it**. Two different data dirs whose manifests hold the same number of rows are the same size, and if written inside one clock tick they share an mtime — so the cache can hand back the wrong directory's rows. Adding the path took the failures 2 → 1 but did not clear them, so it was **reverted**: shipping an unrelated change on a hypothesis that turned out wrong is worse than recording the weakness. Production has one `data_dir` that never moves, which is why it has never bitten a user. **Worth fixing on its own merits, separately.**
 
 ---
 
 ## Do first next session
 
-1. **Listen to A and B** and say which direction is right. Everything else is guesswork until you do.
-2. **Read [PR #70](https://github.com/akshay09438/Dhun/pull/70)** and merge if you are happy.
-3. **Decide the staged card** — it is the difference between being able to set a drop on your own songs and not.
-4. **Restart Grinder** to make any of this real in Discord.
-5. **Then use `/grind my_beat: my_vocal:` yourself** — I proved the code path, not the Discord experience. Nobody has yet seen the pop-up in a real client.
+1. **Listen to A and B.** Still the only thing nobody can do for the founder.
+2. **Use `/grind my_beat:` yourself in Discord.** I proved the code path and the live engine; the pop-up and the attachment fields have never been seen in a real Discord client by anybody.
+3. **Set a real drop on your own two songs** — that is what the fix unlocked, and both still read `main_drop=None`.
+4. **Merge [PR #71](https://github.com/akshay09438/Dhun/pull/71).**
+5. **Un-park the drop tests** — start by moving them into an existing upload test file.
 
 ---
 
