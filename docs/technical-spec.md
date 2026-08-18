@@ -2,7 +2,19 @@
 
 _How it is built. Starts as the intended design (from the PRD + discovery deltas); becomes as-built as code lands. Living document — if code and this doc disagree, the code wins and this doc is corrected. Full background: [reference/PRD.md](reference/PRD.md)._
 
-> **LATEST — 2026-08-18, midday (as-built: one upload field, and an owner's songs in BOTH picker lists; branch `feat/your-songs-live-in-your-picker`. NO dangerous surface touched).**
+> **LATEST — 2026-08-18, afternoon (as-built: Replicate throttles are waited out, and the suite stops inheriting real spend; branch `fix/wait-your-turn-instead-of-giving-up`. `conftest.py` IS touched — a dangerous surface, approved by the founder before the edit and recorded via `.zuko/approve.js`).**
+>
+> **THE REPORT AND WHAT IT ACTUALLY WAS.** An upload returned Replicate's 429 throttle text. Measured against Replicate's own API rather than assumed: the token is valid and **the last 100 predictions all succeeded**, seven of them that afternoon. Below $5 of credit Replicate does not refuse work, it **rations** it to one prediction at a time; an upload needs two, so one arriving mid-flight is refused at the door. **A door refusal creates no prediction**, which is why it left no trace on Replicate's side and why retrying is free.
+>
+> **`replicate_client.run` NOW RETRIES A THROTTLE ONLY.** 12s / 24s / 36s, capped at ~72s total because `api_client.wait_for_add` gives up at 900s and a person is watching a card. `is_throttled()` is deliberately narrow — status 429 or an explicit throttle/rate-limit message — because **anything else may already have started work that is being charged for, and retrying that pays twice**. Pinned by `test_a_real_failure_is_never_retried`.
+>
+> **`conftest._NEVER_LINK` — THE BIGGER FIND, and it was not this change's fault.** The full suite had six failures that a control run (change fully removed) reproduced identically. `_link_readonly_catalog` hard-links the real data dir into the session scratch folder, and it was linking **`upload_spend.json`, the paid-attempt counter** — so tests began at the founder's real spend and climbed against a ceiling of 40. At a real counter of **3** the suite finished just under and was green; at **6**, after three real uploads, it crossed 40 partway through and six upload tests were refused with 429 for having no imaginary money left. **The suite's result tracked the founder's spending.** The real file was never corrupted, but only because `spend.record_attempt` writes through an atomic replace, which breaks the hard link rather than writing through it — conftest's own caveat ("nothing in the suite has a reason to overwrite" a linked file) had quietly stopped being true. Guarded by `test_the_suite_never_inherits_the_real_spend_counter`, which compares inodes.
+>
+> **THIS CLOSES THE PARKED-TEST MYSTERY.** `drop_saved_for_a_song_already_here.py` was parked that morning because adding it made unrelated tests fail; ten runs ruled out leaked ingest threads, a shared test account, the manifest cache key, byte-identical fixture audio and machine load. The cause was this: six more ingests pushed the shared counter over 40 sooner. **The file is un-parked and green, so the drop fix now has the safety net it shipped without, and `tests/parked/` is gone.**
+>
+> **Engine suite 956 → 967 passed, 6 skipped, zero failures. The real spend counter was verified unchanged at 6 before and after every run.**
+>
+> **2026-08-18, midday (as-built: one upload field, and an owner's songs in BOTH picker lists; branch `feat/your-songs-live-in-your-picker`. NO dangerous surface touched).**
 >
 > **WHY THE MORNING'S DESIGN LASTED HALF A DAY.** `/grind` shipped with two optional attachment options, `my_beat` and `my_vocal`. The founder hit it immediately: _"when I click on one of them, the 'Add my' thing disappears."_ Whether Discord's client keeps offering a second option once the first is filled is **its** behaviour and unreachable from here, so the design stopped depending on it rather than trying to word around it.
 >
