@@ -12,13 +12,17 @@ The LLM never touches audio; it only fills this structured plan.
 from __future__ import annotations
 
 import hashlib
+import logging
 import json
 import os
 import random
 
 from app.models import (DuckMove, MixPlan, Placement, TrackAnalysis, VocalChainConfig,
                         VocalProcessMove, chain_config_hash)
-from app.planner import beat_guest_verse, fence, hooks, instrumental_beats, llm, window
+from app.planner import (beat_guest_verse, beatgrid, fence, hooks, instrumental_beats, llm,
+                         window)
+
+log = logging.getLogger("promptdj.plan")
 
 # Phase 0 (T1): the AI arrangement engine is OFF by default. The founder prefers the
 # deterministic rules arrangement (`_default_arrangement`) — a note-for-note match to the loved
@@ -734,6 +738,27 @@ def _attach_warp(placements: list[Placement], a1: TrackAnalysis, a2: TrackAnalys
     `forced` widens the per-bar grip band (WARP_*_FORCED) so a large forced stretch (e.g. 1.26) still
     re-locks EVERY bar to Song 1's downbeats — the guarantee that a forced full-match never drifts."""
     if not (a1.downbeats and a2.downbeats):
+        return placements
+    # ...AND THE GRID HAS TO BE WORTH LOCKING TO, not merely present.
+    #
+    # This asked whether downbeats EXIST. `Circle_With_Me` had 107 of them and they drifted about a
+    # tenth of a second each, so the check passed and a bar-by-bar lock was forced onto a grid that
+    # cannot hold one. R7 then - correctly - refused to ship a vocal that would wander off the beat,
+    # and the founder waited four minutes for nothing (2026-08-18 17:08, the first incident the
+    # engine's own log explained). Two rules fighting: never-decline insisted the mix be made, the
+    # referee refused the thing it built.
+    #
+    # THE REFEREE IS RIGHT AND IS NOT TOUCHED. Standing the LOCK down is what resolves it: with no
+    # warp the engine falls back to one global stretch, exactly as the paragraph above already
+    # promises for a missing grid. The vocal then sits over the beat instead of being pinned to it -
+    # looser on a wobbly song, and it COMES OUT, which is the founder's rule and their explicit
+    # choice over refusing (2026-08-18).
+    #
+    # `grid_health` is not new and not a guess: it is already computed and logged for every mix.
+    # Nothing was reading it here.
+    if not beatgrid.grid_health(getattr(a1, "bpm", None), a1.downbeats)["ok"]:
+        log.info("song1's grid is too loose to lock to (%s) - shipping on one global stretch",
+                 beatgrid.grid_health(getattr(a1, "bpm", None), a1.downbeats))
         return placements
     lo, hi = (fence.WARP_LO_FORCED, fence.WARP_HI_FORCED) if forced else (fence.WARP_LO, fence.WARP_HI)
     for p in placements:
