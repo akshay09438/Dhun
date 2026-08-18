@@ -20,7 +20,7 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 | --------------------------- | ----------------------------------------------------------- |
 | Engine (uvicorn :8000)      | UP, **restarted onto the drop fix**; `/health` 200          |
 | Grinder                     | UP, restarted onto the new `/grind`; commands synced; 2 voices |
-| `/grind` options in Discord | `my_beat` and `my_vocal`, both **FILE**, both **optional**   |
+| `/grind` options in Discord | exactly one: `my_song`, **FILE**, **optional**              |
 | `/add`                      | **unregistered** — Discord confirms it is gone               |
 | Commands registered         | 10, visibilities all correct                                 |
 | Founder's uploads           | **2 of 5**, both `role_hint=vocals`, both `main_drop=None`   |
@@ -75,7 +75,7 @@ neither.
 ## Do first next session
 
 1. **Listen to A and B.** Still the only thing nobody can do for the founder.
-2. **Use `/grind my_beat:` yourself in Discord.** I proved the code path and the live engine; the pop-up and the attachment fields have never been seen in a real Discord client by anybody.
+2. **Use `/grind my_song:` yourself in Discord.** The code path and the live engine are proven; the pop-up and the attachment field have never been seen in a real Discord client by anybody.
 3. **Set a real drop on your own two songs** — that is what the fix unlocked, and both still read `main_drop=None`.
 4. **Merge [PR #71](https://github.com/akshay09438/Dhun/pull/71).**
 5. **Un-park the drop tests** — start by moving them into an existing upload test file.
