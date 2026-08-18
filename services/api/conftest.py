@@ -60,6 +60,23 @@ def _redirect(target: Path) -> None:
                 mod.settings = _config.settings
 
 
+# Files that must NEVER be linked in, however read-only they look.
+#
+# `upload_spend.json` IS THE PAID-ATTEMPT COUNTER, and linking it made the suite inherit the
+# founder's real Replicate spending. `max_paid_upload_attempts` is 40, so the tests started at
+# whatever the founder had used and climbed from there: measured 2026-08-18, at a real counter of
+# 3 the full suite finished just under the ceiling and was green, and after three more real uploads
+# took it to 6 the suite crossed 40 partway through and six upload tests failed with 429 - refused
+# for having no imaginary money left, nothing to do with what they were testing. The suite's result
+# tracked the founder's bank balance.
+#
+# The real file was never corrupted, but only because `spend.record_attempt` writes through an
+# atomic replace, which breaks the hard link rather than writing through it. The caveat below says
+# "nothing in the suite has a reason to overwrite" a linked file; that had quietly stopped being
+# true, and this is what makes it true again.
+_NEVER_LINK = frozenset({"upload_spend.json"})
+
+
 def _link_readonly_catalog(src: Path, dst: Path) -> int:
     """HARD-LINK the catalog INPUTS into the session folder, so the real-audio end-to-end tests keep
     running instead of silently turning into skips.
@@ -88,6 +105,8 @@ def _link_readonly_catalog(src: Path, dst: Path) -> int:
         return 0
     for p in src.iterdir():
         if not p.is_file() or p.name.endswith(_EVICTABLE_SUFFIXES):
+            continue
+        if p.name in _NEVER_LINK:
             continue
         try:
             os.link(p, dst / p.name)
