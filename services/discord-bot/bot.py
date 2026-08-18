@@ -903,7 +903,7 @@ class GrindBuilderView(discord.ui.View):
         self.language = DEFAULT_LANGUAGE
 
         self.beat_select = discord.ui.Select(placeholder="Pick a beat...", row=1,
-                                             options=self._opts(bot.beats, None))
+                                             options=self._opts(self._beats(), None))
         self.beat_select.callback = self._on_beat
         self.vocal_select = discord.ui.Select(placeholder="Pick a vocal...", row=2,
                                               options=self._opts(self._vocals(), None))
@@ -925,6 +925,24 @@ class GrindBuilderView(discord.ui.View):
         return [discord.SelectOption(label=lbl, value=val, default=dflt)
                 for lbl, val, dflt in select_option_specs(songs, selected_id)]
 
+    def _mine(self):
+        """This person's own uploaded songs, newest first, for BOTH dropdowns.
+
+        THEY GO IN BOTH LISTS ON PURPOSE (founder, 2026-08-18): "under Choose the Beat, their song
+        name is also shown. Under Choose Vocal, the song is also shown, and they can choose
+        whatever they like." An upload is not asked which side it is any more, so nothing here may
+        read `role_hint` to decide — and that is not a shortcut: this project already measured that
+        a song tagged `vocals` worked fine as the beat, which is why the tag was only ever a menu
+        filter rather than an engine rule.
+
+        Only the OWNER's songs, and `/grind` is ephemeral, so nobody sees anybody else's.
+        """
+        return list(_my_uploads.get(str(self.owner_id), []))
+
+    def _beats(self):
+        """The beats this person should see: their own songs first, then the curated menu."""
+        return self._mine() + list(bot.beats)
+
     def _vocals(self):
         """The vocals this person should see. Falls back to the whole list if a language somehow
         matches nothing, because an empty dropdown is worse than an unfiltered one."""
@@ -932,7 +950,10 @@ class GrindBuilderView(discord.ui.View):
         # predates the language field simply will not send one. A missing tag must mean "unknown",
         # never a crashed picker.
         picked = [s for s in bot.vocals if (getattr(s, "language", "") or "") == self.language]
-        return picked or bot.vocals
+        # The person's own songs are NEVER language-filtered. An upload's language is a default
+        # nobody was asked for, and a language tag once hid 103 songs - doing that to somebody's
+        # own track, in their own picker, would be the same bug with a smaller blast radius.
+        return self._mine() + (picked or list(bot.vocals))
 
     def set_language(self, lang: str) -> None:
         """Switch which vocals are shown. Deliberately PURE of Discord so it can be tested without
@@ -955,7 +976,7 @@ class GrindBuilderView(discord.ui.View):
 
     def _refresh_options(self) -> None:
         # NOT _refresh: discord.ui.View owns that name and calls it with the message components.
-        self.beat_select.options = self._opts(bot.beats, self.sel_beat)
+        self.beat_select.options = self._opts(self._beats(), self.sel_beat)
         self.vocal_select.options = self._opts(self._vocals(), self.sel_vocal)
         for o in self.lang_select.options:
             o.default = (o.value == self.language)
@@ -1159,27 +1180,29 @@ def _grinding_allowed_here(interaction: discord.Interaction) -> str | None:
 @bot.tree.command(name="grind",
                   description="Throw two songs in the grinder. Bring your own, if you like.")
 @app_commands.describe(
-    my_beat="Optional: your own track, to be the beat. MP3 or M4A.",
-    my_vocal="Optional: your own track, to sing over the beat. MP3 or M4A.")
+    my_song="Optional: a song of your own to add. MP3 or M4A. It joins both your lists.")
 async def grind_cmd(interaction: discord.Interaction,
-                    my_beat: discord.Attachment | None = None,
-                    my_vocal: discord.Attachment | None = None) -> None:
-    """ONE DOOR. Attach nothing and this is the picker it has always been; attach your own beat,
-    your own vocal, or both, and they go in and get ground without a second command.
+                    my_song: discord.Attachment | None = None) -> None:
+    """ONE DOOR, AND ONE FIELD. Attach nothing and this is the picker it has always been; attach
+    a song of your own and it goes in, then appears in BOTH dropdowns from then on.
+
+    IT USED TO BE TWO FIELDS, `my_beat` and `my_vocal`, and that was wrong in practice. The founder
+    hit it immediately: "when I click on one of them, the 'Add my' thing disappears" — whether
+    Discord keeps offering the second field once the first is filled is its client's behaviour, not
+    something this code can reach. So the design stopped depending on it. One field, one upload,
+    and the song is not asked which side it is: it shows up under Pick a beat AND under Pick a
+    vocal, and the choice is made at mixing time where it belongs.
+
+    THAT IS SAFE RATHER THAN SLOPPY. `role_hint` was only ever a menu filter — this project
+    measured a song tagged `vocals` working fine as the beat — so nothing is being overridden.
 
     THIS REVERSES AN EARLIER DECISION, AND THE EARLIER ONE WAS RIGHT AT THE TIME. `/grind` used to
-    carry optional `beat` and `vocal` fields, and they were removed because "a first-timer reading
-    two blanks cannot tell that leaving them empty is the right move - they look like something you
-    have to fill in." That still holds for what those options WERE: a second way to choose a
-    catalogue song, duplicating the picker sitting right underneath. These are not that. They do
-    the one thing the picker physically cannot - Discord does not let a button or a select menu
-    open a file chooser, and a modal takes text only, so an attachment can ONLY arrive on the
-    command itself. The alternative is not a nicer button; it is a second command, which is exactly
-    what the founder asked to be rid of ("first I have to click on /add and then it comes up").
-
-    The old warning is answered rather than ignored: both are named `my_…`, so they read as YOURS
-    and optional rather than as a form; and the no-attachment path is pinned by a test asserting it
-    still opens the same picker, privately, with no question asked.
+    carry optional `beat`/`vocal` fields, removed because "a first-timer reading two blanks cannot
+    tell that leaving them empty is the right move". Those were a second way to choose a CATALOGUE
+    song, duplicating the picker underneath. This one does the thing the picker physically cannot:
+    Discord will not let a button or a select open a file chooser, so an attachment can only ever
+    arrive on the command itself. It is named `my_song` so it reads as yours-and-optional, and the
+    no-attachment path is pinned by a test.
     """
     # WHO, before WHERE. The door is the founder's rule that only approved people use the bot, and
     # channel permissions alone cannot carry it: one wrongly-set overwrite, or simply no grind
@@ -1195,7 +1218,7 @@ async def grind_cmd(interaction: discord.Interaction,
 
     # Decided before a byte is fetched, so a wrong file is refused in a second rather than after a
     # download and a question.
-    plan = plan_uploads(my_beat, my_vocal)
+    plan = plan_upload(my_song)
     if plan.refusal is not None:
         await interaction.response.send_message(plan.refusal, ephemeral=True)
         return
@@ -1205,12 +1228,6 @@ async def grind_cmd(interaction: discord.Interaction,
         # question is asked before anything slow happens, and the file is not pulled off Discord
         # until it has been answered.
         await interaction.response.send_modal(DropModal(plan))
-        return
-
-    if plan.uploads:
-        # A vocal on its own. There is nothing to ask, so nothing is asked.
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        await _ingest_uploads(interaction, plan, "")
         return
 
     if not bot.songs:
@@ -1288,66 +1305,52 @@ def parse_drop(raw: str) -> float | None:
 
 @dataclasses.dataclass
 class UploadPlan:
-    """What to do with whatever was attached to `/grind`, decided before a byte is fetched."""
+    """What to do with the song attached to `/grind`, decided before a byte is fetched."""
 
     refusal: str | None = None
-    # [(role, attachment)] in engine order: the beat is song1, the vocal is song2.
-    uploads: list = dataclasses.field(default_factory=list)
+    attachment: object | None = None
 
     @property
     def ask_for_drop(self) -> bool:
-        """Only a BEAT is ever asked, and a refused plan is never asked at all.
+        """Every upload is asked, exactly once, and a refused one is never asked at all.
 
-        DERIVED, not stored, so both halves of that are structural. The founder's complaint was
-        being asked for a drop while uploading a vocal; a flag somebody has to remember to clear
-        is exactly how that comes back. And asking a question about a file we are about to refuse
-        wastes the single question this journey gets to ask.
+        DERIVED, not stored, so both halves are structural rather than remembered.
+
+        WHY EVERY UPLOAD IS ASKED NOW, when the founder's original complaint was being asked while
+        adding a VOCAL: the question changed meaning. Back then a song was pinned to one side, so
+        asking a vocal where its drop hits was asking about something that could never be used.
+        An upload now appears in BOTH dropdowns and may be picked as the beat at any point, so the
+        answer is always live. One question, once, at the only moment we have their attention.
         """
-        return self.refusal is None and any(role == "beat" for role, _ in self.uploads)
+        return self.refusal is None and self.attachment is not None
 
 
-def plan_uploads(my_beat, my_vocal) -> UploadPlan:
-    """Read the attachments and decide, without touching Discord or the network.
+def plan_upload(my_song) -> UploadPlan:
+    """Read the attachment and decide, without touching Discord or the network.
 
     PURE ON PURPOSE, in the shape `GrindBuilderView.set_language` already uses: it does the
     thinking, the command does the plumbing. `filename` and `size` are metadata Discord has already
     sent, so none of this costs a download.
     """
-    uploads = [(role, att) for role, att in (("beat", my_beat), ("vocals", my_vocal))
-               if att is not None]
-    if not uploads:
+    if my_song is None:
         return UploadPlan()
 
-    for _role, att in uploads:
-        name = getattr(att, "filename", "") or ""
-        if Path(name).suffix.lower() not in UPLOAD_EXTS:
-            return UploadPlan(refusal=(
-                f"**{name or 'That file'}** is not something I can take — "
-                "it needs to be an MP3 or an M4A."))
-        size = getattr(att, "size", 0) or 0
-        if size > MAX_UPLOAD_BYTES:
-            # MB HERE MEANS 1024 KB, WHICH IS WHAT THE CAP IS COUNTED IN. Dividing by a million
-            # instead (inherited from the old /add) rendered the 30 MB ceiling as "31 MB" - the
-            # app quoting a limit that matches nothing else it says, including the engine's own
-            # refusal. Caught by walking the journey, not by a test.
-            mb = 1024 * 1024
-            return UploadPlan(refusal=(
-                f"**{name}** is {size / mb:.0f} MB, which is more than I can take. "
-                f"The limit is {MAX_UPLOAD_BYTES // mb} MB."))
+    name = getattr(my_song, "filename", "") or ""
+    if Path(name).suffix.lower() not in UPLOAD_EXTS:
+        return UploadPlan(refusal=(
+            f"**{name or 'That file'}** is not something I can take — "
+            "it needs to be an MP3 or an M4A."))
+    size = getattr(my_song, "size", 0) or 0
+    if size > MAX_UPLOAD_BYTES:
+        # MB HERE MEANS 1024 KB, WHICH IS WHAT THE CAP IS COUNTED IN. Dividing by a million
+        # instead (inherited from the old /add) rendered the 30 MB ceiling as "31 MB" - the app
+        # quoting a limit that matches nothing else it says, the engine's own refusal included.
+        mb = 1024 * 1024
+        return UploadPlan(refusal=(
+            f"**{name}** is {size / mb:.0f} MB, which is more than I can take. "
+            f"The limit is {MAX_UPLOAD_BYTES // mb} MB."))
 
-    if len(uploads) == 2:
-        a, b = uploads[0][1], uploads[1][1]
-        if (getattr(a, "filename", "") == getattr(b, "filename", "")
-                and (getattr(a, "size", 0) or 0) == (getattr(b, "size", 0) or 0)):
-            # Cheap and early. The REAL guard is after ingest, where the engine has hashed the
-            # audio and two ids can be compared for certain — a song renamed on the way in would
-            # slip past this one. Both exist because the failure is silent: the engine dedupes to
-            # a single id and the mix becomes a song layered over itself.
-            return UploadPlan(refusal=(
-                "Those look like the same file twice. A mix needs two different songs — "
-                "one to play the beat, one to sing over it."))
-
-    return UploadPlan(uploads=uploads)
+    return UploadPlan(attachment=my_song)
 
 
 class DropModal(discord.ui.Modal):
@@ -1471,7 +1474,7 @@ _OLD_DROP_NOTE = ("\n⚠️ That beat was already in your songs, so it kept the 
                   "the time you just typed was not saved. Nothing was charged for it.")
 
 
-def _drop_went_nowhere(got_in: list, drop: str) -> bool:
+def _drop_went_nowhere(was_already_here: bool, drop: str) -> bool:
     """Did somebody type a drop that the engine then quietly ignored?
 
     `POST /songs/add` dedupes on the manifest ROW and returns early when the song is already
@@ -1491,135 +1494,85 @@ def _drop_went_nowhere(got_in: list, drop: str) -> bool:
     """
     if not (drop or "").strip():
         return False
-    return any(role == "beat" and was_here for role, _sid, _name, was_here in got_in)
+    return was_already_here
 
 
 async def _ingest_uploads(interaction: discord.Interaction, plan: UploadPlan, drop: str) -> None:
-    """Take the attached song(s) in, then go straight on to the grind.
+    """Take the attached song in, then open the picker with it already in both lists.
 
-    ONE AT A TIME, deliberately. The engine serialises the paid work anyway (three testers must not
-    be able to stack GPU calls), and going in order is what lets the card say WHICH song it is on.
-    Two songs is roughly four minutes, and the card says so rather than looking hung.
-
-    IF THE SECOND SONG FAILS, THE FIRST IS NOT THROWN AWAY. It has been paid for and it is in, so
-    the reply falls back to offering it against the menu — which is exactly the journey somebody
-    who uploaded one song would have had anyway. Losing it as well would be charging for a song and
-    then hiding it.
+    NOT "then grind it". The song is now an ordinary choice in this person's own menu, so the right
+    thing to hand back is the menu — with their song sitting in it — rather than a special reply
+    that only knows about the one song they just sent. It also means the second time they want it,
+    the journey is `/grind` and nothing else.
     """
     who = str(interaction.user.id)
-    total = len(plan.uploads)
-    title = "Taking your song in" if total == 1 else "Taking your songs in"
+    att = plan.attachment
+    stem = Path(att.filename).stem
 
     card = await interaction.followup.send(
-        embed=discord.Embed(title=title, colour=brand.PRIMARY,
-                            description="Checking before anything else."),
+        embed=discord.Embed(title="Taking your song in", colour=brand.PRIMARY,
+                            description=f"**{stem}**\nChecking it before anything else."),
         ephemeral=True, wait=True)
 
-    async def show(idx: int, name: str, text: str) -> None:
-        counter = "" if total == 1 else f"  ({idx} of {total})"
+    async def show(text: str) -> None:
         try:
             await card.edit(embed=discord.Embed(
-                title=title + counter, colour=brand.PRIMARY,
-                description=f"**{name}**\n{text}…\n\n"
-                            "_A couple of minutes per song. You can close Discord — "
+                title="Taking your song in", colour=brand.PRIMARY,
+                description=f"**{stem}**\n{text}…\n\n"
+                            "_A couple of minutes. You can close Discord — "
                             "it will be here when you come back._"))
         except discord.HTTPException:
             pass  # a stale card must never break an ingest that is being paid for
 
-    async def stopped(name: str, reason: str, got_in: list) -> None:
-        """Say what happened, and keep hold of anything that did get through."""
-        body = [f"**{name}** did not come out: {reason}"]
-        if not got_in:
-            body.append("Nothing was kept, and it has not used one of your five.")
-            await card.edit(embed=ui.error_embed("\n".join(body)))
-            return
-        role_in, id_in, name_in, _dup = got_in[0]
-        body.append(f"\n**{name_in}** did go in, though. Pick a "
-                    f"{_ROLE_WORD['vocals' if role_in == 'beat' else 'beat']} "
-                    f"below and I will grind that one.")
-        await bot.refresh_catalog()
-        await _refresh_my_uploads(who)
-        view = UploadedSongView(interaction.user.id, id_in, role_in)
-        await card.edit(embed=discord.Embed(title="One of the two is in", colour=brand.PRIMARY,
-                                            description="\n".join(body)),
-                        view=view if view.children else None)
-
-    got_in: list[tuple[str, str, str, bool]] = []      # (role, song_id, name, was_already_here)
-    for idx, (role, att) in enumerate(plan.uploads, 1):
-        stem = Path(att.filename).stem
-        await show(idx, stem, "checking it")
-        try:
-            data = await att.read()
-        except Exception:  # noqa: BLE001
-            await stopped(stem, "I could not read that file off Discord.", got_in)
-            return
-        try:
-            started = await bot.api.add_song(
-                data, att.filename, uploaded_by=who, role=role,
-                # The drop belongs to the BEAT and to nothing else. A vocal is never asked for one
-                # and must never be sent one.
-                main_drop=drop if role == "beat" else "", display_name=stem)
-        except EngineError as e:
-            # The engine's refusals are already written for a person to read; rewrapping them here
-            # would mean two places to keep true and the bot's copy would drift.
-            await stopped(stem, str(e), got_in)
-            return
-
-        song_id = str(started["song_id"])
-        was_here = bool(started.get("duplicate"))
-        if not was_here:
-            try:
-                finished = await bot.api.wait_for_add(
-                    song_id, on_stage=lambda t, i=idx, n=stem: show(i, n, t))
-            except EngineError as e:
-                await stopped(stem, str(e), got_in)
-                return
-            if finished.get("error"):
-                await stopped(stem, str(finished["error"]), got_in)
-                return
-        got_in.append((role, song_id, str(started.get("name") or stem), was_here))
-
-    await bot.refresh_catalog()                  # the catalogue half of the picker
-    await _refresh_my_uploads(who)               # ...and their own half
-
-    kept_its_old_drop = _drop_went_nowhere(got_in, drop)
-
-    if len(got_in) == 2:
-        beat_id = next(sid for role, sid, _n, _d in got_in if role == "beat")
-        vocal_id = next(sid for role, sid, _n, _d in got_in if role == "vocals")
-        if beat_id == vocal_id:
-            # THE REAL SAME-SONG GUARD. `plan_uploads` compares names and sizes, which a rename
-            # defeats; a song_id is a hash of the NORMALISED audio, so this catches the same track
-            # however it arrived. Without it the mix is a song layered over itself and nothing
-            # anywhere says so.
-            await card.edit(embed=ui.error_embed(
-                "Those two are the same song, so there is nothing to mix together. "
-                "Send a different track for one of the two sides."))
-            return
-        beat_name = next(n for role, _s, n, _d in got_in if role == "beat")
-        vocal_name = next(n for role, _s, n, _d in got_in if role == "vocals")
-        body = [f"**{beat_name}** on the beat, **{vocal_name}** singing over it.",
-                "Grinding it now — no catalogue song involved."]
-        if kept_its_old_drop:
-            body.append(_OLD_DROP_NOTE)
-        await card.edit(embed=discord.Embed(
-            title="Both of yours are in", colour=brand.PRIMARY,
-            description="\n".join(body) + _FIRST_TIME_NOTE))
-        await GrindContext(interaction, [(beat_id, vocal_id)]).run(first=True)
+    try:
+        data = await att.read()
+    except Exception:  # noqa: BLE001
+        await card.edit(embed=ui.error_embed(
+            "I could not read that file off Discord.\n"
+            "Nothing was kept, and it has not used one of your five."))
         return
 
-    role, song_id, name, _dup = got_in[0]
-    other = _ROLE_WORD["vocals" if role == "beat" else "beat"]
-    body = [f"**{name}** is in, as a **{_ROLE_WORD[role]}**.",
-            f"Pick a {other} below and I will grind it — or run `/grind` again with your own "
-            f"{other} attached and mix two of your own songs together."]
-    if kept_its_old_drop:
+    try:
+        # ROLE IS "beat" BECAUSE THAT IS WHAT CARRIES THE DROP, not because the song is one. The
+        # engine requires a drop for a beat and stores it either way, and the picker below ignores
+        # `role_hint` entirely for somebody's own songs - they appear under both headings.
+        started = await bot.api.add_song(data, att.filename, uploaded_by=who, role="beat",
+                                         main_drop=drop, display_name=stem)
+    except EngineError as e:
+        # The engine's refusals are already written for a person to read; rewrapping them here
+        # would mean two places to keep true and the bot's copy would drift.
+        await card.edit(embed=ui.error_embed(str(e)))
+        return
+
+    song_id = str(started["song_id"])
+    was_here = bool(started.get("duplicate"))
+    if not was_here:
+        try:
+            finished = await bot.api.wait_for_add(song_id, on_stage=show)
+        except EngineError as e:
+            await card.edit(embed=ui.error_embed(str(e)))
+            return
+        if finished.get("error"):
+            await card.edit(embed=ui.error_embed(
+                f"That one did not come out: {finished['error']}\n"
+                "Nothing was kept, and it has not used one of your five."))
+            return
+
+    await bot.refresh_catalog()               # the catalogue half of the picker
+    await _refresh_my_uploads(who)            # ...and their own half
+
+    name = str(started.get("name") or stem)
+    body = [f"**{name}** is in.",
+            "It is in **both** your lists now — pick it as the beat, or as the vocal, "
+            "whenever you like."]
+    if _drop_went_nowhere(was_here, drop):
         body.append(_OLD_DROP_NOTE)
     body.append(_FIRST_TIME_NOTE)
-    view = UploadedSongView(interaction.user.id, song_id, role)
+
+    view = GrindBuilderView(interaction.user.id)
     await card.edit(embed=discord.Embed(title="Your song is ready", colour=brand.PRIMARY,
-                                        description="\n".join(body)),
-                    view=view if view.children else None)
+                                        description="\n".join(body)))
+    await interaction.followup.send(embed=view.embed(), view=view, ephemeral=True)
 
 
 @bot.tree.command(name="mine", description="The songs you have added, and how many you have left.")
