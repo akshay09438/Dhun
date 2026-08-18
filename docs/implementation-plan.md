@@ -2,7 +2,59 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
-## Status: **LATEST 2026-08-18, small hours (ONE DOOR — `/grind` carries your own songs; `/add` deleted. Branch `feat/one-door-bring-your-own-songs`.)**
+## Status: **LATEST 2026-08-18, midday (ONE FIELD — a song you add lands in BOTH your lists. Branch `feat/your-songs-live-in-your-picker`, merged as PR #72.)**
+
+**THE MORNING'S DESIGN LASTED HALF A DAY, and the founder found the flaw by using it.** `/grind`
+shipped with two optional attachment fields, `my_beat` and `my_vocal`. Their report: _"when I click
+on one of them, the 'Add my' thing disappears."_ Whether Discord's client keeps offering the second
+field once the first is filled is **its** behaviour and unreachable from this code, so the design
+stopped depending on it instead of trying to word around it.
+
+**WHAT SHIPPED.** One field, `my_song`. A song goes in without being asked which side it is, and
+then appears at the **top of both dropdowns** — the founder's own framing: _"under Choose the Beat,
+their song name is also shown. Under Choose Vocal, the song is also shown, and they can choose
+whatever they like."_ Mixing two of your own is now picking two things off a menu, and the second
+time you want a song there is no uploading at all.
+
+**THE DROP IS ASKED ON EVERY UPLOAD, once — a founder decision, and deliberately not a return of
+what they complained about.** Then, a song was locked to one side, so asking a vocal about its drop
+was asking about something unusable. Now any upload can be picked as the beat, so the answer always
+matters.
+
+**`role_hint` IS NO LONGER READ TO DECIDE WHERE A SONG APPEARS.** Re-using a measured finding
+rather than guessing: a song tagged `vocals` was confirmed working fine as the beat, worth ~2.5x
+more workable pairs at zero cost.
+
+**THE GUARD ADDED THIS MORNING EARNED ITSELF ON DAY ONE.** After `/mine` was found still sending
+people to the deleted `/add`, a test was added that walks every string the bot can say and fails if
+it names an unregistered command. It then caught `/help` still advertising `/grind my_beat:` and
+`/grind my_vocal:` — the first time that drift was found by a test instead of by a person on the
+live server.
+
+**ALSO SHIPPED TODAY, WITH ITS TESTS PARKED — the one honest red mark.** `routes/songs.py` now
+records a drop typed for a song already in the manifest, when the asker owns it; the endpoint used
+to return early on a duplicate **before** writing the drop, binning the answer in silence. Approved
+in-session and applied from the staging queue against its content hash.
+`services/api/tests/parked/drop_saved_for_a_song_already_here.py` proves it — red without, green
+with — but **adding that file to the suite makes one or two unrelated tests fail, reproducibly**,
+for reasons ten full-suite runs did not identify (leaked threads, a shared test account, the
+manifest cache key, byte-identical fixture audio, the paid-attempt budget and machine load were all
+ruled out). The founder chose to ship the fix and hold the tests. **The fix is live and nothing in
+the suite guards it.**
+
+**A LATENT WEAKNESS FOUND AND DELIBERATELY NOT SHIPPED.** `uploads._stamp()` keys the manifest
+cache on `(mtime, size)` with no PATH, so two data dirs with same-sized manifests written in one
+clock tick can collide. Adding the path took failures 2 → 1 but did not clear them, so it was
+reverted — shipping an unrelated change on a hypothesis that proved wrong is worse than recording
+the weakness. Production has one `data_dir` that never moves, which is why it has never bitten a
+user. **Worth fixing on its own merits.**
+
+**DRIFT CLOSED.** The specs described the two-field version for half a day after it was replaced.
+Closed here.
+
+**Bot suite 607. Engine 956 passed / 6 skipped. Merged: PR #70, #71, #72.**
+
+## Status: **2026-08-18, small hours (ONE DOOR — `/grind` carries your own songs; `/add` deleted. Branch `feat/one-door-bring-your-own-songs`.)**
 
 **THE FOUNDER'S REPORT WAS ABOUT THE JOURNEY, NOT THE SOUND.** _"I like the mixes they are making
 but this is the issue and the experience is the issue."_ Three complaints, all reproduced in the

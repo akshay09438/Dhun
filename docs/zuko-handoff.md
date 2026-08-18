@@ -4,9 +4,9 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
-**2026-08-18, midday.** **THE NEW JOURNEY IS LIVE IN DISCORD.** `/grind` now carries your own beat, your own vocal, or both; `/add` is gone. Verified by asking Discord directly, not by reading a log. The drop fix is shipped too — and its tests are **parked, not passing**, which is the one thing to know.
+**2026-08-18, afternoon.** **THE NEW JOURNEY IS LIVE IN DISCORD, and it changed once during the day.** `/grind` now takes **one** file, `my_song` - and that song then appears in **both** your dropdowns, so you pick what it does at mixing time. `/add` is gone. Verified by asking Discord directly, not by reading a log. The drop fix is shipped too — and its tests are **parked, not passing**, which is the one thing to know.
 
-**MERGED: PR #70** (one door). **OPEN: [PR #71](https://github.com/akshay09438/Dhun/pull/71)** (the drop fix, already applied and running on the live engine).
+**MERGED TODAY: PR #70** (one door), **#71** (the drop fix), **#72** (one field, songs in both lists). All three are live.
 
 **THE LINK: `https://discord.gg/WJ9b78hFQb`** — permanent, lands on `#read-this-first`.
 
@@ -20,7 +20,7 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 | --------------------------- | ----------------------------------------------------------- |
 | Engine (uvicorn :8000)      | UP, **restarted onto the drop fix**; `/health` 200          |
 | Grinder                     | UP, restarted onto the new `/grind`; commands synced; 2 voices |
-| `/grind` options in Discord | `my_beat` and `my_vocal`, both **FILE**, both **optional**   |
+| `/grind` options in Discord | exactly one: `my_song`, **FILE**, **optional**              |
 | `/add`                      | **unregistered** — Discord confirms it is gone               |
 | Commands registered         | 10, visibilities all correct                                 |
 | Founder's uploads           | **2 of 5**, both `role_hint=vocals`, both `main_drop=None`   |
@@ -58,10 +58,24 @@ The founder chose to ship the fix and hold the tests rather than keep drilling. 
 
 ---
 
+---
+
+## ⚠️ THE TWO-FIELD VERSION LASTED HALF A DAY
+
+Worth recording because it is the second time a design was corrected by the founder USING it rather
+than reading it. `/grind` shipped at 10:52 with `my_beat` **and** `my_vocal`. By midday: _"when I
+click on one of them, the 'Add my' thing disappears."_ Whether Discord keeps offering a second
+option once the first is filled is its client's behaviour and unreachable from this code.
+
+The replacement is simpler than either version: **one field, no role question, and the song lands
+in both lists.** Walking the journey — printing what a person actually sees at each step — is what
+made the flaw obvious, and it is what caught the "limit is 31 MB" bug too. Unit tests found
+neither.
+
 ## Do first next session
 
 1. **Listen to A and B.** Still the only thing nobody can do for the founder.
-2. **Use `/grind my_beat:` yourself in Discord.** I proved the code path and the live engine; the pop-up and the attachment fields have never been seen in a real Discord client by anybody.
+2. **Use `/grind my_song:` yourself in Discord.** The code path and the live engine are proven; the pop-up and the attachment field have never been seen in a real Discord client by anybody.
 3. **Set a real drop on your own two songs** — that is what the fix unlocked, and both still read `main_drop=None`.
 4. **Merge [PR #71](https://github.com/akshay09438/Dhun/pull/71).**
 5. **Un-park the drop tests** — start by moving them into an existing upload test file.
