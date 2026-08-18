@@ -2,7 +2,72 @@
 
 _How far along we are, what's in flight, what's left, and the drift log. Living document — updated at each milestone and at `/zuko:handoff`._
 
-## Status: **LATEST 2026-08-18, midday (ONE FIELD — a song you add lands in BOTH your lists. Branch `feat/your-songs-live-in-your-picker`, merged as PR #72.)**
+## Status: **LATEST 2026-08-18, evening (SEVEN PRs MERGED IN ONE DAY. The upload journey was rebuilt twice, and three separate failures behind "that did not come out" were found and fixed.)**
+
+**MERGED TODAY: #70** one door · **#71** the drop is saved · **#72** one field, songs in both lists ·
+**#73** specs · **#74** wait your turn · **#75** the 60-second wall · **#76** a wobbly beat still ships.
+**IN FLIGHT: nothing.** Working tree clean, all suites green.
+
+**THE JOURNEY, REBUILT TWICE IN A DAY — and the second rebuild came from the founder USING the
+first.** Morning: `/grind` gained two file fields, `my_beat` and `my_vocal`, and `/add` was deleted.
+By midday: _"when I click on one of them, the 'Add my' thing disappears."_ Whether Discord keeps
+offering a second option once the first is filled is its client's behaviour, unreachable from this
+code — so the design stopped depending on it. **One field now, no role question, and the song
+appears under BOTH headings**; the choice is made at mixing time.
+
+**THREE DIFFERENT FAILURES WORE THE SAME SENTENCE.** "That did not come out" meant, in order:
+
+1. **A throttle.** Below $5 of credit Replicate rations an account to one prediction at a time. The
+   app gave up instantly; it now waits 12s/24s/36s. Measured, not assumed: the token was valid and
+   the last 100 predictions had ALL succeeded.
+2. **A 60-second wall.** `replicate.run()` defaults to `wait=True`, and the library then **discards
+   the client timeout** in favour of `httpx.Timeout(5.0, read=60.5)`. Every job under a minute
+   worked (53s, 58s, 58s, 47s); the one that took 124s died at 65s. It was never the balance — it
+   was SONG LENGTH. Fixed with `wait=False`, proven live with jobs of 108s and 63s.
+3. **A forced beat-lock the referee then refused.** See the technical spec. Never-decline built a
+   bar-by-bar lock onto a grid drifting 0.10 s per beat; R7 correctly rejected it. The guard asked
+   whether downbeats EXIST, not whether they are trustworthy.
+
+**THE THING THAT MADE (2) AND (3) SOLVABLE AT ALL: the engine now keeps its own log.** It had none —
+every traceback went to a console window and vanished, so two hypotheses were built on a
+200-character summary and **both were wrong**. Grinder learned this on 2026-08-14 when a HEALTHY
+bot was shut down and debugged because nothing could be read. Within minutes of adding it, the log
+caught itself being polluted: 92 of its lines were staged failures invented by the test suite, so
+the handler is now switched off under pytest.
+
+**AND THE PARKED-TEST MYSTERY IS CLOSED.** `drop_saved_for_a_song_already_here.py` was parked in the
+morning because adding it made unrelated tests fail; ten runs ruled out leaked threads, a shared
+test account, the manifest cache key, fixture audio and machine load. The cause: **`conftest` was
+hard-linking the real `upload_spend.json` into the test scratch folder**, so the suite started at
+the founder's real Replicate spending and climbed toward the same ceiling of 40. At a real counter
+of 3 it finished just under and was green; at 6 it crossed the line partway through. **The suite's
+result was tracking the founder's bank balance.** Excluded via `_NEVER_LINK`; the file is un-parked
+and green, and `tests/parked/` is gone.
+
+**DRIFT LOG.**
+- The specs described the two-field `/grind` for half a day after it was replaced. Closed same day.
+- The handoff claimed "no PR yet" and "no upload has ever succeeded". Both were false: PR #69 had
+  merged, and two uploads had gone through. `GET /library` deliberately excludes uploads, so the
+  catalogue can never show them — **I repeated that error to the founder and asked them to
+  authorise ~24c on it.** No money was spent; the songs were already there.
+- `uploads._stamp()` keys the manifest cache on `(mtime, size)` with **no path**, so two data dirs
+  can collide. Fixing it took failures 2 → 1 but did not clear them, so it was **reverted** rather
+  than shipped on a hypothesis that proved wrong. Still open, worth doing on its own merits.
+- A copy defect the dry run caught and no test would have: the oversize refusal divided by
+  1,000,000 while the cap counts in 1024s, announcing the 30 MB limit as "31 MB".
+- `/mine` went on pointing at the deleted `/add` — the third time this project has shipped copy
+  naming a command that no longer exists. Now guarded by a test that reads every string the bot can
+  say.
+
+**WHAT THE SESSION PROVED ABOUT ITS OWN METHOD.** Both real defects in the morning were found by
+**walking the journey and printing what a person actually sees**, not by unit tests. The afternoon's
+three were found by **measuring against Replicate's own API and reading the engine's log** — after
+two wrong guesses made from a summary. And the two-field design was corrected by the founder using
+it, which no amount of planning would have caught.
+
+**Engine 978 passed / 6 skipped. Bot 607. Web 79. Lint + typecheck clean.**
+
+## Status: **2026-08-18, midday (ONE FIELD — a song you add lands in BOTH your lists. Branch `feat/your-songs-live-in-your-picker`, merged as PR #72.)**
 
 **THE MORNING'S DESIGN LASTED HALF A DAY, and the founder found the flaw by using it.** `/grind`
 shipped with two optional attachment fields, `my_beat` and `my_vocal`. Their report: _"when I click

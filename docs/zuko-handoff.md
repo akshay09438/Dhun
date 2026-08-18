@@ -4,9 +4,9 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
-**2026-08-18, afternoon.** **THE NEW JOURNEY IS LIVE IN DISCORD, and it changed once during the day.** `/grind` now takes **one** file, `my_song` - and that song then appears in **both** your dropdowns, so you pick what it does at mixing time. `/add` is gone. Verified by asking Discord directly, not by reading a log. The drop fix is shipped too — and its tests are **parked, not passing**, which is the one thing to know.
+**2026-08-18, evening.** **SEVEN PRs MERGED IN ONE DAY, ALL LIVE. NOTHING IN FLIGHT.** The upload journey was rebuilt twice — the second time because the founder _used_ the first — and three separate failures all wearing the sentence "that did not come out" were found and fixed.
 
-**MERGED TODAY: PR #70** (one door), **#71** (the drop fix), **#72** (one field, songs in both lists). All three are live.
+**MERGED TODAY: #70** one door · **#71** the drop is saved · **#72** one field, songs in both lists · **#73** specs · **#74** wait your turn · **#75** the 60-second wall · **#76** a wobbly beat still ships.
 
 **THE LINK: `https://discord.gg/WJ9b78hFQb`** — permanent, lands on `#read-this-first`.
 
@@ -14,89 +14,87 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ---
 
-## Live state, measured 2026-08-18 midday (not claimed)
+## In flight
 
-|                             |                                                             |
-| --------------------------- | ----------------------------------------------------------- |
-| Engine (uvicorn :8000)      | UP, **restarted onto the drop fix**; `/health` 200          |
-| Grinder                     | UP, restarted onto the new `/grind`; commands synced; 2 voices |
-| `/grind` options in Discord | exactly one: `my_song`, **FILE**, **optional**              |
-| `/add`                      | **unregistered** — Discord confirms it is gone               |
-| Commands registered         | 10, visibilities all correct                                 |
-| Founder's uploads           | **2 of 5**, both `role_hint=vocals`, both `main_drop=None`   |
-| Paid attempts               | **3 of 40**, unchanged all session                            |
-| Engine suite                | **956 passed, 6 skipped**                                     |
+**Nothing.** Working tree clean, `main` up to date, every suite green. The next session starts from a settled baseline — which has not been true for several sessions.
 
 ---
-
-## 🎧 STILL UNHEARD
-
-Two mixes of the founder's own two songs sit in `C:\Users\Akshay\OneDrive\Desktop\Prompt-DJ mixes to listen to`. **Nobody has listened to either.** They are the first mixes ever made from two uploaded songs.
-
-- **A** — *The drones keep droning* is the beat (grid confidence 0.83), *Heal the planet* sings. 3:26.
-- **B** — the reverse (grid confidence 0.10, so the planner plays safe). 2:00.
-
-Both measure like real music: no silence, no clipping, ~31 dB of movement. Which is *better* is an ear question and only the founder's counts.
-
----
-
-## ⚠️ THE DROP FIX SHIPPED WITH ITS TESTS PARKED
-
-The fix works: a drop typed for a song already in the hopper is now saved instead of silently binned. Applied after the founder's explicit yes, recorded against the staged content hash, engine restarted onto it, and the guard verified live (re-posting a song as a **vocal** with a drop left it unchanged and cost nothing).
-
-**But `services/api/tests/parked/drop_saved_for_a_song_already_here.py` is not in the suite.** Both tests are correct — red without the fix, green with it — yet adding that FILE to the suite makes one or two **unrelated** tests fail, reproducibly. Ten full-suite runs ruled out leaked ingest threads, a shared test account, the manifest cache key, byte-identical fixture audio, the paid-attempt budget, and machine load. **The cause is unidentified.**
-
-The founder chose to ship the fix and hold the tests rather than keep drilling. `services/api/tests/parked/README.md` records every dead end and the one thing not yet tried: **move the two tests into an existing upload test file instead of adding a new one.**
-
-**The cost, stated rather than hidden: the fix is live and nothing in the suite guards it.**
-
----
-
-## A latent weakness found and deliberately NOT shipped
-
-`uploads._stamp()` keys the manifest cache on `(mtime, size)` with **no path in it**. Two different data dirs whose manifests hold the same number of rows are the same size, and if written inside one clock tick they share an mtime — so the cache can hand back the wrong directory's rows. Adding the path took the failures 2 → 1 but did not clear them, so it was **reverted**: shipping an unrelated change on a hypothesis that turned out wrong is worse than recording the weakness. Production has one `data_dir` that never moves, which is why it has never bitten a user. **Worth fixing on its own merits, separately.**
-
----
-
----
-
-## ⚠️ THE TWO-FIELD VERSION LASTED HALF A DAY
-
-Worth recording because it is the second time a design was corrected by the founder USING it rather
-than reading it. `/grind` shipped at 10:52 with `my_beat` **and** `my_vocal`. By midday: _"when I
-click on one of them, the 'Add my' thing disappears."_ Whether Discord keeps offering a second
-option once the first is filled is its client's behaviour and unreachable from this code.
-
-The replacement is simpler than either version: **one field, no role question, and the song lands
-in both lists.** Walking the journey — printing what a person actually sees at each step — is what
-made the flaw obvious, and it is what caught the "limit is 31 MB" bug too. Unit tests found
-neither.
 
 ## Do first next session
 
-1. **Listen to A and B.** Still the only thing nobody can do for the founder.
-2. **Use `/grind my_song:` yourself in Discord.** The code path and the live engine are proven; the pop-up and the attachment field have never been seen in a real Discord client by anybody.
-3. **Set a real drop on your own two songs** — that is what the fix unlocked, and both still read `main_drop=None`.
-4. **Merge [PR #71](https://github.com/akshay09438/Dhun/pull/71).**
-5. **Un-park the drop tests** — start by moving them into an existing upload test file.
+1. **Listen, and say whether the looseness is acceptable.** `Circle With Me x Dont Start Now` is on the Desktop in `Prompt-DJ mixes to listen to`. That pair was refused at 17:08 and now ships, but only because the app stopped pinning the vocal to a drifting beat. **If it floats too much, the threshold (`grid_health` at 0.8) is one number and easy to tighten.** This is the only open decision.
+2. **A and B are still unheard** — the first mixes ever made from two uploaded songs, from this morning.
+3. **Top up Replicate past $5.** Below it the account is rationed to one job at a time. The retry survives that; it does not remove it.
+4. **`uploads._stamp()` is still keyed on `(mtime, size)` with no path.** Reverted deliberately when the evidence for it collapsed. Worth fixing on its own merits.
+
+---
+
+## Verification evidence — all run 2026-08-18 evening, not carried over
+
+| Check                               | Result                                                                                                                      |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `pytest services/api -q`            | **978 passed, 6 skipped** in 173.89s                                                                                        |
+| bot suite                           | **607 passed**                                                                                                              |
+| `npm test`                          | **79 passed** (9 files)                                                                                                     |
+| `npm run typecheck`                 | clean, exit 0                                                                                                               |
+| `npm run lint`                      | clean, exit 0                                                                                                               |
+| Live engine `/health`               | 200                                                                                                                         |
+| Grinder                             | RUNNING                                                                                                                     |
+| Catalogue                           | **77 songs, 64 featured**                                                                                                   |
+| Founder's uploads                   | **4 of 5**, all four carrying a hand-typed drop                                                                             |
+| Paid attempts                       | **11 of 40**                                                                                                                |
+| Free disk                           | **15.88 GB**                                                                                                                |
+| ngrok (public tunnel)               | **off** — the localhost-only findings stay contained                                                                        |
+| Dangerous surfaces vs `origin/main` | `routes/songs.py`, `planner/validate.py`, `storage.py`, `workers/`, `.github/workflows/`, `conftest.py` — **all unchanged** |
+
+**THE 6 SKIPS ARE STILL HOLLOW.** `test_effect_pool_e2e.py` (5) and `test_rule3_parked.py` (1) skip because their fixture, Father Ocean, was deleted in the catalogue prune. Offered and declined; recorded as a decision, not an oversight.
+
+---
+
+## The three failures that shared one sentence
+
+"That did not come out" meant, in order:
+
+1. **A throttle.** Below $5 Replicate rations an account to one prediction at a time. The app gave up instantly; it now waits 12s / 24s / 36s. Measured rather than assumed — the token was valid and the last 100 predictions had **all succeeded**.
+2. **A 60-second wall.** `replicate.run()` defaults to `wait=True` and the library then **discards the client timeout** for `httpx.Timeout(5.0, read=60.5)`. Every job under a minute worked (53s, 58s, 58s, 47s); the one that took 124s died at 65s. Never the balance — **song length**. Fixed with `wait=False`, proven live at 108s and 63s.
+3. **A forced beat-lock the referee then refused.** Never-decline pinned every bar of the vocal to a grid drifting 0.10s per beat; R7 correctly rejected the render. The guard asked whether downbeats **exist**, not whether they are **trustworthy**.
+
+---
+
+## ⚠️ The engine now keeps a log, and that is why (2) and (3) were solvable
+
+It had none. Every traceback went to a console window and vanished, so two hypotheses were built on a 200-character summary and **both were wrong**. Grinder learned this on 2026-08-14, when a healthy bot was shut down and debugged because nothing could be read.
+
+**Within minutes of adding it, the log caught itself being polluted** — 92 of its lines were staged failures invented by the test suite. The handler is now switched off under pytest, guarded by its own test.
+
+---
+
+## ⚠️ The parked-test mystery is CLOSED
+
+`drop_saved_for_a_song_already_here.py` was parked this morning because adding it made unrelated tests fail. Ten runs ruled out leaked threads, a shared test account, the manifest cache key, fixture audio and machine load.
+
+The cause: **`conftest` hard-linked the real `upload_spend.json` into the test scratch folder**, so the suite started at the founder's real Replicate spending and climbed toward the same ceiling of 40. At a real counter of 3 it finished just under and was green; at 6 it crossed the line partway through. **The suite's result was tracking the founder's bank balance.**
+
+Excluded via `_NEVER_LINK`. The file is **un-parked and green**, so the drop fix has its safety net, and `tests/parked/` is gone.
 
 ---
 
 ## Open escalations and things to RE-VERIFY (claims, not facts)
 
-- **⚠️ NOBODY HAS USED THE NEW JOURNEY IN DISCORD.** I drove the real ingest and the real renders, but the modal, the attachment fields and the card have only ever been exercised through fakes. **The Discord half is a claim.**
-- **⚠️ NEITHER MIX HAS BEEN HEARD.** Two files exist and measure like real music. That is not the same as sounding good.
-- **⚠️ A DROP TYPED FOR AN ALREADY-ADDED SONG IS DISCARDED.** Admitted on the card; fix staged, not applied.
-- **⚠️ THE 6 SKIPPED TESTS ARE A HOLLOW GREEN.** Offered and declined tonight.
-- **⚠️ DECLINED TONIGHT, so they are not rediscovered as omissions:** surfacing `/mine` inside the picker, and repairing the 6 skips.
-- **⚠️ `gh` IS NOT INSTALLED ON THIS MACHINE.** Any past or future step that "checked GitHub" via `gh` checked nothing. PRs now go through the REST API with git's stored credential.
+- **⚠️ THE LOOSENESS HAS NOT BEEN JUDGED BY EAR.** A wobbly beat now ships instead of being refused, and the vocal floats rather than sitting tight. That trade was the founder's explicit choice but **nobody has listened to the result**. One number reverses it.
+- **⚠️ NOBODY HAS COMPLETED THE NEW JOURNEY IN A REAL DISCORD CLIENT END TO END.** The founder's uploads went through, but the pop-up, the attachment field and the finished card have never been walked start-to-finish by a person. Everything else was driven through the bot's own code.
+- **⚠️ NEITHER A NOR B HAS BEEN HEARD.** Two mixes from this morning, still unplayed.
+- **⚠️ REPLICATE IS UNDER $5**, so the account is still rationed to one job at a time. The retry survives it; a crowd uploading at once may not.
+- **⚠️ `uploads._stamp()` HAS NO PATH IN ITS CACHE KEY.** Two data dirs with same-sized manifests written in one clock tick can collide. Reverted when the evidence collapsed; production has one `data_dir` that never moves, which is why it has never bitten a user.
+- **⚠️ THE 6 SKIPPED TESTS ARE A HOLLOW GREEN.** Offered and declined.
+- **⚠️ `gh` IS NOT INSTALLED ON THIS MACHINE.** Any step that "checked GitHub" via `gh` checked nothing — that is how a merged PR was reported as unopened. PRs now go through the REST API with git's stored credential.
 - **⚠️ LOCALHOST-ONLY SECURITY FINDINGS, DELIBERATELY NOT FIXED** (founder: not chasing an attacker already on the machine). **All four become serious the moment anything is tunnelled publicly:**
   - `POST /songs/{id}/analysis` reaches Replicate with **no budget check** — the bot never calls it.
   - `GET /songs/mine/{id}` is unauthenticated: anyone on the machine can list any member's uploads.
   - `uploaded_by` is an unverified form field, so the per-person cap only holds because Discord fills it in honestly.
   - `data/upload_spend.json` can be hand-edited downward to reset the ceiling.
-- **⚠️ THE DEV DASHBOARD HAS NO PASSWORD.** **Re-verified 2026-08-18: ngrok is NOT running, so the public tunnel is off** and the above stay contained.
-- **⚠️ THE BOT'S TEST SUITE STILL WRITES INTO THE LIVE `logs/grinder.log`.** No `conftest.py` in `services/discord-bot/tests/`. Still true; it polluted the log again tonight.
+- **⚠️ THE DEV DASHBOARD HAS NO PASSWORD.** Re-verified this evening: **ngrok is not running**, so the above stay contained. Re-check before trusting it.
+- **⚠️ THE BOT'S TEST SUITE STILL WRITES INTO THE LIVE `logs/grinder.log`.** No `conftest.py` in `services/discord-bot/tests/`. The engine now has this guard; the bot does not.
 - **⚠️ 20-SONG SHELF vs 40 PAID ATTEMPTS.** Spend never decrements. By design, but the first person to meet it should not be a stranger.
 - **⚠️ UPLOAD SQUATTING.** A byte-identical file uploaded by somebody else first makes that song permanently unreachable to everyone else. Narrow, real, unfixed.
 - **⚠️ `services/api/app/routes/stems.py` IS AN ACCESS-CONTROL FILE** and is **not** on `dangerousGlobs`. Worth adding.
@@ -110,7 +108,9 @@ neither.
 
 ## Process notes
 
-- **A command that is not installed returns nothing, and nothing reads exactly like "no".** `gh pr list` produced empty output because `gh` does not exist here, and I reported "confirmed: no PR" from it. The handoff had the same belief, so the two agreed and reinforced each other. **Agreement between a document and a broken check is not corroboration.**
-- **I told the founder a fact about their own work that was wrong, and asked them to spend money on it.** They said their songs were already uploaded; I said the catalogue disagreed. The catalogue _cannot_ show uploads — by a design decision recorded in this very repo. **When somebody contradicts your measurement about their own actions, suspect the measurement.**
-- **The dry run found what the tests could not.** 33 passing tests said nothing about the app announcing "the limit is 31 MB" for a 30 MB cap. Walking the journey and reading what a person would actually see caught it in one pass.
-- **The codebase argued with me and was worth listening to.** `grind_cmd`'s docstring explained why options had been removed, and one test left an instruction for exactly the case that arose. Both were followed rather than overridden: the reversal is documented, and both tests came back stricter.
+- **A summary is not a diagnosis.** Two wrong hypotheses were built on the 200-character failure string the bot displays. The engine's first-ever log file answered the question in one read. Neither of the two hardest bugs today was findable without it.
+- **Walking the journey beat the tests, twice.** Printing what a person actually sees caught "the limit is 31 MB" and the vanishing second field. Thirty-nine passing tests said nothing about either.
+- **The founder's own use corrected the design.** The two-field `/grind` survived half a day; the founder found its flaw by trying it. No amount of planning substitutes for that.
+- **When somebody contradicts your measurement about their own actions, suspect the measurement.** The founder said their songs were already uploaded; the catalogue disagreed; the catalogue _cannot_ show uploads, by a design decision recorded in this repo. They were right.
+- **A command that is not installed returns nothing, and nothing reads exactly like "no".** `gh pr list` produced empty output because `gh` does not exist here, and a merged PR was reported as unopened — agreeing with a handoff that was also wrong. Agreement between a document and a broken check is not corroboration.
+- **The referee was right every time it was doubted.** Both quality refusals today were correct: one mix genuinely would have drifted. The bug was never the referee — it was upstream, building something the referee then had to reject.

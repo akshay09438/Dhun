@@ -2,7 +2,29 @@
 
 _How it is built. Starts as the intended design (from the PRD + discovery deltas); becomes as-built as code lands. Living document — if code and this doc disagree, the code wins and this doc is corrected. Full background: [reference/PRD.md](reference/PRD.md)._
 
-> **LATEST — 2026-08-18, afternoon (as-built: Replicate throttles are waited out, and the suite stops inheriting real spend; branch `fix/wait-your-turn-instead-of-giving-up`. `conftest.py` IS touched — a dangerous surface, approved by the founder before the edit and recorded via `.zuko/approve.js`).**
+> **LATEST — 2026-08-18, evening (as-built: `_attach_warp` asks whether the grid is TRUSTWORTHY, not merely present; branch `fix/a-wobbly-beat-still-makes-a-mix`. `planner/validate.py` deliberately UNTOUCHED and verified unchanged against `origin/main`).**
+>
+> **THE INCIDENT, and it is the first one the engine's own log ever explained.** `Circle_With_Me` used as Song 1 failed the referee:
+>
+> ```
+> beat-grid song1/beat:  {'regularity': 0.112, 'bpm_agreement': 0.996, 'health': 0.112, 'ok': False}
+> beat-grid song2/vocal: {'regularity': 0.981, 'bpm_agreement': 1.0,   'health': 0.981, 'ok': True}
+> failed (quality): ValidationError: a forced placement could not beat-lock (single-stretch drift) (R7)
+> ```
+>
+> The song averages 103 BPM but its downbeats drift ~0.10 s each, alternately late and early. The never-decline path called `_attach_warp(..., forced=True)`, which pinned every bar of Song 2 to Song 1's downbeats; R7 then correctly refused a render whose bar boundaries could not land on that grid. **Two rules in direct conflict: never-decline built it, the referee rejected it.**
+>
+> **THE FIX IS ONE CONDITION, UPSTREAM.** `_attach_warp`'s docstring already promised the escape hatch — _"With no usable grid on either side, leave warp empty — the engine then uses the legacy global stretch"_ — but its guard was `if not (a1.downbeats and a2.downbeats)`, i.e. **presence, not quality**. 107 wobbly downbeats satisfied it. It now also consults `beatgrid.grid_health(a1.bpm, a1.downbeats)["ok"]`, which is **not a new signal**: it is already computed and already logged per mix in `routes/mix.py`. Nothing was reading it here. No warp → no per-bar lock → R7 has nothing to reject, and the vocal rides one global stretch.
+>
+> **THE REGRESSION GUARD MATTERS MORE THAN THE FIX.** Beat-locking is what stops a vocal drifting on every ordinary pair, so it must stand down ONLY when the grid genuinely cannot hold one. `test_a_steady_beat_still_gets_its_tight_lock` pins that; `grid_health`'s own bar is `health >= 0.8`.
+>
+> **MEASURED BOTH WAYS BEFORE THE FIX**, which is what identified the forced lock rather than the song as the fault: as Song 1 it failed; as Song 2 it shipped over Rapture, Anchor Point and Wake Me Up. **After: it ships as Song 1 with Don't Start Now, Der Lagi Lekin and Tujhe Bhula Diya.**
+>
+> **`plan.py` GAINED A MODULE LOGGER** (`promptdj.plan`) so the stand-down is visible in the engine log rather than silent — the whole reason this incident was solvable at all.
+>
+> **Engine suite 973 → 978 passed, 6 skipped.** `tests/test_wobbly_beat_still_ships.py`, 5 cases, red first.
+>
+> **2026-08-18, afternoon (as-built: Replicate throttles are waited out, and the suite stops inheriting real spend; branch `fix/wait-your-turn-instead-of-giving-up`. `conftest.py` IS touched — a dangerous surface, approved by the founder before the edit and recorded via `.zuko/approve.js`).**
 >
 > **THE REPORT AND WHAT IT ACTUALLY WAS.** An upload returned Replicate's 429 throttle text. Measured against Replicate's own API rather than assumed: the token is valid and **the last 100 predictions all succeeded**, seven of them that afternoon. Below $5 of credit Replicate does not refuse work, it **rations** it to one prediction at a time; an upload needs two, so one arriving mid-flight is refused at the door. **A door refusal creates no prediction**, which is why it left no trace on Replicate's side and why retrying is free.
 >
