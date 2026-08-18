@@ -7,6 +7,14 @@
       "verdict": "not-proven-safe",
       "ack": "yes, do the official swap and flag half-time pairs",
       "appliedAtMs": 1786377980005
+    },
+    {
+      "task": "save-the-drop-for-a-song-already-added",
+      "file": "services/api/app/routes/songs.py",
+      "hash": "cc47296fdc7ab3f1e65b494dadd878e9ba54ffe38a75a351702586a8e7c8251d",
+      "verdict": "not-proven-safe",
+      "ack": "Yes, do it - make the app remember the drop time I type",
+      "appliedAtMs": 1787030769185
     }
   ]
 }
