@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 # before anything reads them. Safe no-op if the file is absent.
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
+import os  # noqa: E402
+import sys  # noqa: E402
 import logging  # noqa: E402
 import logging.handlers  # noqa: E402
 
@@ -65,7 +67,17 @@ log = logging.getLogger("promptdj.api")
 #
 # Rotating, because an unbounded log on a disk this project keeps filling is its own bug. Never
 # fatal: an engine that cannot open its log must still serve mixes.
+# ...BUT NEVER UNDER TEST. The suite imports this module, so without this guard every fake failure
+# a test invents ("replicate down", "boom", a deliberately malformed render id) is written into the
+# LIVE engine log - and a diary full of staged disasters is worse than no diary, because the next
+# person debugging a real incident cannot tell which lines are real. Grinder has had exactly this
+# problem since 2026-08-14 and it made its log useless for checking whether the bot was running.
+# Caught here within minutes of adding the log, by reading it.
+_UNDER_TEST = "PYTEST_CURRENT_TEST" in os.environ or "pytest" in sys.modules
+
 try:
+    if _UNDER_TEST:
+        raise OSError("under test: the engine log stays out of it")
     _LOGDIR = Path(__file__).resolve().parents[1] / "logs"
     _LOGDIR.mkdir(parents=True, exist_ok=True)
     _fh = logging.handlers.RotatingFileHandler(
@@ -75,7 +87,8 @@ try:
     logging.getLogger().setLevel(logging.INFO)
     log.info("engine logging to %s", _LOGDIR / "engine.log")
 except OSError:
-    log.warning("could not open the engine log file; console only")
+    if not _UNDER_TEST:
+        log.warning("could not open the engine log file; console only")
 
 app = FastAPI(title="Prompt-DJ API", lifespan=_lifespan)
 

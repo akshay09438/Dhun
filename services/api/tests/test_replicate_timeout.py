@@ -190,19 +190,24 @@ def test_both_paid_calls_go_through_the_retrying_wrapper():
 def test_the_engine_writes_its_own_log_file():
     """An upload failed with "The read operation timed out" and there was no way to learn why: the
     engine only wrote to the console window it was launched from, so the traceback went nowhere.
-    Two hypotheses were built on the 200-character summary and both were wrong.
+    Two hypotheses were built on the 200-character summary and both were wrong; the real cause was
+    found in the first log file the engine ever wrote.
 
-    Grinder learned this on 2026-08-14 - it wrote no log for two days and a HEALTHY bot was shut
-    down and debugged because nothing could be read to check on it."""
-    import logging
+    Asserted on the CODE, not on the live handler, because the handler is deliberately switched off
+    while the suite runs - see `test_the_test_suite_never_writes_into_the_live_engine_log`."""
+    import inspect
 
-    from app import main  # noqa: F401 — importing installs the handler
+    from app import main
 
-    handlers = logging.getLogger().handlers
-    files = [h for h in handlers if isinstance(h, logging.FileHandler)]
-    assert files, "the engine writes no log file, so a failure cannot be diagnosed afterwards"
-    assert any("engine" in getattr(h, "baseFilename", "") for h in files), \
-        "a file handler exists but not the engine's own log"
+    src = inspect.getsource(main)
+    assert "RotatingFileHandler" in src, "the engine writes no log file"
+    assert 'engine.log' in src, "a log file, but not the engine's own"
+    assert "_UNDER_TEST" in src, "the log is not guarded against the test suite polluting it"
+
+
+def test_the_engine_log_is_switched_off_during_tests():
+    from app import main
+    assert main._UNDER_TEST is True, "the suite is not recognised as a test run"
 
 
 def test_a_failed_analysis_keeps_the_original_error():
@@ -268,3 +273,21 @@ def test_the_input_still_reaches_replicate(monkeypatch):
     monkeypatch.setattr(replicate_client, "client", lambda: _Client())
     replicate_client.run("some/model", input={"music_input": "AUDIO"})
     assert seen["input"] == {"music_input": "AUDIO"}
+
+
+def test_the_test_suite_never_writes_into_the_live_engine_log():
+    """A diary full of staged disasters is worse than no diary.
+
+    The suite imports `app.main`, so the moment the engine gained a log file every fake failure a
+    test invents - "replicate down", "boom", a deliberately malformed render id - was written into
+    the LIVE log, where the next person debugging a real incident cannot tell them from the truth.
+    Grinder has had this since 2026-08-14 and it made its log useless for checking whether the bot
+    was even running. Caught here within minutes, by reading the log that had just been added."""
+    import logging
+
+    from app import main  # noqa: F401
+
+    live = [h for h in logging.getLogger().handlers
+            if isinstance(h, logging.FileHandler)
+            and "engine.log" in getattr(h, "baseFilename", "")]
+    assert not live, "the test suite is writing into the live engine log"
