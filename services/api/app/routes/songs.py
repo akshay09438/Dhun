@@ -427,6 +427,28 @@ def add_song(file: UploadFile,
         row = next((r for r in library_store.load() if str(r.get("song_id", "")) == song_id), None)
         if row is not None:
             _release_slot(token)   # already in the catalogue: it costs nobody a slot
+            # A DROP TYPED FOR A SONG ALREADY HERE USED TO GO STRAIGHT IN THE BIN. This branch
+            # returns before `main_drop` is ever written, so somebody who re-attached their own
+            # beat, was asked where the drop hits, and answered, got no sign at all that their
+            # answer had been discarded - the silent no-op shape this project keeps getting caught
+            # by. It bites the FOUNDER first: both of their own uploads are stored as `vocals` with
+            # no drop, because until 2026-08-18 declaring a beat forced you to supply one and
+            # declaring a vocal did not, so the fastest route past the question was to call every
+            # song a vocal.
+            #
+            # ONLY THE DROP IS WRITTEN, AND ONLY FOR THE PERSON WHO UPLOADED THE SONG. A re-upload
+            # is not a licence to rewrite a row: the name, the role_hint and the uploader are all
+            # left exactly as they were, and somebody else sending the same bytes changes nothing
+            # whatsoever - which matters, because `song_id` is a hash of the audio, so two people
+            # CAN arrive at the same row. `library_store.upsert` merges `extra`, so no other field
+            # is disturbed. Still free: the slot is already released above and no paid work runs.
+            if (drop is not None and role == "beat"
+                    and str(row.get("uploaded_by") or "") == uploaded_by):
+                library_store.upsert(str(row.get("name") or ""), song_id,
+                                     str(row.get("role_hint") or role),
+                                     str(row.get("language") or ""),
+                                     extra={"main_drop": float(drop)})
+                uploads.forget_cached_manifest()
             return {"song_id": song_id, "name": str(row.get("name") or ""),
                     "role": str(row.get("role_hint") or ""), "status": "ready", "duplicate": True}
 

@@ -1635,7 +1635,7 @@ async def mine_cmd(interaction: discord.Interaction) -> None:
     await _refresh_my_uploads(str(interaction.user.id))
     if not songs:
         await interaction.followup.send(
-            "You have not added any songs yet. `/add` takes an MP3 or M4A under 10 MB.",
+            "You have not added any songs yet. Attach one to `/grind` - `my_beat:` for a track to play under, `my_vocal:` for one to sing on top. MP3 or M4A.",
             ephemeral=True)
         return
     lines = []
@@ -1645,7 +1645,7 @@ async def mine_cmd(interaction: discord.Interaction) -> None:
             bit += f", drop at {ui.mmss(s['main_drop'])}"
         lines.append(bit)
     left = int(body.get("limit", 0)) - int(body.get("used", 0))
-    lines.append(f"\n{left} of your {body.get('limit')} left. Use `/add` to add another.")
+    lines.append(f"\n{left} of your {body.get('limit')} left. Attach another to `/grind` as `my_beat:` or `my_vocal:`.")
     await interaction.followup.send(
         embed=discord.Embed(title="Your songs", colour=brand.PRIMARY,
                             description="\n".join(lines)), ephemeral=True)

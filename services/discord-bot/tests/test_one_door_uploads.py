@@ -28,6 +28,7 @@ the no-attachment path is pinned below to behave exactly as it does today.
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 from pathlib import Path
 
@@ -343,3 +344,45 @@ def test_mine_survives_because_it_answers_a_different_question():
 def test_grind_is_still_registered_and_still_says_what_it_does():
     cmd = botmod.bot.tree.get_command("grind")
     assert cmd is not None and cmd.description
+
+
+# --- no copy may point at a command that does not exist -----------------------------------------
+
+def test_no_message_sends_somebody_to_a_command_that_does_not_exist():
+    """DELETING A COMMAND IS ONLY HALF THE JOB, and this project has learned it the hard way twice:
+    `#read-this-first` advertised `/mix`, `/set` and `/songs` for two versions after they were
+    removed, and `/help` promised a `/grind beat: vocal:` form that did nothing.
+
+    Removing `/add` made it three: `/mine` went on telling people "`/add` takes an MP3 or M4A" and
+    "Use `/add` to add another" — the only route it offered to adding a song, pointing at a command
+    Discord no longer has. Nothing errored; it just sent people nowhere.
+
+    So this walks every STRING the bot can actually say (docstrings and comments excluded, since
+    those are for us) and fails if it names a slash command that is not registered."""
+    import ast
+    from pathlib import Path
+
+    src_dir = Path(__file__).resolve().parents[1]
+    registered = {c.name for c in botmod.bot.tree.get_commands()}
+
+    docstrings = set()
+    offences = []
+    for path in (src_dir / "bot.py", src_dir / "ui.py", src_dir / "door.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                first = node.body[0] if node.body else None
+                if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                        and isinstance(first.value.value, str)):
+                    docstrings.add(id(first.value))
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                continue
+            if id(node) in docstrings:
+                continue
+            for named in re.findall(r"`/([a-z][a-z0-9_-]*)", node.value):
+                if named not in registered:
+                    offences.append(f"{path.name}:{node.lineno} -> /{named}")
+
+    assert not offences, ("copy points at a command that is not registered:\n  "
+                          + "\n  ".join(offences))
