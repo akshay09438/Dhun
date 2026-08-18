@@ -50,3 +50,7 @@ services/discord-bot/data/
 # Bot run logs. Kept on disk deliberately (they are the only evidence when something
 # fails at runtime) but never committed - they contain member names and ids.
 services/discord-bot/logs/
+
+# Engine + bot diaries: runtime output, never source.
+services/api/logs/
+services/logs/
