@@ -277,8 +277,8 @@ def test_grind_takes_no_options_except_your_own_files():
 
     cmd = next(c for c in botmod.bot.tree.get_commands() if c.name == "grind")
     params = list(getattr(cmd, "parameters", []))
-    assert [p.name for p in params] == ["my_beat", "my_vocal"], \
-        "/grind grew an option that is not one of the person's own files"
+    assert [p.name for p in params] == ["my_song"], \
+        "/grind grew an option that is not the person's own file"
     for p in params:
         assert not p.required, f"/grind option {p.name!r} is required; typing /grind must still work"
         assert p.type is discord.AppCommandOptionType.attachment, \

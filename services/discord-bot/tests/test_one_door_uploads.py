@@ -1,28 +1,25 @@
-"""One door: `/grind` carries your own songs, so there is no separate errand.
+"""One door, one field: `/grind` takes a song of your own, and it joins BOTH your lists.
 
-WHY THIS EXISTS. The founder used `/add` for real and reported the JOURNEY, not the sound:
-"I like the mixes they are making but this is the issue and the experience is the issue."
-Three complaints, all reproduced in the code before a line was changed:
+WHY THIS EXISTS. The founder used `/add` for real and reported the JOURNEY, not the sound: "I like
+the mixes they are making but this is the issue and the experience is the issue." Then, after the
+first rebuild, they hit the next wall immediately:
 
-  1. `/add` takes ONE song, so you cannot bring your own beat AND your own vocal.
-  2. The `drop` field is VISIBLE on `/add` even when you pick "vocal", so it reads as being asked
-     for something irrelevant. (The code only ENFORCED it for beats — Discord shows every option
-     regardless of which choice you made. Platform behaviour, not a broken check, and the fix is
-     therefore to stop it being a command option at all.)
-  3. Uploading is a separate command from grinding, so one job takes two places.
+    "when I click on one of them, the 'Add my' thing disappears"
 
-THE PLATFORM WALL, because it shapes everything here. Discord does NOT let a button or a select
-menu open a file picker, and a modal accepts text inputs only. A bot can receive a file in exactly
-two ways: as a slash-command ATTACHMENT option, or from a message posted in a channel — and the
-second needs the privileged MESSAGE_CONTENT intent AND would make somebody's unreleased track
-publicly visible, straight against the founder's own rule. So the files must ride on the command.
+The first rebuild gave `/grind` TWO optional file fields, `my_beat` and `my_vocal`. Whether Discord
+keeps offering the second field once the first is filled is its client's behaviour and nothing this
+code can reach - so the design stopped depending on it. There is now ONE field. A song goes in
+without being asked which side it is, and appears under **Pick a beat** AND **Pick a vocal**; the
+choice is made at mixing time, where it belongs.
 
-THE LESSON THIS RE-OPENS, ON PURPOSE. `grind_cmd` used to carry optional `beat`/`vocal` options and
-they were deliberately removed: "a first-timer reading two blanks cannot tell that leaving them
-empty is the right move." That warning is respected, not ignored — the difference is that those
-options DUPLICATED the picker, whereas these do the one thing the picker cannot do at all. They are
-named `my_beat`/`my_vocal` so they read as yours-and-optional rather than as a form to fill in, and
-the no-attachment path is pinned below to behave exactly as it does today.
+THAT IS SAFE RATHER THAN SLOPPY. `role_hint` was only ever a menu filter - this project measured a
+song tagged `vocals` working fine as the beat, for ~2.5x more workable pairs at zero cost.
+
+THE PLATFORM WALL, because it shapes all of it. Discord does NOT let a button or a select menu open
+a file picker, and a modal accepts text inputs only. A bot receives a file in exactly two ways: as
+a slash-command ATTACHMENT option, or from a message posted in a channel - and the second needs the
+privileged MESSAGE_CONTENT intent AND would make somebody's unreleased track publicly visible,
+straight against the founder's own rule. So the file must ride on the command.
 """
 
 from __future__ import annotations
@@ -37,6 +34,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import bot as botmod  # noqa: E402
+from api_client import Song  # noqa: E402
 
 
 # --- fakes ------------------------------------------------------------------------------------
@@ -96,76 +94,54 @@ def _open_everything(monkeypatch):
     botmod._my_uploads.clear()
 
 
+def _song(sid, name, role="vocals", featured=True, language="english"):
+    return Song(id=sid, name=name, role_hint=role, language=language, featured=featured)
+
+
 def _stock_catalogue():
-    from api_client import Song
     botmod.bot.songs = [
-        Song(id="b" * 64, name="Levels", role_hint="beat", language="english", featured=True),
-        Song(id="v" * 64, name="Location", role_hint="vocals", language="english", featured=True),
+        _song("b" * 64, "Levels", role="beat"),
+        _song("v" * 64, "Location", role="vocals"),
     ]
     botmod.bot.beats = [s for s in botmod.bot.songs if s.role_hint == "beat"]
     botmod.bot.vocals = [s for s in botmod.bot.songs if s.role_hint == "vocals"]
 
 
+def _mine(uid, *songs):
+    botmod._my_uploads[str(uid)] = list(songs)
+
+
 # --- the plan: what happens before anything is spent -------------------------------------------
 
-def test_no_attachments_is_the_journey_that_already_works():
-    plan = botmod.plan_uploads(None, None)
+def test_no_attachment_is_the_journey_that_already_works():
+    plan = botmod.plan_upload(None)
     assert plan.refusal is None
     assert plan.ask_for_drop is False
-    assert plan.uploads == []
+    assert plan.attachment is None
 
 
-def test_a_beat_is_asked_where_the_drop_hits():
-    """The app's own drop finder measured ~36% precision (7 found on a song with 2), and a Suno
-    master is exactly the input it is worst on. The person made the song; they know."""
-    plan = botmod.plan_uploads(_Att("mybeat.mp3"), None)
+def test_a_song_is_asked_where_the_drop_hits():
+    """Asked ONCE, for every upload, because the song can now be picked as the beat at any time.
+
+    This is NOT the thing the founder complained about. Then, a song was pinned to one side, so
+    asking a VOCAL where its drop hits was asking about something that could never be used. Now an
+    upload appears under both headings, so the answer is always live."""
+    plan = botmod.plan_upload(_Att("mysong.mp3"))
     assert plan.refusal is None
     assert plan.ask_for_drop is True
 
 
-def test_a_vocal_is_never_asked_for_a_drop():
-    """THE FOUNDER'S COMPLAINT, PINNED. 'For vocal also it is asking me to mark the drop.'"""
-    plan = botmod.plan_uploads(None, _Att("myvocal.mp3"))
-    assert plan.refusal is None
-    assert plan.ask_for_drop is False, "a vocal was asked for a drop it has no use for"
-
-
-def test_both_sides_can_be_your_own_songs():
-    """THE OTHER FOUNDER COMPLAINT: 'I can only add either vocal or beat but I want to add both.'"""
-    plan = botmod.plan_uploads(_Att("mybeat.mp3"), _Att("myvocal.mp3"))
-    assert plan.refusal is None
-    assert [role for role, _ in plan.uploads] == ["beat", "vocals"]
-    assert plan.ask_for_drop is True, "the beat still needs its drop"
-
-
-def test_only_the_beat_is_asked_even_when_both_are_uploaded():
-    plan = botmod.plan_uploads(_Att("mybeat.mp3"), _Att("myvocal.mp3"))
-    assert sum(1 for role, _ in plan.uploads if role == "beat") == 1
-
-
-# --- refusing for free, before a modal and before a byte is fetched ----------------------------
-
 def test_an_oversized_file_is_refused_without_asking_for_a_drop():
-    """Asking for the drop and THEN refusing the file wastes the one question we ask. Size is
-    Discord's own figure, so this costs no fetch."""
-    plan = botmod.plan_uploads(_Att("huge.mp3", size=40 * 1024 * 1024), None)
+    """Asking and THEN refusing wastes the one question this journey gets."""
+    plan = botmod.plan_upload(_Att("huge.mp3", size=40 * 1024 * 1024))
     assert plan.refusal is not None and "MB" in plan.refusal
-    assert plan.ask_for_drop is False, "it asked for a drop on a file it was about to refuse"
+    assert plan.ask_for_drop is False, "it asked about a file it was about to refuse"
 
 
 def test_a_file_that_is_not_audio_is_refused():
-    plan = botmod.plan_uploads(None, _Att("holiday.png"))
+    plan = botmod.plan_upload(_Att("holiday.png"))
     assert plan.refusal is not None
     assert "MP3" in plan.refusal or "M4A" in plan.refusal
-
-
-def test_the_same_file_in_both_slots_is_refused():
-    """A mix is two songs. The engine would dedupe them to one id and quietly mix a song with
-    itself, which is not a thing anybody meant to ask for."""
-    same = _Att("one.mp3", size=123456)
-    plan = botmod.plan_uploads(same, _Att("one.mp3", size=123456))
-    assert plan.refusal is not None
-    assert plan.ask_for_drop is False
 
 
 def test_the_size_limit_matches_the_engines_own_cap():
@@ -173,40 +149,83 @@ def test_the_size_limit_matches_the_engines_own_cap():
 
 
 def test_the_refusal_quotes_the_limit_everything_else_quotes():
-    """It said "the limit is 31 MB" — because it divided by a million while the cap counts in
-    1024s. The engine's own refusal says 30 MB, so the app was quoting a ceiling that matched
-    nothing else it says. Found by walking the journey; no test would have noticed."""
-    plan = botmod.plan_uploads(_Att("huge.mp3", size=40 * 1024 * 1024), None)
-    assert "30 MB" in plan.refusal, f"quoted the wrong limit: {plan.refusal}"
-    assert "40 MB" in plan.refusal, f"quoted the wrong file size: {plan.refusal}"
+    """It said "the limit is 31 MB" - it divided by a million while the cap counts in 1024s, so the
+    app quoted a ceiling matching nothing else it says. Found by walking the journey, not by a
+    test."""
+    plan = botmod.plan_upload(_Att("huge.mp3", size=40 * 1024 * 1024))
+    assert "30 MB" in plan.refusal and "40 MB" in plan.refusal
 
 
 # --- the drop, read the way the engine reads it ------------------------------------------------
 
 @pytest.mark.parametrize("raw,expected", [
-    ("1:24", 84.0),
-    ("84", 84.0),
-    ("1:24.5", 84.5),
-    ("0:30", 30.0),
-    ("  1:24  ", 84.0),
-])
+    ("1:24", 84.0), ("84", 84.0), ("1:24.5", 84.5), ("0:30", 30.0), ("  1:24  ", 84.0)])
 def test_a_drop_a_person_would_type_is_understood(raw, expected):
     assert botmod.parse_drop(raw) == expected
 
 
 @pytest.mark.parametrize("raw", ["", "   ", "soon", "1:75", "-5", "0:nan", "0:inf", "nan"])
 def test_a_drop_that_is_not_a_time_is_rejected(raw):
-    """`0:nan` is not hypothetical — it reached the engine from Discord and wrote a literal NaN
-    into the manifest that indexes every song, found in the 2026-08-17 security review. The bot
-    now refuses it a round trip earlier."""
+    """`0:nan` is not hypothetical - it reached the engine from Discord and wrote a literal NaN
+    into the manifest that indexes every song, found in the 2026-08-17 security review."""
     assert botmod.parse_drop(raw) is None
+
+
+# --- YOUR songs are in YOUR picker, under both headings ----------------------------------------
+
+def test_your_own_song_appears_under_both_headings():
+    """THE FOUNDER'S ASK, 2026-08-18: "under Choose the Beat, their song name is also shown. Under
+    Choose Vocal, the song is also shown, and they can choose whatever they like." """
+    _stock_catalogue()
+    _mine(111, _song("m" * 64, "My Own Song"))
+    v = botmod.GrindBuilderView(111)
+    assert "My Own Song" in [o.label for o in v.beat_select.options], "not offered as a beat"
+    assert "My Own Song" in [o.label for o in v.vocal_select.options], "not offered as a vocal"
+
+
+def test_your_own_song_comes_first_in_both_lists():
+    """Invisible unless it is in front of you - a Discord dropdown holds 25 and the catalogue
+    fills it."""
+    _stock_catalogue()
+    _mine(111, _song("m" * 64, "My Own Song"))
+    v = botmod.GrindBuilderView(111)
+    assert v.beat_select.options[0].label == "My Own Song"
+    assert v.vocal_select.options[0].label == "My Own Song"
+
+
+def test_the_role_it_was_stored_under_does_not_decide_where_it_shows():
+    """`role_hint` was only ever a menu filter - a song tagged `vocals` was measured working fine
+    as the beat. An upload is no longer asked which side it is, so nothing may read that tag to
+    decide where it appears."""
+    _stock_catalogue()
+    _mine(111, _song("m" * 64, "Tagged A Vocal", role="vocals"))
+    v = botmod.GrindBuilderView(111)
+    assert "Tagged A Vocal" in [o.label for o in v.beat_select.options]
+
+
+def test_a_stranger_never_sees_your_songs():
+    """An unreleased track must not be reachable by somebody who merely knows the person exists."""
+    _stock_catalogue()
+    _mine(111, _song("m" * 64, "My Own Song"))
+    v = botmod.GrindBuilderView(222)
+    assert "My Own Song" not in [o.label for o in v.beat_select.options]
+    assert "My Own Song" not in [o.label for o in v.vocal_select.options]
+
+
+def test_your_own_song_survives_the_language_filter():
+    """An upload's language is a default nobody was asked for, and a language tag once hid 103
+    songs. Doing that to somebody's own track, in their own picker, is the same bug smaller."""
+    _stock_catalogue()
+    _mine(111, _song("m" * 64, "My Own Song", language="hindi"))
+    v = botmod.GrindBuilderView(111)          # the picker defaults to english
+    assert "My Own Song" in [o.label for o in v.vocal_select.options]
 
 
 # --- the command itself -------------------------------------------------------------------------
 
 def test_grind_with_nothing_attached_opens_todays_picker():
-    """THE REGRESSION GUARD. `/grind` is the single path the whole product runs on; a break here
-    is a total outage. Typing it with no files must be exactly what it has always been."""
+    """THE REGRESSION GUARD. `/grind` is the single path the whole product runs on, so a break here
+    is a total outage. Typing it with no file must be what it has always been."""
     _stock_catalogue()
     sink = {}
     asyncio.run(botmod.grind_cmd.callback(_Interaction(sink)))
@@ -215,36 +234,32 @@ def test_grind_with_nothing_attached_opens_todays_picker():
     assert sink.get("ephemeral") is True, "the picker stopped being private"
 
 
-def test_grind_with_a_beat_pops_the_drop_question():
+def test_grind_with_a_song_pops_the_drop_question():
     _stock_catalogue()
     sink = {}
-    asyncio.run(botmod.grind_cmd.callback(_Interaction(sink), my_beat=_Att("mybeat.mp3")))
-    assert sink.get("modal") is not None, "a beat was taken without ever asking where the drop is"
+    asyncio.run(botmod.grind_cmd.callback(_Interaction(sink), my_song=_Att("mysong.mp3")))
+    assert sink.get("modal") is not None, "a song was taken without asking where the drop is"
     assert sink.get("view") is None, "it opened the picker as well as asking"
 
 
-def test_grind_with_only_a_vocal_asks_nothing_at_all(monkeypatch):
-    """Attach a vocal and the next thing you see is your song going in — no question, no form."""
-    _stock_catalogue()
-    got = {}
-
-    async def fake_ingest(interaction, plan, drop):
-        got["drop"] = drop
-        got["roles"] = [r for r, _ in plan.uploads]
-
-    monkeypatch.setattr(botmod, "_ingest_uploads", fake_ingest)
-    sink = {}
-    asyncio.run(botmod.grind_cmd.callback(_Interaction(sink), my_vocal=_Att("myvocal.mp3")))
-    assert sink.get("modal") is None, "a vocal was asked for a drop"
-    assert got["roles"] == ["vocals"]
-    assert got["drop"] == ""
+def test_there_is_exactly_one_upload_field():
+    """It was TWO, `my_beat` and `my_vocal`, and the founder hit the problem at once: "when I click
+    on one of them, the 'Add my' thing disappears". Whether Discord keeps offering the second field
+    is its client's behaviour, so the design stopped depending on it."""
+    import discord as _d
+    cmd = botmod.bot.tree.get_command("grind")
+    params = list(getattr(cmd, "parameters", []))
+    assert [p.name for p in params] == ["my_song"], "the upload field count changed"
+    assert not params[0].required, "typing /grind on its own must still work"
+    assert params[0].type is _d.AppCommandOptionType.attachment, \
+        "a song CHOICE belongs to the picker, not to the command"
 
 
-def test_an_oversized_upload_is_refused_in_plain_words(monkeypatch):
+def test_an_oversized_upload_is_refused_in_plain_words():
     _stock_catalogue()
     sink = {}
     asyncio.run(botmod.grind_cmd.callback(
-        _Interaction(sink), my_vocal=_Att("huge.mp3", size=40 * 1024 * 1024)))
+        _Interaction(sink), my_song=_Att("huge.mp3", size=40 * 1024 * 1024)))
     assert sink.get("said") and "MB" in sink["said"]
     assert sink.get("modal") is None and sink.get("view") is None
 
@@ -253,26 +268,18 @@ def test_the_door_is_still_checked_before_anything_is_read(monkeypatch):
     """An upload must not be fetched off Discord for somebody who is not allowed to grind."""
     monkeypatch.setattr(botmod.door, "blocked_reason", lambda _i: "You are not in yet.")
     sink = {}
-    asyncio.run(botmod.grind_cmd.callback(_Interaction(sink), my_beat=_Att("mybeat.mp3")))
+    asyncio.run(botmod.grind_cmd.callback(_Interaction(sink), my_song=_Att("mysong.mp3")))
     assert sink.get("said") == "You are not in yet."
     assert sink.get("modal") is None, "a blocked person was asked for a drop"
 
 
 # --- the modal ----------------------------------------------------------------------------------
 
-def test_the_drop_question_only_ever_appears_for_a_beat():
-    """Structural, not incidental: the modal is constructed from a plan that says a beat is
-    present, so there is no path that shows it for a vocal."""
-    plan = botmod.plan_uploads(None, _Att("v.mp3"))
-    assert plan.ask_for_drop is False
-    plan2 = botmod.plan_uploads(_Att("b.mp3"), _Att("v.mp3"))
-    assert plan2.ask_for_drop is True
-
-
-def test_a_nonsense_drop_asks_again_instead_of_losing_the_upload(monkeypatch):
-    """Refusing outright would cost them the file and make them re-attach it. The attachment is
-    still valid (its CDN url outlives the interaction), so the question is simply asked again."""
-    plan = botmod.plan_uploads(_Att("b.mp3"), None)
+def test_a_nonsense_drop_asks_again_instead_of_losing_the_upload():
+    """Refusing outright would cost them the file and make them find and re-attach it. The
+    attachment's own url outlives the interaction, so the plan is still good and only the answer
+    was wrong."""
+    plan = botmod.plan_upload(_Att("s.mp3"))
     modal = botmod.DropModal(plan)
     modal.drop._value = "whenever"
     sink = {}
@@ -288,7 +295,7 @@ def test_a_good_drop_goes_through_to_the_ingest(monkeypatch):
         got["drop"] = drop
 
     monkeypatch.setattr(botmod, "_ingest_uploads", fake_ingest)
-    plan = botmod.plan_uploads(_Att("b.mp3"), None)
+    plan = botmod.plan_upload(_Att("s.mp3"))
     modal = botmod.DropModal(plan)
     modal.drop._value = "1:24"
     asyncio.run(modal.on_submit(_Interaction({})))
@@ -298,32 +305,22 @@ def test_a_good_drop_goes_through_to_the_ingest(monkeypatch):
 # --- a drop that goes nowhere is said out loud ---------------------------------------------------
 
 def test_a_drop_typed_for_a_song_already_here_is_admitted_not_swallowed():
-    """`POST /songs/add` returns early on a duplicate, BEFORE it writes `main_drop`. So somebody
-    who re-attaches a song they already uploaded is asked for the drop, answers, and the answer is
-    binned with nothing on screen saying so.
-
-    IT BITES THE FOUNDER FIRST: both of their own uploads are stored as `vocals` with no drop,
-    because until tonight declaring a beat forced you to supply one and declaring a vocal did not.
-    Re-attaching one as `my_beat` is exactly this path."""
-    got_in = [("beat", "b" * 64, "My Beat", True)]        # True = it was already here
-    assert botmod._drop_went_nowhere(got_in, "1:24") is True
+    """The engine used to return early on a duplicate BEFORE writing the drop, so the answer was
+    binned in silence. Fixed engine-side; the bot says so either way rather than staying quiet."""
+    assert botmod._drop_went_nowhere(True, "1:24") is True
 
 
-def test_a_drop_on_a_brand_new_beat_is_not_flagged():
-    got_in = [("beat", "b" * 64, "My Beat", False)]
-    assert botmod._drop_went_nowhere(got_in, "1:24") is False
+def test_a_drop_on_a_brand_new_song_is_not_flagged():
+    assert botmod._drop_went_nowhere(False, "1:24") is False
 
 
-def test_a_vocal_that_was_already_here_raises_nothing():
-    """A vocal is never asked for a drop, so there is no answer to lose."""
-    got_in = [("vocals", "v" * 64, "My Vocal", True)]
-    assert botmod._drop_went_nowhere(got_in, "") is False
-    assert botmod._drop_went_nowhere(got_in, "1:24") is False
+def test_no_drop_typed_means_nothing_to_warn_about():
+    assert botmod._drop_went_nowhere(True, "") is False
 
 
 def test_the_warning_says_no_money_was_taken():
-    """The person is being told something went wrong. The very next thing they will wonder is
-    whether it cost them, so it is answered in the same breath."""
+    """They are being told something went wrong. The next thing they will wonder is whether it cost
+    them, so it is answered in the same breath."""
     assert "charged" in botmod._OLD_DROP_NOTE or "cost" in botmod._OLD_DROP_NOTE
     assert "not saved" in botmod._OLD_DROP_NOTE
 
@@ -331,13 +328,11 @@ def test_the_warning_says_no_money_was_taken():
 # --- the old door is closed ---------------------------------------------------------------------
 
 def test_add_is_no_longer_a_command():
-    """The founder's first complaint was having to go to `/add` at all. Leaving it registered
-    would leave the second door standing next to the sign saying there is only one."""
+    """The founder's first complaint was having to go to `/add` at all."""
     assert botmod.bot.tree.get_command("add") is None, "/add is still registered"
 
 
 def test_mine_survives_because_it_answers_a_different_question():
-    """`/mine` is not a second door — it is how you find songs you already added."""
     assert botmod.bot.tree.get_command("mine") is not None
 
 
@@ -349,26 +344,23 @@ def test_grind_is_still_registered_and_still_says_what_it_does():
 # --- no copy may point at a command that does not exist -----------------------------------------
 
 def test_no_message_sends_somebody_to_a_command_that_does_not_exist():
-    """DELETING A COMMAND IS ONLY HALF THE JOB, and this project has learned it the hard way twice:
+    """DELETING A COMMAND IS ONLY HALF THE JOB, and this project has learned it three times:
     `#read-this-first` advertised `/mix`, `/set` and `/songs` for two versions after they were
-    removed, and `/help` promised a `/grind beat: vocal:` form that did nothing.
-
-    Removing `/add` made it three: `/mine` went on telling people "`/add` takes an MP3 or M4A" and
-    "Use `/add` to add another" — the only route it offered to adding a song, pointing at a command
-    Discord no longer has. Nothing errored; it just sent people nowhere.
+    removed; `/help` promised a `/grind beat: vocal:` form that did nothing; and removing `/add`
+    left `/mine` saying "`/add` takes an MP3 or M4A" as the ONLY route it offered for adding a
+    song. Nothing errored. It just sent people nowhere.
 
     So this walks every STRING the bot can actually say (docstrings and comments excluded, since
     those are for us) and fails if it names a slash command that is not registered."""
     import ast
-    from pathlib import Path
 
     src_dir = Path(__file__).resolve().parents[1]
     registered = {c.name for c in botmod.bot.tree.get_commands()}
 
-    docstrings = set()
     offences = []
     for path in (src_dir / "bot.py", src_dir / "ui.py", src_dir / "door.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
+        docstrings = set()
         for node in ast.walk(tree):
             if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
                 first = node.body[0] if node.body else None

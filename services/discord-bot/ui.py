@@ -296,9 +296,9 @@ def help_embed(rooms: list | None = None, banner_name: str | None = None) -> dis
         # stops being.
         value=("Type it and a picker opens: pick a beat, pick a vocal, hit **➕ Add another** to "
                "stack up to 5 pairs, then **Grind it**.\n"
-               "**Your own song?** Attach it to the command: `/grind my_beat:` for a track to "
-               "play under, `/grind my_vocal:` for one to sing on top. Attach both and it mixes "
-               "two of yours with nothing from the menu.\n"
+               "**Your own song?** Attach it: `/grind my_song:`. It goes in once and then "
+               "sits in **both** your lists, so you can pick it as the beat or as the vocal "
+               "whenever you like - two of your own together included.\n"
                "🔁 **Again** remixes the same songs differently. 🎛️ **/mygrinds** is everything "
                "you have made - pick one there to get the file back."),
         inline=False)
