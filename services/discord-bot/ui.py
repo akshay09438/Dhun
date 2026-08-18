@@ -289,10 +289,16 @@ def help_embed(rooms: list | None = None, banner_name: str | None = None) -> dis
         e.set_image(url=f"attachment://{banner_name}")
     e.add_field(
         name="⚙️  /grind",
-        # No option form here on purpose: /grind takes no arguments. It used to, and this line
-        # outlived the change, so /help was teaching a shortcut that silently does nothing.
+        # THE OPTION FORM IS BACK, and only because the options are back with it. It was removed
+        # once because the line outlived the change and taught a shortcut that silently did
+        # nothing; the rule that produced that removal is "never show a form the command does not
+        # accept", not "never show a form". Both names below are real, and a test fails if either
+        # stops being.
         value=("Type it and a picker opens: pick a beat, pick a vocal, hit **➕ Add another** to "
                "stack up to 5 pairs, then **Grind it**.\n"
+               "**Your own song?** Attach it to the command: `/grind my_beat:` for a track to "
+               "play under, `/grind my_vocal:` for one to sing on top. Attach both and it mixes "
+               "two of yours with nothing from the menu.\n"
                "🔁 **Again** remixes the same songs differently. 🎛️ **/mygrinds** is everything "
                "you have made - pick one there to get the file back."),
         inline=False)
