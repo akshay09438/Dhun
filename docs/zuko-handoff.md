@@ -4,9 +4,9 @@ _The single source of truth for "where things stand" between sessions. Dangerous
 
 ## Last updated
 
-**2026-08-18, midday.** **THE NEW JOURNEY IS LIVE IN DISCORD.** `/grind` now carries your own beat, your own vocal, or both; `/add` is gone. Verified by asking Discord directly, not by reading a log. The drop fix is shipped too — and its tests are **parked, not passing**, which is the one thing to know.
+**2026-08-18, afternoon.** **THE NEW JOURNEY IS LIVE IN DISCORD, and it changed once during the day.** `/grind` now takes **one** file, `my_song` - and that song then appears in **both** your dropdowns, so you pick what it does at mixing time. `/add` is gone. Verified by asking Discord directly, not by reading a log. The drop fix is shipped too — and its tests are **parked, not passing**, which is the one thing to know.
 
-**MERGED: PR #70** (one door). **OPEN: [PR #71](https://github.com/akshay09438/Dhun/pull/71)** (the drop fix, already applied and running on the live engine).
+**MERGED TODAY: PR #70** (one door), **#71** (the drop fix), **#72** (one field, songs in both lists). All three are live.
 
 **THE LINK: `https://discord.gg/WJ9b78hFQb`** — permanent, lands on `#read-this-first`.
 
@@ -57,6 +57,20 @@ The founder chose to ship the fix and hold the tests rather than keep drilling. 
 `uploads._stamp()` keys the manifest cache on `(mtime, size)` with **no path in it**. Two different data dirs whose manifests hold the same number of rows are the same size, and if written inside one clock tick they share an mtime — so the cache can hand back the wrong directory's rows. Adding the path took the failures 2 → 1 but did not clear them, so it was **reverted**: shipping an unrelated change on a hypothesis that turned out wrong is worse than recording the weakness. Production has one `data_dir` that never moves, which is why it has never bitten a user. **Worth fixing on its own merits, separately.**
 
 ---
+
+---
+
+## ⚠️ THE TWO-FIELD VERSION LASTED HALF A DAY
+
+Worth recording because it is the second time a design was corrected by the founder USING it rather
+than reading it. `/grind` shipped at 10:52 with `my_beat` **and** `my_vocal`. By midday: _"when I
+click on one of them, the 'Add my' thing disappears."_ Whether Discord keeps offering a second
+option once the first is filled is its client's behaviour and unreachable from this code.
+
+The replacement is simpler than either version: **one field, no role question, and the song lands
+in both lists.** Walking the journey — printing what a person actually sees at each step — is what
+made the flaw obvious, and it is what caught the "limit is 31 MB" bug too. Unit tests found
+neither.
 
 ## Do first next session
 
