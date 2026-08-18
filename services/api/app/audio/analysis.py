@@ -92,7 +92,11 @@ def _cloud_structure(wav_path: Path) -> dict:
         with open(wav_path, "rb") as audio:
             out = replicate_client.run(_model_ref(), input={"music_input": audio})
     except Exception as e:
-        raise AnalysisError(str(e)[:200])
+        # `from e` KEEPS THE ORIGINAL. Without it the traceback stops here and all that survives is
+        # 200 characters of message - which on 2026-08-18 was the entire evidence for a failure
+        # ("The read operation timed out") and was not enough to say WHICH call, or where. The
+        # chained cause is what `log.exception` in the ingest then writes to the engine log.
+        raise AnalysisError(str(e)[:200]) from e
 
     items = list(out) if isinstance(out, (list, tuple)) else [out]
     for item in items:

@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
 import logging  # noqa: E402
+import logging.handlers  # noqa: E402
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
@@ -48,6 +49,33 @@ async def _lifespan(_app: FastAPI):
 
 
 log = logging.getLogger("promptdj.api")
+
+# THE ENGINE KEEPS ITS OWN DIARY, exactly as Grinder does.
+#
+# WHY THIS EXISTS. On 2026-08-18 an upload failed with "The read operation timed out" and there was
+# NO WAY TO FIND OUT WHY. The engine only ever wrote to the console window it was launched from, so
+# `_ingest`'s `log.exception("upload %s failed", ...)` - which carries the full traceback and the
+# exact line - went to a window nobody was reading and was gone. All that survived was the 200-char
+# summary the bot shows a person, and a summary is not a diagnosis: two separate hypotheses were
+# built on it and both were wrong.
+#
+# Grinder learned this on 2026-08-14, when it wrote no log for two days and a HEALTHY bot was shut
+# down and debugged because nothing could be read to check on it. Same lesson, other half of the
+# app, four days later.
+#
+# Rotating, because an unbounded log on a disk this project keeps filling is its own bug. Never
+# fatal: an engine that cannot open its log must still serve mixes.
+try:
+    _LOGDIR = Path(__file__).resolve().parents[1] / "logs"
+    _LOGDIR.mkdir(parents=True, exist_ok=True)
+    _fh = logging.handlers.RotatingFileHandler(
+        _LOGDIR / "engine.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8")
+    _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logging.getLogger().addHandler(_fh)
+    logging.getLogger().setLevel(logging.INFO)
+    log.info("engine logging to %s", _LOGDIR / "engine.log")
+except OSError:
+    log.warning("could not open the engine log file; console only")
 
 app = FastAPI(title="Prompt-DJ API", lifespan=_lifespan)
 
