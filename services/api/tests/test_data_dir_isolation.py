@@ -108,3 +108,42 @@ def test_a_sweep_running_on_a_late_thread_cannot_reach_a_real_render(tmp_path, m
         )
     finally:
         canary.unlink(missing_ok=True)
+
+
+def test_the_suite_never_inherits_the_real_spend_counter():
+    """THE SUITE'S RESULT MUST NOT DEPEND ON HOW MUCH THE FOUNDER HAS SPENT.
+
+    `conftest._link_readonly_catalog` hard-links the real data dir into the session scratch folder
+    so the read-only audio tests have real songs to work with. It linked EVERYTHING that is not an
+    evictable render - and `upload_spend.json` is not a render, so the paid-attempt counter came
+    with it. The tests therefore started at the founder's real total and climbed from there, and
+    `max_paid_upload_attempts` is 40.
+
+    MEASURED 2026-08-18, and it explains two separate mysteries the same day: at a real counter of
+    3 the full suite finished just under the ceiling and was green; after the founder used the app
+    three more times it stood at 6, the suite crossed 40 partway through, and six upload tests in
+    `test_upload_security.py` failed with 429 - refused for having no imaginary money left, nothing
+    to do with what they were testing. The morning's version of the same thing was a new test file
+    adding six more ingests and pushing it over.
+
+    The real file was never corrupted, but only because `spend.record_attempt` writes through an
+    atomic replace, which breaks the hard link. conftest's own note says "nothing in the suite has
+    a reason to overwrite" a linked file; that had stopped being true.
+    """
+    import os
+
+    import conftest
+
+    from app import spend
+
+    session_file = spend._path()
+    if not session_file.exists():
+        return  # nothing linked, nothing to inherit - which is the point
+
+    real_file = conftest._REAL_DATA_DIR / "upload_spend.json"
+    if not real_file.exists():
+        return
+
+    assert os.stat(session_file).st_ino != os.stat(real_file).st_ino, (
+        "the tests are running against the REAL spend counter: the suite will start failing as "
+        "soon as the founder has used the app enough, for reasons unrelated to any test")

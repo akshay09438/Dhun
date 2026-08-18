@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 
 import httpx
 import replicate
@@ -51,6 +52,45 @@ def client() -> replicate.Client:
     return _client
 
 
+# Waiting your turn. Below $5 of credit Replicate rations an account to ONE prediction at a time
+# ("6 requests per minute with a burst of 1"), and an upload needs two - so a second upload landing
+# while the first is mid-flight is refused at the door. The founder hit exactly that on 2026-08-18.
+#
+# THE LADDER IS SHORT ON PURPOSE. The bot stops polling at 900s and a person is watching a card, so
+# admitting defeat beats waiting forever. 12s, 24s, 36s: the throttle window is a minute, so a
+# single wait usually clears it, and the whole ladder costs at most 72s.
+_THROTTLE_TRIES = 4
+_THROTTLE_WAIT_S = 12.0
+
+
+def is_throttled(exc: BaseException) -> bool:
+    """Was this refused AT THE DOOR, before any work started?
+
+    THE ANSWER DECIDES WHETHER RETRYING IS FREE OR EXPENSIVE, which is why it is narrow. A throttle
+    creates no prediction, so trying again costs nothing. Every other error may have started work
+    that is already being charged for, and retrying THAT pays twice for one upload - so anything
+    not clearly a throttle is treated as a real failure.
+    """
+    if getattr(exc, "status", None) == 429:
+        return True
+    text = str(exc).lower()
+    return "status: 429" in text or "throttled" in text or "rate limit" in text
+
+
 def run(model_ref: str, **kwargs):
-    """`replicate.run`, but on the client that can survive sending a song."""
-    return client().run(model_ref, **kwargs)
+    """`replicate.run`, on the client that can survive sending a song, and patient about queues.
+
+    A refusal at the door is not a failure, it is a "not yet" - and rendering it to somebody as
+    "That did not come out" is what this fixes. Nothing else is retried.
+    """
+    for attempt in range(1, _THROTTLE_TRIES + 1):
+        try:
+            return client().run(model_ref, **kwargs)
+        except Exception as e:  # noqa: BLE001 — re-raised unless it is a throttle we can wait out
+            if attempt == _THROTTLE_TRIES or not is_throttled(e):
+                raise
+            wait = _THROTTLE_WAIT_S * attempt
+            log.warning("replicate rationed us (attempt %d of %d); waiting %.0fs and trying again. "
+                        "This is what a balance under $5 looks like, not an outage.",
+                        attempt, _THROTTLE_TRIES, wait)
+            time.sleep(wait)
