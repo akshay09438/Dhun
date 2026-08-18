@@ -83,6 +83,27 @@ def run(model_ref: str, **kwargs):
     A refusal at the door is not a failure, it is a "not yet" - and rendering it to somebody as
     "That did not come out" is what this fixes. Nothing else is retried.
     """
+    # `wait=False` IS LOAD-BEARING, AND IT IS THE 60-SECOND WALL.
+    #
+    # `replicate.run()` defaults to `wait=True`, and the library then throws away the timeout this
+    # module so carefully sets:
+    #
+    #     read_timeout = 60.0 if isinstance(wait, bool) else wait
+    #     return httpx.Timeout(5.0, read=read_timeout + 0.5)
+    #
+    # connect 30s / transfer 600s becomes connect 5s / read 60.5s for the request that starts a
+    # job - so ANY job Replicate does not finish inside about a minute dies with "The read
+    # operation timed out", which is what a person then sees on their card.
+    #
+    # MEASURED 2026-08-18, and the correlation is total: every analysis that finished under 60s
+    # succeeded (53s, 58s, 58s, and a 47s probe); the one that took 124s failed 65 seconds in -
+    # 60.5 plus the handshake. It was never the balance and never random. It is SONG LENGTH: a
+    # short song analyses in under a minute, a real one does not. The 2026-08-18 timeout fix was
+    # correct and was being silently overridden on exactly the call that mattered.
+    #
+    # With no blocking header the library leaves our client alone and polls instead, so a job may
+    # take as long as it takes.
+    kwargs.setdefault("wait", False)
     for attempt in range(1, _THROTTLE_TRIES + 1):
         try:
             return client().run(model_ref, **kwargs)

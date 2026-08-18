@@ -183,3 +183,111 @@ def test_both_paid_calls_go_through_the_retrying_wrapper():
         assert "replicate.run(" not in src, (
             f"{mod.__name__} calls replicate.run directly and would skip both the timeout and the "
             "retry")
+
+
+# --- being able to find out WHY, which on 2026-08-18 was impossible -----------------------------
+
+def test_the_engine_writes_its_own_log_file():
+    """An upload failed with "The read operation timed out" and there was no way to learn why: the
+    engine only wrote to the console window it was launched from, so the traceback went nowhere.
+    Two hypotheses were built on the 200-character summary and both were wrong; the real cause was
+    found in the first log file the engine ever wrote.
+
+    Asserted on the CODE, not on the live handler, because the handler is deliberately switched off
+    while the suite runs - see `test_the_test_suite_never_writes_into_the_live_engine_log`."""
+    import inspect
+
+    from app import main
+
+    src = inspect.getsource(main)
+    assert "RotatingFileHandler" in src, "the engine writes no log file"
+    assert 'engine.log' in src, "a log file, but not the engine's own"
+    assert "_UNDER_TEST" in src, "the log is not guarded against the test suite polluting it"
+
+
+def test_the_engine_log_is_switched_off_during_tests():
+    from app import main
+    assert main._UNDER_TEST is True, "the suite is not recognised as a test run"
+
+
+def test_a_failed_analysis_keeps_the_original_error():
+    """`raise AnalysisError(str(e)[:200])` threw the traceback away. `from e` keeps the chain, so
+    the engine log records WHICH call failed and where, not just 200 characters of message."""
+    import inspect
+
+    from app.audio import analysis as a
+
+    src = inspect.getsource(a.analyze_structure if hasattr(a, "analyze_structure") else a)
+    assert "AnalysisError(str(e)[:200]) from e" in src, \
+        "the cloud-analysis failure discards its cause, leaving nothing to diagnose"
+
+
+# ==================================================================================================
+# THE 60-SECOND WALL. Found 2026-08-18 with the engine log finally in place.
+#
+# `replicate.run()` sets `wait=True` unless told otherwise, and the library then OVERRIDES whatever
+# timeout the client was built with:
+#
+#     read_timeout = 60.0 if isinstance(wait, bool) else wait
+#     return httpx.Timeout(5.0, read=read_timeout + 0.5)
+#
+# So the carefully-set connect 30s / transfer 600s is discarded for the request that starts a job,
+# and replaced with connect 5s / read 60.5s. If Replicate has not answered in 60.5 seconds, httpx
+# raises a read timeout and the whole upload dies - reported to a person as "That did not come out:
+# The read operation timed out".
+#
+# MEASURED, AND THE CORRELATION IS PERFECT. Every analysis job that finished inside 60s succeeded
+# (53s, 58s, 58s, and a 47s diagnostic probe). The one that took 124s failed, 65 seconds in - 60.5
+# plus the handshake. It is not random and it is not the balance: it is song length. A short song
+# analyses in under a minute; a real one does not.
+#
+# THE FIX IS `wait=False`. With no blocking header the library leaves our timeout alone and polls
+# instead, so a job may take as long as it takes.
+# ==================================================================================================
+
+def test_the_run_never_asks_replicate_to_block(monkeypatch):
+    """`wait=True` hands the library a 60.5s read timeout and caps every job at a minute."""
+    seen = {}
+
+    class _Client:
+        def run(self, ref, **kw):
+            seen.update(kw)
+            return "out"
+
+    monkeypatch.setattr(replicate_client, "client", lambda: _Client())
+    replicate_client.run("some/model", input={})
+    assert seen.get("wait") is False, (
+        "run() is letting the library block: that replaces our 600s timeout with 60.5s and kills "
+        "any song whose analysis takes over a minute")
+
+
+def test_the_input_still_reaches_replicate(monkeypatch):
+    """The wait flag must not disturb what is actually being sent."""
+    seen = {}
+
+    class _Client:
+        def run(self, ref, **kw):
+            seen.update(kw)
+            return "out"
+
+    monkeypatch.setattr(replicate_client, "client", lambda: _Client())
+    replicate_client.run("some/model", input={"music_input": "AUDIO"})
+    assert seen["input"] == {"music_input": "AUDIO"}
+
+
+def test_the_test_suite_never_writes_into_the_live_engine_log():
+    """A diary full of staged disasters is worse than no diary.
+
+    The suite imports `app.main`, so the moment the engine gained a log file every fake failure a
+    test invents - "replicate down", "boom", a deliberately malformed render id - was written into
+    the LIVE log, where the next person debugging a real incident cannot tell them from the truth.
+    Grinder has had this since 2026-08-14 and it made its log useless for checking whether the bot
+    was even running. Caught here within minutes, by reading the log that had just been added."""
+    import logging
+
+    from app import main  # noqa: F401
+
+    live = [h for h in logging.getLogger().handlers
+            if isinstance(h, logging.FileHandler)
+            and "engine.log" in getattr(h, "baseFilename", "")]
+    assert not live, "the test suite is writing into the live engine log"
